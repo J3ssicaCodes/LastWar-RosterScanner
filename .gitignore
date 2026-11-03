@@ -1,0 +1,10 @@
+# Local editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# Local build artifacts and downloads
+*.zip
+*.tmp
