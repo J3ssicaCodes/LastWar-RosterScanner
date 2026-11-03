@@ -1,0 +1,234 @@
+{
+  "version": 1,
+  "startupEventId": "default-map",
+  "events": [
+    {
+      "id": "default-map",
+      "name": "Desert Storm",
+      "mapData": null,
+      "locations": [
+        "Free Floater",
+        "Nuclear Silo",
+        "Oil Refinery 1",
+        "Oil Refinery 2",
+        "Info Center",
+        "Field Hospital 1",
+        "Field Hospital 2",
+        "Field Hospital 3",
+        "Field Hospital 4",
+        "Arsenal",
+        "Merc. Factory",
+        "Science Hub"
+      ],
+      "ignored": [],
+      "pins": {
+        "Free Floater": {
+          "x": 0.5139508930947252,
+          "y": 0.3729259110444699
+        },
+        "Nuclear Silo": {
+          "x": 0.5122767688934593,
+          "y": 0.4061626686477898
+        },
+        "Oil Refinery 1": {
+          "x": 0.22600442555980044,
+          "y": 0.2969557740010185
+        },
+        "Oil Refinery 2": {
+          "x": 0.8085937722852191,
+          "y": 0.5581027465141419
+        },
+        "Info Center": {
+          "x": 0.3543526420312718,
+          "y": 0.14501568104077794
+        },
+        "Field Hospital 1": {
+          "x": 0.22488837114212124,
+          "y": 0.5743254918569981
+        },
+        "Field Hospital 2": {
+          "x": 0.8152901839407884,
+          "y": 0.26688428028867967
+        },
+        "Field Hospital 3": {
+          "x": 0.3030133724725821,
+          "y": 0.7068773642689622
+        },
+        "Field Hospital 4": {
+          "x": 0.6936383791248862,
+          "y": 0.1418503114925773
+        },
+        "Arsenal": {
+          "x": 0.518415195914936,
+          "y": 0.14818111096453268
+        },
+        "Merc. Factory": {
+          "x": 0.5139508930947252,
+          "y": 0.6498999124252588
+        },
+        "Science Hub": {
+          "x": 0.7070312875855188,
+          "y": 0.7242871835679477
+        }
+      },
+      "phase1": [
+        "Free Floater",
+        "Free Floater",
+        "Free Floater",
+        "Free Floater",
+        "Oil Refinery 1",
+        "Oil Refinery 2",
+        "Oil Refinery 1",
+        "Oil Refinery 2",
+        "Field Hospital 1",
+        "Field Hospital 2",
+        "Field Hospital 3",
+        "Field Hospital 4",
+        "Field Hospital 1",
+        "Field Hospital 2",
+        "Field Hospital 3",
+        "Field Hospital 4",
+        "Info Center",
+        "Info Center",
+        "Science Hub",
+        "Science Hub"
+      ],
+      "phase2": [
+        "Nuclear Silo",
+        "Nuclear Silo",
+        "Nuclear Silo",
+        "Nuclear Silo",
+        "Oil Refinery 1",
+        "Oil Refinery 2",
+        "Oil Refinery 1",
+        "Oil Refinery 2",
+        "Field Hospital 1",
+        "Field Hospital 2",
+        "Arsenal",
+        "Field Hospital 4",
+        "Field Hospital 1",
+        "Field Hospital 2",
+        "Merc. Factory",
+        "Field Hospital 4",
+        "Info Center",
+        "Info Center",
+        "Science Hub",
+        "Science Hub"
+      ]
+    },
+    {
+      "id": "canyon-storm",
+      "name": "Canyon Storm",
+      "mapData": null,
+      "locations": [
+        "Virus Lab",
+        "Power Tower",
+        "Defense System 1",
+        "Defense System 2",
+        "Serum Factory 1",
+        "Serum Factory 2",
+        "Data Center 1",
+        "Data Center 2",
+        "Sample Warehouse 1",
+        "Sample Warehouse 2",
+        "Sample Warehouse 3",
+        "Sample Warehouse 4"
+      ],
+      "ignored": [],
+      "pins": {
+        "Virus Lab": {
+          "x": 0.4994419302164134,
+          "y": 0.5218982587388331
+        },
+        "Power Tower": {
+          "x": 0.5005580697835866,
+          "y": 0.27657840565670644
+        },
+        "Defense System 1": {
+          "x": 0.23939733402043298,
+          "y": 0.4427628125227352
+        },
+        "Defense System 2": {
+          "x": 0.776227683275558,
+          "y": 0.4427628125227352
+        },
+        "Serum Factory 1": {
+          "x": 0.18359376164153238,
+          "y": 0.29873632455965843
+        },
+        "Serum Factory 2": {
+          "x": 0.8175222927761469,
+          "y": 0.3034844392575135
+        },
+        "Data Center 1": {
+          "x": 0.260602708554314,
+          "y": 0.14521354682531754
+        },
+        "Data Center 2": {
+          "x": 0.7349330737749691,
+          "y": 0.1499616917109496
+        },
+        "Sample Warehouse 1": {
+          "x": 0.2137276566663411,
+          "y": 0.7798798617037559
+        },
+        "Sample Warehouse 2": {
+          "x": 0.3878347854586122,
+          "y": 0.7798798617037559
+        },
+        "Sample Warehouse 3": {
+          "x": 0.6266740922702055,
+          "y": 0.7814626672289643
+        },
+        "Sample Warehouse 4": {
+          "x": 0.7985491122271182,
+          "y": 0.7798798617037559
+        }
+      },
+      "phase1": [
+        "Virus Lab",
+        "Power Tower",
+        "Virus Lab",
+        "Power Tower",
+        "Defense System 1",
+        "Defense System 1",
+        "Defense System 2",
+        "Defense System 2",
+        "Serum Factory 1",
+        "Serum Factory 1",
+        "Serum Factory 2",
+        "Serum Factory 2",
+        "Data Center 1",
+        "Data Center 1",
+        "Data Center 2",
+        "Data Center 2",
+        "Sample Warehouse 1",
+        "Sample Warehouse 2",
+        "Sample Warehouse 3",
+        "Sample Warehouse 4"
+      ],
+      "phase2": [
+        "Virus Lab",
+        "Power Tower",
+        "Virus Lab",
+        "Power Tower",
+        "Defense System 1",
+        "Defense System 1",
+        "Defense System 2",
+        "Defense System 2",
+        "Serum Factory 1",
+        "Serum Factory 1",
+        "Serum Factory 2",
+        "Serum Factory 2",
+        "Data Center 1",
+        "Data Center 1",
+        "Data Center 2",
+        "Data Center 2",
+        "Sample Warehouse 1",
+        "Sample Warehouse 2",
+        "Sample Warehouse 3",
+        "Sample Warehouse 4"
+      ]
+    }
+  ]
+}
