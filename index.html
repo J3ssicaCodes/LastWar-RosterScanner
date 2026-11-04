@@ -196,6 +196,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
 @media(max-width:580px){.workspace-tabs{gap:4px;margin-bottom:14px}.workspace-tab{padding:12px 15px;gap:8px;font-size:13px}.player-list-panel{min-height:380px;padding:18px}.player-list-placeholder{min-height:250px}}
 
 /* Player List workspace only. Roster Scanner retains its original styling. */
+.pl-source-label{display:block;font-size:11px;margin:3px 0;color:var(--muted)}
 .pl-section{margin-bottom:18px;padding:26px}
 #playerListView .player-list-header{margin-bottom:18px}
 .pl-connection{display:inline-flex;align-items:center;gap:8px;font-size:12px;font-weight:750;padding:7px 11px;border:1px solid var(--stroke);border-radius:9px;background:var(--panel2);color:var(--muted);margin-bottom:16px}
@@ -264,20 +265,20 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
     <div class="player-list-header">
       <div class="eyebrow">Alliance member directory</div>
       <h2 id="playerListHeading">Player List</h2>
-      <p>Upload screenshots or a screen recording of your scrolling <strong>Member List</strong>. The scanner reads players below <strong>Search for Members</strong>, carries down their R1–R5 rank, and extracts name, power and HQ level. Review the results before syncing.</p>
+      <p>Upload screenshots or a recording of your scrolling <strong>Member List</strong>, plus individual <strong>Player Profile</strong> screenshots for players such as R5. The scanner merges both sources, extracts name, rank, power and HQ level, and uses the search bar to ignore the decorative member list header. Clear single profiles can sync automatically; uncertain results are reviewed first.</p>
     </div>
     <div id="plConnection" class="pl-connection" role="status" aria-live="polite">Checking player database…</div>
     <div class="pl-upload-grid">
       <div class="pl-drop" id="plDrop" tabindex="0" role="button" aria-label="Choose player list screenshots or video">
         <div class="pl-drop-icon">⇧</div>
-        <strong>Choose screenshots or a screen recording</strong>
-        <span>JPG, PNG, WebP, MP4, MOV or WebM. Select multiple screenshots to combine them.</span>
+        <strong>Choose player list screenshots, profile screenshots or a recording</strong>
+        <span>JPG, PNG, WebP, MP4, MOV or WebM. Combine one recording with profile screenshots or multiple images.</span>
         <input id="plFiles" type="file" multiple accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,.m4v" hidden>
       </div>
       <div class="pl-import-options">
         <strong>Import options</strong>
         <div id="plFileNames" class="pl-file-names">No files selected</div>
-        <label class="pl-check"><input type="checkbox" id="plFullCapture"> <span><b>Complete player list</b><small>When enabled, anyone absent from this import is marked “Possibly removed”. Keep this off for partial screenshots.</small></span></label>
+        <label class="pl-check"><input type="checkbox" id="plFullCapture"> <span><b>Complete player list</b><small>Only check when the entire member list was captured. Missing players will be flagged; profile screenshots alone never count as a full capture.</small></span></label>
         <label class="pl-key-label" id="plKeyLabel" hidden>Upload access key<input type="password" id="plUploadKey" autocomplete="off" placeholder="Key provided by your alliance admin"><small>Required to make changes to the shared player database.</small></label>
         <button class="btn primary pl-main-btn" type="button" id="plScanBtn" disabled>✧ Scan player list</button>
       </div>
@@ -2035,12 +2036,13 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
   function showFiles(files){
     const accepted=[...files].filter(file=>['png','jpg','jpeg','webp','mp4','mov','m4v','webm'].includes(ext(file)));
     const videos=accepted.filter(hasVideo);
-    if(videos.length>1 || (videos.length&&accepted.length>1)){
-      msg('Upload one video at a time, or a batch of screenshots. Please choose again.',true);return;
+    if(videos.length>1){
+      msg('Upload one video at a time, with any additional screenshots. Please choose again.',true);return;
     }
     state.files=accepted;
     $('plFileNames').textContent=accepted.length? accepted.map(f=>f.name).join(' · '):'No files selected';
-    $('plFullCapture').checked=videos.length>0;
+    $('plFullCapture').disabled=false;
+    $('plFullCapture').checked=videos.length>0; // A recording normally covers the roster. User confirms before full-list sync.
     $('plScanBtn').disabled=!accepted.length||state.busy;
     if(accepted.length)msg('');
   }
@@ -2083,11 +2085,31 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       }
       if(!result||result.status!=='ready')throw Error('Scan timed out. Please try a shorter recording or fewer screenshots.');
       state.candidates=(result.players||[]).map((p,i)=>({...p,included:true,_id:'p'+i}));
+      const notes=(result.warnings||[]).join('\n');
+      // A single confirmed profile image has four legible fields, making it
+      // appropriate for immediate, non-destructive upsert. Videos and member
+      // list screenshots always offer review before the shared DB changes.
+      const profilesOnly=state.candidates.length>0 &&
+        state.candidates.every(p=>p.source_type==='profile' && p.power_millions!==null &&
+          p.hq_level!==null && !p.needs_review && /^R[1-5]$/.test(p.rank) && p.name.length>=2);
+      $('plFullCapture').disabled=profilesOnly; // An individual profile is never a complete alliance roster.
+      if(profilesOnly && !notes && !$('plFullCapture').checked){
+        msg('Profile recognized. Automatically updating the player database…');
+        try{
+          const records=state.candidates.map(({name,rank,power_millions,hq_level})=>({name,rank,power_millions,hq_level}));
+          const r=await fetch('/api/player-list/import',{method:'POST',headers:{...headers(),'Content-Type':'application/json'},body:JSON.stringify({players:records,full_capture:false})});
+          const saved=await checkedJson(r);
+          msg(`Profile saved automatically. ${saved.new_count} new, ${saved.updated_count} updated. Other players were not marked missing.`);
+          await loadDirectory();
+          return;
+        }catch(err){
+          msg('Automatic save was unavailable: '+err.message+'. Review the result and try Sync.',true);
+        }
+      }
       renderReview();
       $('plReviewPanel').hidden=false;
       $('plReviewPanel').scrollIntoView({behavior:'smooth',block:'start'});
-      const notes=(result.warnings||[]).join('\n');
-      msg(`${state.candidates.length} players found from ${result.frames_examined||0} image frames. Review the extracted names and values before saving.${notes?'\n'+notes:''}`);
+      if(!profilesOnly || notes)msg(`${state.candidates.length} players found from ${result.frames_examined||0} image frames. Review the extracted names and values before saving.${notes?'\n'+notes:''}`);
     }catch(err){msg('Scan could not finish: '+err.message,true);}
     finally{state.busy=false;$('plScanBtn').disabled=!state.files.length;$('plSyncBtn').disabled=false;}
   }
@@ -2096,7 +2118,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     $('plReviewBody').innerHTML=state.candidates.map((item,i)=>`<tr data-index="${i}">
       <td><input type="checkbox" data-field="included" ${item.included?'checked':''} aria-label="Include ${escape(item.name)}"></td>
       <td><select data-field="rank">${['R5','R4','R3','R2','R1'].map(rank=>`<option value="${rank}" ${item.rank===rank?'selected':''}>${rank}</option>`).join('')}</select></td>
-      <td><input class="pl-name-input" data-field="name" value="${escape(item.name)}" aria-label="Player name" maxlength="80" required></td>
+      <td><input class="pl-name-input" data-field="name" value="${escape(item.name)}" aria-label="Player name" maxlength="80" required><small class="pl-source-label">${item.source_type==='profile'?'Player profile':'Member list'}</small></td>
       <td><input class="pl-number-input ${item.power_millions==null?'pl-invalid':''}" data-field="power_millions" type="number" step="0.1" min="0" value="${item.power_millions??''}" placeholder="Check" aria-label="Power in millions"></td>
       <td><input class="pl-number-input ${item.hq_level==null?'pl-invalid':''}" data-field="hq_level" type="number" step="1" min="1" max="99" value="${item.hq_level??''}" placeholder="Check" aria-label="HQ level"></td>
       <td><button type="button" data-delete="${i}" aria-label="Remove scanned row">✕</button></td>
