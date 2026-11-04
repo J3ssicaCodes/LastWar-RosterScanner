@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light dark">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem("lastwar.uiTheme.v2")==="light"?"light":"dark";}catch(e){document.documentElement.dataset.theme="dark";}</script>
-<title>Last War | Roster Scanner v2</title>
+<title>Last War | Alliance Tools v2</title>
 <style>
 :root{--bg:#0b1020;--panel:#151d31;--panel2:#1b253c;--stroke:#303b55;--text:#edf2ff;--muted:#98a8c4;--cyan:#56d4ff;--violet:#ac99ff;--green:#56dab0;--amber:#ffc875;--red:#ff8291}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse 100% 45% at 50% -10%,#222f56 0%,transparent 80%),var(--bg);color:var(--text);font:15px/1.5 Inter,system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}button,input,select{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.45}.shell{max-width:1540px;margin:auto;padding:34px 24px 72px}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:27px}.eyebrow{font-size:11px;letter-spacing:2.5px;font-weight:800;text-transform:uppercase;color:var(--cyan)}h1{font-size:clamp(30px,4vw,48px);font-weight:790;line-height:1.15;letter-spacing:-1.5px;margin:8px 0 9px}.subtitle{color:var(--muted);margin:0;max-width:720px}.tag{display:inline-flex;gap:7px;align-items:center;color:#addacc;background:#14372f;border:1px solid #266657;padding:7px 11px;border-radius:100px;font-size:12px;font-weight:700}.tag i{width:8px;height:8px;border-radius:100%;background:var(--green)}.panel{background:linear-gradient(135deg,rgba(27,37,60,.96),rgba(19,28,46,.96));border:1px solid var(--stroke);border-radius:18px;box-shadow:0 18px 50px #05081738;padding:23px;margin-bottom:18px}.panel-title{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;margin:0 0 17px}.panel-title h2{font-size:18px;letter-spacing:-.4px;margin:0}.hint,.fine{font-size:12px;color:var(--muted)}.dropzone{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;text-align:center;min-height:200px;border:2px dashed #4c5c7c;border-radius:14px;background:linear-gradient(140deg,#121f39,#19233d);padding:20px;transition:.2s;outline:none}.dropzone.dragover,.dropzone:focus-visible{border-color:var(--cyan);background:#1c3353}.dropzone .uploadicon{width:51px;height:51px;border-radius:15px;background:#27375b;color:var(--cyan);font-size:30px;display:grid;place-items:center}.dropzone strong{font-size:16px}.dropzone small{color:var(--muted)}.dropzone .upload-btn{background:#2b3c61;border:1px solid #536788;color:#fff;border-radius:9px;padding:9px 15px;font-weight:700;margin-top:5px}.actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:19px}.btn{border-radius:10px;padding:11px 16px;border:1px solid #4a5b7d;background:#263653;color:#eaf0fc;font-weight:750}.btn.primary{border:0;background:linear-gradient(105deg,#5ed5f9,#9c9cff);color:#11182b;box-shadow:0 5px 20px #65aaff36}.btn.danger{background:transparent;color:#c2cce1;border-color:#3b4967}.btn:hover:not(:disabled){filter:brightness(1.13)}.push{margin-left:auto}.count{font-size:13px;color:var(--muted)}.file-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;margin-top:18px}.file-card{display:flex;align-items:center;gap:12px;border:1px solid #37435c;border-radius:11px;padding:9px 10px;background:#101a2d;min-width:0}.thumb{width:45px;height:62px;object-fit:cover;object-position:top;flex-shrink:0;border-radius:5px;border:1px solid #50617e;background:#151d31;cursor:zoom-in}.file-meta{min-width:0;flex:1}.filename{font-size:12px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.file-state{color:#a7b4ca;font-size:11px;margin:4px 0}.file-bottom{display:flex;align-items:center;gap:7px}.file-bottom label{font-size:11px;color:var(--muted)}.file-bottom select{width:88px;min-width:0;font-size:11px;padding:3px;background:#243453;color:#fff;border:1px solid #546483;border-radius:5px}.iconbtn{border:0;background:transparent;color:#95a8c6;font-size:20px;padding:3px}.progress-shell{margin-top:20px}.progress-row{display:flex;justify-content:space-between;gap:15px;font-size:12px;color:#ccd6ee;margin-bottom:8px}.progress-track{height:9px;background:#0b1324;border-radius:10px;overflow:hidden;border:1px solid #34435b}.progress-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--violet));transition:width .2s}.hidden{display:none!important}.info{font-size:12px;color:var(--muted);margin:14px 0 0}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 0 17px}.stat{background:#172239;border:1px solid #34435a;border-radius:13px;padding:14px 16px}.stat small{display:block;font-size:12px;color:#a1aec6}.stat strong{display:block;font-size:27px;line-height:1.3;margin-top:4px}.stat:nth-child(1) strong{color:var(--cyan)}.stat:nth-child(2) strong{color:var(--green)}.stat:nth-child(3) strong{color:var(--violet)}.stat:nth-child(4) strong{color:var(--amber)}.tools{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.tools input,.tools select{background:#101a2d;border:1px solid #40506c;color:#f6f8ff;border-radius:9px;padding:10px 12px;min-height:42px}.tools input{width:230px;max-width:100%}.tablewrap{width:100%;overflow:auto;border:1px solid #38435a;border-radius:12px;margin-top:16px}table{width:100%;border-collapse:collapse;min-width:870px;font-size:13px}th{text-align:left;background:#202c45;color:#a9bbd9;font-size:11px;text-transform:uppercase;letter-spacing:1px;padding:12px 13px;white-space:nowrap}td{padding:11px 9px;border-top:1px solid #34415a}tbody tr{background:#19243a}tbody tr:nth-child(even){background:#172138}tbody tr.review{box-shadow:inset 3px 0 var(--amber)}td input,td select{width:100%;background:#101b30;border:1px solid transparent;color:var(--text);padding:8px 9px;border-radius:8px;outline:none;min-height:36px}td input:focus,td select:focus{border-color:var(--cyan);background:#0b172a}.team-select{width:70px}.rank-select{width:76px}.role-select{min-width:145px}.power-input{width:110px}.name-input{min-width:160px}.pill{display:inline-block;padding:4px 9px;border-radius:18px;font-size:11px;white-space:nowrap;font-weight:700}.pill.ok{color:#79e6c4;background:#16443a}.pill.warn{color:#ffd993;background:#453520}.pill.neutral{color:#b5c6e4;background:#293a56}.source{font-size:11px;color:#a3b2ce;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.previewbtn{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid #49617e;border-radius:8px;background:#203451;color:#81d9ff;padding:5px;vertical-align:middle}.previewbtn:hover{background:#315375;border-color:#6acfff}.previewbtn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.source{display:flex;gap:5px;align-items:center}.source-count{font-size:11px;color:#b4d5ed}.potential-duplicate{color:#ffc875;font-size:10px;display:block;line-height:1.3;margin-top:3px}.empty{color:#a0aec8;text-align:center;padding:46px 15px}.alert{background:#392b21;border:1px solid #775438;border-radius:10px;color:#ffe3b3;padding:11px 13px;font-size:13px;margin:14px 0}.footnote{color:#93a1bc;font-size:12px;margin:18px 0 0}.muted{color:#a3aec7}.right{text-align:right}.smallbtn{font-size:12px;padding:8px 11px}.trash{border:0;background:none;color:#da9ba5;font-size:16px}dialog{max-width:min(94vw,660px);max-height:90vh;border:1px solid #5d7395;border-radius:16px;background:#152038;color:#fff;padding:20px;box-shadow:0 30px 90px #000a}dialog::backdrop{background:#020710c9}.previewhead{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:12px}.previewhead strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}dialog img{display:block;max-width:100%;max-height:74vh;object-fit:contain;margin:auto}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
@@ -175,11 +175,35 @@ html[data-theme="light"] .event-manager-status{color:#386f61}
 html[data-theme="light"] .event-map-place-label,html[data-theme="light"] .event-ignored-title{color:#3e3752}
 html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#514b69}
 @media(max-width:680px){.header-preferences{width:100%;margin-left:0}.preference-control{flex:1 1 auto}.preference-control select{flex:1;max-width:none}.theme-toggle{flex:0 0 auto}.top{align-items:flex-start}}
+
+/* Workspace navigation. Keep the complete roster scanner mounted while inactive. */
+.workspace-tabs{display:flex;align-items:stretch;gap:8px;overflow-x:auto;margin:6px 0 20px;border-bottom:1px solid var(--stroke);padding:0 2px 2px;scrollbar-width:thin}
+.workspace-tab{display:inline-flex;align-items:center;gap:10px;padding:14px 20px;min-width:max-content;background:transparent;border:1px solid transparent;border-bottom:3px solid transparent;border-radius:12px 12px 0 0;color:var(--muted);font:inherit;font-size:14px;font-weight:800;cursor:pointer;transition:background .15s ease,color .15s ease,border-color .15s ease}
+.workspace-tab:hover{background:var(--panel2);color:var(--text)}
+.workspace-tab[aria-selected="true"]{background:var(--panel);border-color:var(--stroke);border-bottom-color:var(--violet);color:var(--text)}
+.workspace-tab:focus-visible{outline:3px solid var(--cyan);outline-offset:-4px}
+.workspace-tab-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9px;background:var(--panel2);font-size:16px;color:var(--violet)}
+.workspace-tab[aria-selected="true"] .workspace-tab-icon{background:color-mix(in srgb,var(--violet) 18%,var(--panel2));color:var(--violet)}
+.workspace-view[hidden]{display:none!important}
+.player-list-panel{min-height:420px;padding:30px}
+.player-list-header .eyebrow{color:var(--violet)}
+.player-list-header h2{font-size:clamp(26px,4vw,36px);letter-spacing:-.7px;line-height:1.2;margin:8px 0}
+.player-list-header p{color:var(--muted);max-width:650px;margin:0}
+.player-list-placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;min-height:270px;margin-top:25px;padding:24px;border:1px dashed var(--stroke);border-radius:14px;background:color-mix(in srgb,var(--panel2) 68%,transparent)}
+.player-list-placeholder-icon{display:grid;place-items:center;width:64px;height:64px;border:1px solid var(--stroke);border-radius:19px;background:var(--panel);color:var(--violet);font-size:30px}
+.player-list-placeholder h3{margin:14px 0 3px;font-size:19px}
+.player-list-placeholder p{max-width:460px;margin:2px 0;color:var(--muted);font-size:13px}
+@media(max-width:580px){.workspace-tabs{gap:4px;margin-bottom:14px}.workspace-tab{padding:12px 15px;gap:8px;font-size:13px}.player-list-panel{min-height:380px;padding:18px}.player-list-placeholder{min-height:250px}}
 </style>
 </head>
 <body>
 <main class="shell">
-<header class="top"><div><div class="eyebrow">Last War · Alliance Tools</div><h1>Roster Scanner <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Turn your Task Force roster screenshots into organized team assignments and easy to share event maps.</p></div><span class="tag"><i></i> Images stay on your device</span><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch appearance" aria-pressed="false">☀️ Light mode</button></div></header>
+<header class="top"><div><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><span class="tag"><i></i> Images stay on your device</span><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch appearance" aria-pressed="false">☀️ Light mode</button></div></header>
+<nav class="workspace-tabs" role="tablist" aria-label="Alliance workspace sections">
+  <button type="button" class="workspace-tab" id="rosterScannerTab" role="tab" aria-controls="rosterScannerView" aria-selected="true" tabindex="0" data-workspace-tab="scanner"><span class="workspace-tab-icon" aria-hidden="true">▦</span><span>Roster Scanner</span></button>
+  <button type="button" class="workspace-tab" id="playerListTab" role="tab" aria-controls="playerListView" aria-selected="false" tabindex="-1" data-workspace-tab="players"><span class="workspace-tab-icon" aria-hidden="true">♙</span><span>Player List</span></button>
+</nav>
+<section id="rosterScannerView" class="workspace-view" role="tabpanel" aria-labelledby="rosterScannerTab" tabindex="0">
 <section class="event-selector panel" aria-labelledby="eventSelectorTitle">
   <div class="event-selector-copy"><div class="eyebrow">Event planning</div><h2 id="eventSelectorTitle">Choose your event</h2><p>Desert Storm and Canyon Storm are built in maps. Customize their priorities, or add another event with assignable buildings and ignored areas. Choose your event before scanning.</p></div>
   <div class="event-selector-controls"><label for="eventSelect">Active event</label><div><select id="eventSelect" aria-label="Select event"></select><button id="manageEventsBtn" class="btn" type="button">⚙ Manage events</button></div><small id="eventStartupLabel">Saved locally on this device</small></div>
@@ -206,6 +230,17 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
 <div id="warning" class="alert hidden"></div>
 <div id="teamSections" aria-live="polite"><div class="empty-panel">Scan screenshots to see Team A and Team B tables, with Phase 1 and Phase 2 assignment totals.</div></div>
 <p class="footnote">Role means the in-game R1–R5 section, while Rank is the player's numbered position in their team roster. Click the pencil at the far left of a row to edit team, role, name, power, or status; click the save icon when finished. When you leave a changed row, choose whether to save or discard. Corrected OCR names are remembered in the editable dictionary. The left blue letter marks Participant; the right marks Sub. Each team roster groups Participants first, Subs second, and Needs review last, with highest to lowest power inside each group. Auto assignments are based on the power ranking of eligible participants within each team. The four strongest participants are Free Floaters in Phase 1 and take Nuclear Silo in Phase 2. In Phase 2, the two players who would hold Field Hospital 3 in Phase 1 instead go to Arsenal (stronger) and Merc. Factory (other). Subs, unknown statuses, and eligible players beyond 20 start Unassigned. Phase 1 and Phase 2 can be edited independently. Counts include everyone, even when filtered.</p>
+</section>
+</section>
+<section id="playerListView" class="workspace-view" role="tabpanel" aria-labelledby="playerListTab" tabindex="0" hidden>
+  <section class="panel player-list-panel" aria-labelledby="playerListHeading">
+    <div class="player-list-header"><div class="eyebrow">Coming next</div><h2 id="playerListHeading">Player List</h2><p>A dedicated workspace for your alliance player list, separate from the event roster scanner.</p></div>
+    <div class="player-list-placeholder">
+      <div class="player-list-placeholder-icon" aria-hidden="true">♙</div>
+      <h3>Ready for the next feature</h3>
+      <p>We'll build this section together next. Your existing roster scanner, assignments, event maps, and saved settings stay available under Roster Scanner.</p>
+    </div>
+  </section>
 </section>
 <footer class="app-footer"><strong>This app was created by Lady Jess</strong><span>Made for Last War roster screenshots · Local OCR · No account or server upload required</span></footer>
 </main>
@@ -1787,6 +1822,18 @@ Object.assign(UI_TRANSLATIONS, {
     es:"Las etiquetas azules son edificios asignables y las naranjas son áreas ignoradas. Haz clic una vez en una etiqueta para seleccionarla y después arrástrala. También puedes elegir un edificio de la lista y pulsar en el mapa. Revisa las sugerencias de OCR."
   }
 });
+
+// Workspace navigation translations, separate from game labels and export content.
+Object.assign(UI_TRANSLATIONS,{
+  "Alliance Tools":{fr:"Outils d’alliance",de:"Allianzwerkzeuge",it:"Strumenti alleanza",da:"Allianceværktøjer",es:"Herramientas de alianza"},
+  "Alliance workspace sections":{fr:"Sections de l’espace alliance",de:"Bereiche der Allianz",it:"Sezioni dello spazio alleanza",da:"Alliancens arbejdsområder",es:"Secciones de la alianza"},
+  "Organize rosters, plan event maps, and build your alliance toolkit in one place.":{fr:"Organisez vos équipes, planifiez vos cartes d’événement et développez vos outils d’alliance.",de:"Organisiere Teamlisten, plane Eventkarten und verwalte deine Allianzwerkzeuge an einem Ort.",it:"Organizza le squadre, pianifica le mappe degli eventi e gestisci gli strumenti dell’alleanza.",da:"Organisér spillerlister, planlæg eventkort og saml alliancens værktøjer ét sted.",es:"Organiza equipos, planifica mapas de eventos y reúne las herramientas de tu alianza."},
+  "Player List":{fr:"Liste des joueurs",de:"Spielerliste",it:"Elenco giocatori",da:"Spillerliste",es:"Lista de jugadores"},
+  "Coming next":{fr:"À venir",de:"Als Nächstes",it:"Prossimamente",da:"Kommer snart",es:"Próximamente"},
+  "A dedicated workspace for your alliance player list, separate from the event roster scanner.":{fr:"Un espace dédié à la liste des joueurs de votre alliance, distinct de l’analyseur d’événements.",de:"Ein eigener Bereich für deine Allianzspielerliste, getrennt vom Event Scanner.",it:"Uno spazio dedicato ai giocatori dell’alleanza, separato dallo scanner degli eventi.",da:"Et særskilt område til alliancens spillerliste, adskilt fra event scanneren.",es:"Un espacio dedicado a los jugadores de tu alianza, separado del escáner de eventos."},
+  "Ready for the next feature":{fr:"Prêt pour la prochaine fonctionnalité",de:"Bereit für die nächste Funktion",it:"Pronto per la prossima funzione",da:"Klar til den næste funktion",es:"Listo para la próxima función"},
+  "We'll build this section together next. Your existing roster scanner, assignments, event maps, and saved settings stay available under Roster Scanner.":{fr:"Nous construirons cet espace ensuite. Votre analyseur, vos affectations, vos cartes et vos paramètres sont toujours dans Analyseur de roster.",de:"Diesen Bereich bauen wir als Nächstes. Scanner, Zuweisungen, Eventkarten und Einstellungen bleiben im Tab Kader Scanner erhalten.",it:"Svilupperemo questa sezione dopo. Scanner, assegnazioni, mappe e impostazioni restano nella scheda Scanner giocatori.",da:"Vi bygger denne sektion som det næste. Scanner, opgaver, eventkort og indstillinger findes fortsat under Spillerliste scanner.",es:"Crearemos esta sección después. El escáner, las asignaciones, los mapas y los ajustes siguen en la pestaña Escáner de jugadores."}
+});
 let uiLanguage='en';
 try{const saved=localStorage.getItem(UI_LANGUAGE_STORAGE);if(['en','fr','de','it','da','es'].includes(saved))uiLanguage=saved;}catch(e){}
 const textOriginals=new WeakMap(),attrOriginals=new WeakMap();
@@ -1871,6 +1918,38 @@ document.getElementById('themeToggle').addEventListener('click',()=>{
 });
 setUILanguage(uiLanguage);applyUITheme();
 localizationObserver.observe(document.body,{subtree:true,childList:true});
+</script>
+
+<script id="workspaceNavigation">
+(() => {
+  const storageKey='lastwar.workspaceTab.v1';
+  const tabs=[...document.querySelectorAll('[data-workspace-tab]')];
+  const views={scanner:document.getElementById('rosterScannerView'),players:document.getElementById('playerListView')};
+  function selectTab(tabId,focus=false){
+    if(!Object.hasOwn(views,tabId))tabId='scanner';
+    for(const tab of tabs){
+      const active=tab.dataset.workspaceTab===tabId;
+      tab.setAttribute('aria-selected',String(active));
+      tab.tabIndex=active?0:-1;
+      if(active&&focus)tab.focus();
+    }
+    for(const [id,view] of Object.entries(views))view.hidden=id!==tabId;
+    try{localStorage.setItem(storageKey,tabId);}catch(e){}
+  }
+  for(const [index,tab] of tabs.entries()){
+    tab.addEventListener('click',()=>selectTab(tab.dataset.workspaceTab));
+    tab.addEventListener('keydown',event=>{
+      const delta=event.key==='ArrowRight'?1:event.key==='ArrowLeft'?-1:0;
+      const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:delta?(index+delta+tabs.length)%tabs.length:-1;
+      if(next<0)return;
+      event.preventDefault();
+      selectTab(tabs[next].dataset.workspaceTab,true);
+    });
+  }
+  let saved='scanner';
+  try{saved=localStorage.getItem(storageKey)||'scanner';}catch(e){}
+  selectTab(saved);
+})();
 </script>
 </body>
 </html>
