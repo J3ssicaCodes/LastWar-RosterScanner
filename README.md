@@ -1,10 +1,16 @@
 # Last War Roster Scanner v2
 
-A browser based roster scanner and event assignment planner. Created by Lady Jess.
+A browser based Last War alliance toolkit. Created by Lady Jess. The complete existing roster scanner now lives under the Roster Scanner tab, alongside a new Player List tab ready for the next feature.
 
 ## Start the app
 
-Open `index.html` in a modern Chrome or Edge browser. No build step or local server is required. An internet connection is needed to load Tesseract.js for OCR.
+Visit the Render hosted website, or open `index.html` in a modern Chrome or Edge browser. No build step is required. An internet connection is needed to load Tesseract.js for OCR.
+
+## Workspace tabs
+
+- **Roster Scanner:** The complete existing screenshot scanner, Desert Storm and Canyon Storm Event Manager, assignments, map generator, and OCR correction dictionary.
+- **Player List:** A separate workspace reserved for upcoming player list features. No player list functionality has been added yet.
+- The selected tab is remembered in this browser. Switching tabs does not reset in memory roster data or saved settings.
 
 ## Features
 
@@ -20,6 +26,7 @@ Open `index.html` in a modern Chrome or Edge browser. No build step or local ser
 ## Repository layout
 
 - `index.html`: Entire web app, including styles, UI, application logic, and embedded map templates.
+- `Dockerfile`: Nginx container configuration for the current Render Web Service.
 - `config/default_events.json`: Reference backup for the built in Desert Storm and Canyon Storm defaults. The app also embeds these settings in `index.html`, so this JSON file is provided for inspection and manual import.
 
 ## Storage and privacy
