@@ -162,10 +162,14 @@ def export_csv():
     return StreamingResponse(iter([buf.getvalue()]),media_type='text/csv',headers={'Content-Disposition':'attachment; filename="lastwar_player_list.csv"'})
 
 
-def _authorize(key: str | None):
+def _authorize(key: str | None, allow_unconfigured_scan: bool = False):
     from secrets import compare_digest
     required=_env('PLAYER_LIST_UPLOAD_KEY')
-    if required and not (key and compare_digest(key,required)):
+    if not required:
+        if allow_unconfigured_scan:
+            return
+        raise HTTPException(503,detail='Database updates are disabled until PLAYER_LIST_UPLOAD_KEY is configured in Render.')
+    if not (key and compare_digest(key,required)):
         raise HTTPException(401,detail='Incorrect Player List upload key.')
 
 
@@ -191,7 +195,7 @@ def _run_scan(job_id, paths, tempdir):
 
 @app.post('/api/player-list/scan',status_code=202)
 async def upload_scan(files:list[UploadFile]=File(...),x_player_list_key:str|None=Header(default=None)):
-    _authorize(x_player_list_key)
+    _authorize(x_player_list_key,allow_unconfigured_scan=True)
     if not files or len(files)>MAX_FILES:
         raise HTTPException(400,detail='Upload between 1 and 75 screenshots or one video.')
     if sum(1 for f in files if Path(f.filename or '').suffix.lower() in ('.mp4','.mov','.m4v','.webm'))>1:
