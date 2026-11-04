@@ -1,22 +1,18 @@
-FROM nginx:stable-alpine
+FROM python:3.12-slim
 
-# Render's web services expect an HTTP server to bind to the PORT variable.
-# Its default is 10000, and the official nginx entrypoint expands templates.
-ENV PORT=10000
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=10000
 
-COPY index.html /usr/share/nginx/html/index.html
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ffmpeg tesseract-ocr tesseract-ocr-eng libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /etc/nginx/templates && \
-    printf '%s\n' \
-      'server {' \
-      '    listen ${PORT};' \
-      '    server_name _;' \
-      '    root /usr/share/nginx/html;' \
-      '    index index.html;' \
-      '    charset utf-8;' \
-      '    location / {' \
-      '        try_files $uri $uri/ =404;' \
-      '    }' \
-      '}' > /etc/nginx/templates/default.conf.template
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY index.html app.py player_list_ocr.py ./
 
 EXPOSE 10000
+CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1"]

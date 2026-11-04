@@ -1,0 +1,353 @@
+"""Member List extraction from screenshots and scrolling screen recordings.
+
+The video/screenshot is treated as a changing viewport. Only the rows below the
+Search for Members bar are analyzed. Never inspect the decorative officer or
+leader area at the top. Uses spatial rank headers, OCR and overlap deduplication.
+"""
+from __future__ import annotations
+import math
+import os
+import re
+import subprocess
+import tempfile
+from collections import Counter
+from pathlib import Path
+from typing import Callable
+
+import cv2
+import numpy as np
+import pytesseract
+
+NAME_BAD_WORDS = {"POWER", "MANAGE", "ONLINE", "LV", "MEMBERS", "LEGENDS", "INACTIVE", "SEARCH", "MEMBER", "LIST"}
+
+
+def _groups(indices, max_gap=5, min_span=20):
+    groups = []
+    for value in indices:
+        value = int(value)
+        if not groups or value - groups[-1][-1] > max_gap:
+            groups.append([value])
+        else:
+            groups[-1].append(value)
+    return [(v[0], v[-1]) for v in groups if v[-1] - v[0] >= min_span]
+
+
+def _resize_frame(image):
+    h, w = image.shape[:2]
+    if w != 1080 and w > 0:
+        size = (1080, max(1, int(round(h * (1080 / w)))))
+        image = cv2.resize(image, size, interpolation=cv2.INTER_AREA if w > 1080 else cv2.INTER_CUBIC)
+    return image
+
+
+def _detect_rank_headers(image):
+    """Find the in game header bars, including the green R4 and gray R3/R2/R1."""
+    h, w = image.shape[:2]
+    if w < 640 or h < 850:
+        return []
+    roi = image[:, 380:690:31, ::-1].astype(np.int16)  # RGB
+    red, green, blue = [roi[:, :, k] for k in range(3)]
+    header_pixels = ((blue - red > 5) | (green - red > 5)) & (red > 155) & (red < 243) & (green > 180)
+    rows = np.mean(header_pixels, axis=1) > .68
+    candidates = _groups(np.where(rows & (np.arange(h) > int(h * .36)) & (np.arange(h) < int(h * .94)))[0], min_span=25)
+    results = []
+    for y0, y1 in candidates:
+        if y1 - y0 > 140:
+            continue
+        badge = image[max(0, y0 - 4): min(h, y1 + 6), 33:126]
+        large = cv2.resize(badge, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        text = pytesseract.image_to_string(large, config='--psm 7 -c tessedit_char_whitelist=Rr12345')
+        match = re.search(r'[Rr]\s*([1-5])', text)
+        if not match:
+            header_line = image[y0:y1, 115:430]
+            text = pytesseract.image_to_string(cv2.resize(header_line, None, fx=2, fy=2), config='--psm 7')
+            match = re.search(r'\bR\s*([1-5])\b', text, flags=re.I)
+        if match:
+            results.append((y0, y1, 'R' + match.group(1)))
+    return results
+
+
+def _detect_button_y(image):
+    """Find card rows by their cyan manage buttons. Most member cards have one."""
+    h, w = image.shape[:2]
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    area = hsv[int(h*.365):int(h*.917), int(w*.73):int(w*.96)]
+    mask = cv2.inRange(area, (85, 90, 100), (110, 255, 255))
+    ys = np.where(np.sum(mask > 0, axis=1) > area.shape[1] * .22)[0] + int(h*.365)
+    pieces = _groups(ys, max_gap=3, min_span=12)
+    # Each button has two broad cyan stripes separated by ~20 px of white lettering.
+    # Merge stripes whose first rows are less than 86 px apart.
+    merged = []
+    for start, end in pieces:
+        if merged and start - merged[-1][1] < 75:
+            merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return [start for start, end in merged if end - start >= 27]
+
+
+def _card_candidate_y(image):
+    """Find light card backgrounds, including the Online cards without a button."""
+    h, w = image.shape[:2]
+    roi = image[:, 375:691:29, ::-1].astype(np.int16)
+    r,g,b = [roi[:,:,k] for k in range(3)]
+    cards = (r-g>=7)&(r>210)&(g>185)&(g<244)&(b>180)&(b<243)&(np.abs(g-b)<27)
+    rows = np.mean(cards,axis=1) > .65
+    return _groups(np.where(rows & (np.arange(h)>int(h*.38)) & (np.arange(h)<int(h*.915)))[0],min_span=44)
+
+
+def _ocr_line(image, box, config='--psm 7', scale=2):
+    h,w=image.shape[:2]
+    x0,y0,x1,y1=box
+    x0=max(0,int(x0));y0=max(0,int(y0));x1=min(w,int(x1));y1=min(h,int(y1))
+    if x0>=x1 or y0>=y1:return ''
+    crop=image[y0:y1,x0:x1]
+    if scale>1:crop=cv2.resize(crop,None,fx=scale,fy=scale,interpolation=cv2.INTER_CUBIC)
+    return pytesseract.image_to_string(crop,config=config).strip().replace('\n',' ')
+
+
+def _normalize_name(name):
+    # Avoid normalizing actual usernames into something different. Only trim OCR UI residue.
+    name=re.sub(r'^[^\w\u00c0-\uffff]+','',name,flags=re.U)
+    name=re.sub(r'\s+',' ',name).strip(' |~:.,;![](){}<>\\')
+    name=re.sub(r'\b(?:Online|Manage)\b\s*$','',name,flags=re.I).strip()
+    # Decorative streamer/gender icon artifacts occasionally trail names.
+    name=re.sub(r'\s+[tT][S™]$','',name).strip()
+    name=re.sub(r'\s*[—–-]+[tT™*\s]*$','',name).strip()
+    name=re.sub(r'[—–™*]+$','',name).strip()
+    if len(name)<2 or len(name)>48 or not any(c.isalpha() for c in name):return ''
+    if name.upper() in NAME_BAD_WORDS or name.upper().startswith('POWER'):return ''
+    if re.search(r'\b(?:Power|Level|Lv|Manage|Members)\b',name,flags=re.I):return ''
+    return name
+
+
+def _read_power(text):
+    """Read a game power number, tolerating outlined-font OCR punctuation.
+
+    Text is known to begin with the Power label and stop at the HQ label.
+    Tesseract can read a decimal dot as apostrophe, colon, slash or a space.
+    Uncertain readings are left blank for user review instead of fabricated.
+    """
+    m=re.search(r'p[o0]w[e3]?r+r?',text,re.I)
+    if not m:return None
+    tail=text[m.end():]
+    tail=re.split(r'\bL[vVuU]\s*[:.]?',tail,1,flags=re.I)[0]
+    tail=tail.split('M',1)[0].split('m',1)[0]
+    digits=''.join(re.findall(r'[0-9]',tail))
+    if len(digits)==4:
+        val=float(digits[:-1]+'.'+digits[-1])
+        return val if 1<=val<=5000 else None
+    if len(digits)==3:
+        # Two-digit powers exist, but require an unambiguous decimal dot or
+        # comma. A missing leading glyph from 201.7 must not become 20.1.
+        clear=re.search(r'(?<![0-9])[0-9]{2}[.,][0-9]\s*[Mm]',tail)
+        return round(float(clear.group().rstrip('Mm ')),1) if clear else None
+    if len(digits)==5:
+        # Decimal powers above 1000M are possible, but 5 digits often mean
+        # OCR invented a glyph. Leave it for human verification.
+        return None
+    return None
+
+
+def _read_card(image,button_top,rank):
+    # Button's upper stripe is aligned roughly 15-35 pixels below player name,
+    # and power/HQ is on the line 35-75px lower. All coordinates are at width=1080.
+    y=int(button_top)
+    name1=_ocr_line(image,(228,y-49,670,y+17),scale=2)
+    name=_normalize_name(name1)
+    if not name:
+        name=_normalize_name(_ocr_line(image,(230,y-49,680,y+18),config='--psm 13',scale=2))
+    if not name:return None
+    line=_ocr_line(image,(222,y+23,685,y+83),scale=2)
+    power=_read_power(line)
+    if power is None:
+        fallback=_ocr_line(image,(310,y+27,490,y+79),config='--psm 7 -c tessedit_char_whitelist=0123456789.,:MBK',scale=3)
+        power=_read_power('Power:'+fallback)
+    hq=_ocr_line(image,(532,y+20,686,y+79),config='--psm 7 -c tessedit_char_whitelist=0123456789',scale=2)
+    match=re.search(r'(?<!\d)([1-9]\d|1\d\d|[1-9])(?!\d)',hq)
+    level=int(match.group(1)) if match and 10<=int(match.group(1))<=99 else None
+    return {'name':name,'rank':rank,'power_millions':power,'hq_level':level}
+
+
+def _fingerprint(image,y):
+    h,w=image.shape[:2]
+    crop=image[max(0,y-45):min(h,y+79),225:670]
+    if crop.size==0:return None
+    gray=cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY)
+    small=cv2.resize(gray,(33,16),interpolation=cv2.INTER_AREA)
+    return (small[:,1:]>small[:,:-1]).flatten()
+
+
+def _seen_fingerprint(fingerprints,print_arr):
+    if print_arr is None:return False
+    for prev in fingerprints:
+        if np.count_nonzero(prev!=print_arr)<=40:return True
+    fingerprints.append(print_arr)
+    return False
+
+
+def extract_frame(frame,known_fingerprints=None):
+    frame=_resize_frame(frame);h,w=frame.shape[:2]
+    if h<1400 or w<640:return []
+    header=_detect_rank_headers(frame)
+    buttons=_detect_button_y(frame)
+    # Add card candidates without a blue Manage button, e.g. online R4 players.
+    cards=_card_candidate_y(frame)
+    for cy0,cy1 in cards:
+        estimate=cy0+54
+        if cy1-cy0 < 65:continue
+        if any(abs(existing-estimate)<83 for existing in buttons):continue
+        # A candidate should not intersect rank header band; nor be above first header.
+        if any(not(cy1<start or cy0>end+5) for start,end,_ in header):continue
+        if header and cy0<header[0][1]:continue
+        buttons.append(estimate)
+    buttons.sort()
+    for before,after in list(zip(buttons,buttons[1:])):
+        diff=after-before
+        if 296<diff<395:
+            midpoint=round((before+after)/2)
+            if all(not (start-90<midpoint<end+90) for start,end,_ in header):
+                buttons.append(midpoint)
+    buttons.sort()
+    results=[]
+    for button in buttons:
+        # All rows must be below the search region, and the entire name and power
+        # must be visible. Ignore partly hidden or clipped rows.
+        if button< int(h*.405) or button+83>int(h*.918):continue
+        if header and button < header[0][1]+25:continue
+        if any(start-42 <= button <= end+43 for start,end,_ in header):continue
+        visible_headers=[value for start,end,value in header if end<button]
+        if not visible_headers:continue
+        rank=visible_headers[-1]
+        fp=_fingerprint(frame,button)
+        if known_fingerprints is not None and _seen_fingerprint(known_fingerprints,fp):continue
+        item=_read_card(frame,button,rank)
+        if item: results.append(item)
+    return results
+
+
+def _key(name):
+    return re.sub(r'\s+','',name.casefold())
+
+
+def _rank_power_score(item):
+    power=item.get('power_millions')
+    return (3 if power is not None and 100 <= power < 600 else 1 if power is not None else 0) + (2 if item.get('hq_level') else 0) + (1 if item.get('rank') else 0) - (2 if any(c in item['name'] for c in '—™*') else 0)
+
+
+def _edit_distance(a,b):
+    if abs(len(a)-len(b))>2:return 99
+    prev=list(range(len(b)+1))
+    for i,c in enumerate(a,1):
+        curr=[i]
+        for j,d in enumerate(b,1):
+            curr.append(min(prev[j]+1,curr[-1]+1,prev[j-1]+(c!=d)))
+        prev=curr
+    return prev[-1]
+
+
+def reconcile_players(rows):
+    """Combine OCR variants only when corroborating data makes it safe.
+
+    Never merge solely because usernames are similar. Different players can
+    have names that differ by one character.
+    """
+    rows=sorted(rows,key=_rank_power_score,reverse=True)
+    output=[]
+    for row in rows:
+        name=re.sub(r'[^\w]','',row['name'].casefold())
+        match_index=None
+        for i,prev in enumerate(output):
+            old=re.sub(r'[^\w]','',prev['name'].casefold())
+            if row['rank']!=prev['rank']:continue
+            if name==old:
+                match_index=i;break
+            # A truncated initial/final character can be merged only when
+            # the available power and HQ readings agree.
+            same_power=(row['power_millions'] is not None and prev['power_millions'] is not None and abs(row['power_millions']-prev['power_millions'])<.15)
+            same_hq=(row['hq_level'] is not None and prev['hq_level'] is not None and row['hq_level']==prev['hq_level'])
+            compatible=(row['power_millions'] is None or prev['power_millions'] is None or same_power) and (row['hq_level'] is None or prev['hq_level'] is None or same_hq)
+            if len(name)>=5 and len(old)>=5 and compatible and _edit_distance(name,old)==1:
+                # Distinct usernames such as GrenyaReb and GrenyaReh must
+                # never be conflated just because the letters look alike.
+                is_insertion=len(name)!=len(old)
+                if is_insertion and (same_power or same_hq):match_index=i;break
+        if match_index is None:
+            output.append(dict(row));continue
+        prev=output[match_index]
+        # Fill missing fields without replacing confirmed numeric values.
+        if prev.get('power_millions') is None and row.get('power_millions') is not None:prev['power_millions']=row['power_millions']
+        if prev.get('hq_level') is None and row.get('hq_level') is not None:prev['hq_level']=row['hq_level']
+        if len(name)<len(re.sub(r'[^\w]','',prev['name'].casefold())) and _rank_power_score(row)>=_rank_power_score(prev):prev['name']=row['name']
+    return output
+
+
+def scan_upload(paths,progress:Callable[[int,int,str],None]):
+    """Return OCR candidates and diagnostics. Does not mutate the database."""
+    all_frames=[]; filenames=[]; warnings=[]
+    for path in paths:
+        suffix=Path(path).suffix.lower()
+        if suffix in ('.mp4','.mov','.m4v','.webm'):
+            try:
+                meta=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',str(path)],capture_output=True,text=True,timeout=12,check=True)
+                seconds=max(1,float(meta.stdout.strip()))
+                if seconds>420: raise ValueError('Video is too long. Limit recordings to seven minutes.')
+                fps=min(3.0,max(0.7,130/seconds))
+                count_limit=150
+                folder=Path(tempfile.mkdtemp(prefix='frames_'))
+                command=['ffmpeg','-hide_banner','-nostdin','-loglevel','error','-i',str(path),'-vf',f'fps={fps:.3f},scale=1080:-2','-frames:v',str(count_limit),'-q:v','4',str(folder/'frame_%04d.jpg')]
+                subprocess.run(command,timeout=170,check=True,capture_output=True)
+                images=sorted(folder.glob('frame_*.jpg'))
+                all_frames.extend(images);filenames.extend([Path(path).name]*len(images))
+                if len(images)==count_limit:
+                    warnings.append('The recording reached the 150 frame safety limit. Check for players not captured near the end.')
+            except (ValueError,subprocess.CalledProcessError,subprocess.TimeoutExpired) as exc:
+                raise ValueError('Could not decode the video: '+str(exc)[:150]) from exc
+        else:
+            all_frames.append(Path(path));filenames.append(Path(path).name)
+    if not all_frames:raise ValueError('No usable screenshots or video frames were found.')
+    observed={};fps_seen=[];total=len(all_frames);missing_stats=0
+    try:
+        for index,frame_file in enumerate(all_frames,1):
+            frame=cv2.imread(str(frame_file))
+            if frame is None:
+                warnings.append('Could not read an image frame.');continue
+            for row in extract_frame(frame,fps_seen if total>3 else None):
+                norm=_key(row['name'])
+                if not norm:continue
+                # Preserve name with most information; avoid replacing a valid
+                # value with a low confidence reading of the same visual row.
+                prev=observed.get(norm)
+                if not prev or _rank_power_score(row)>_rank_power_score(prev):observed[norm]=row
+            progress(index,total,f'Reading frame {index} of {total}')
+    finally:
+        for f in all_frames:
+            if f.parent.name.startswith('frames_'):
+                try:f.unlink(missing_ok=True)
+                except OSError:pass
+        folders={f.parent for f in all_frames if f.parent.name.startswith('frames_')}
+        for folder in folders:
+            try:folder.rmdir()
+            except OSError:pass
+    candidates=sorted(reconcile_players(list(observed.values())),key=lambda x:(-(int(x['rank'][1]) if x.get('rank') else 0),-(x.get('power_millions') or 0),x['name'].casefold()))
+    for item in candidates:
+        if item['power_millions'] is None or item['hq_level'] is None: missing_stats+=1
+    # Record possible duplicate readings as a review warning, never delete or
+    # automatically merge names with single-character substitutions.
+    suspicious=[]
+    for i,a in enumerate(candidates):
+        if len(a['name'])<6:continue
+        for b in candidates[i+1:]:
+            if a['rank']!=b['rank'] or len(b['name'])<6:continue
+            left=re.sub(r'[^\w]','',a['name'].casefold())
+            right=re.sub(r'[^\w]','',b['name'].casefold())
+            if _edit_distance(left,right)>1:continue
+            if a['power_millions'] is not None and b['power_millions'] is not None and abs(a['power_millions']-b['power_millions'])>.15:continue
+            suspicious.append(a['name']+' / '+b['name'])
+            if len(suspicious)>=8:break
+        if len(suspicious)>=8:break
+    if suspicious:
+        warnings.append('Check possible OCR name variants before syncing: '+', '.join(suspicious))
+    if missing_stats:
+        warnings.append(f'{missing_stats} players have a power or HQ value that OCR could not read. Correct these before syncing.')
+    return {'players':candidates,'frames_examined':total,'warnings':warnings}
