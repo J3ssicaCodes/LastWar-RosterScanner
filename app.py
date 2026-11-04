@@ -47,20 +47,25 @@ def _env(*names: str) -> str | None:
 
 
 def _db_config():
-    url = _env('DATABASE_URL', 'POSTGRES_URL', 'DATABASE_URI', 'POSTGRESQL_URL')
+    url = _env('DATABASE_URL', 'POSTGRES_URL', 'DATABASE_URI', 'POSTGRESQL_URL', 'DB_URL', 'POSTGRES_CONNECTION_STRING', 'DB_CONNECTION_STRING')
     if url:
         return {'conninfo': url}
-    host = _env('DB_HOST', 'POSTGRES_HOST', 'PGHOST', 'DATABASE_HOST', 'HOST')
-    user = _env('DB_USERNAME', 'DB_USER', 'POSTGRES_USER', 'PGUSER', 'DATABASE_USER', 'USERNAME', 'USER')
-    password = _env('DB_PASSWORD', 'POSTGRES_PASSWORD', 'PGPASSWORD', 'DATABASE_PASSWORD', 'PASSWORD')
-    db_name = _env('DB_NAME', 'POSTGRES_DB', 'DATABASE_NAME', 'DB_DATABASE', 'PGDATABASE', 'DATABASE', 'DBNAME')
-    port = _env('DB_PORT', 'POSTGRES_PORT', 'DATABASE_PORT', 'PGPORT')
+    host = _env('DB_HOST', 'DBHOST', 'DB_HOSTNAME', 'POSTGRES_HOST', 'POSTGRESQL_HOST', 'PGHOST', 'DATABASE_HOST', 'HOST', 'HOSTNAME')
+    user = _env('DB_USERNAME', 'DB_USER', 'DBUSER', 'POSTGRES_USER', 'POSTGRESQL_USER', 'PGUSER', 'DATABASE_USER', 'USERNAME', 'USER')
+    password = _env('DB_PASSWORD', 'DBPASSWORD', 'POSTGRES_PASSWORD', 'POSTGRESQL_PASSWORD', 'PGPASSWORD', 'DATABASE_PASSWORD', 'PASSWORD')
+    db_name = _env('DB_NAME', 'POSTGRES_DB', 'POSTGRES_DATABASE', 'DATABASE_NAME', 'DB_DATABASE', 'DB_DATABASE_NAME', 'PGDATABASE', 'DATABASE', 'DBNAME')
+    port = _env('DB_PORT', 'DBPORT', 'POSTGRES_PORT', 'POSTGRESQL_PORT', 'DATABASE_PORT', 'PGPORT')
     if not port:
         # Render reserves PORT for the *webserver*. Only accept a conventional
         # PostgreSQL number as a fallback if the user named their variable PORT.
         candidate = _env('PORT')
         port = candidate if candidate in ('5432', '5433', '6543') else '5432'
     if not all((host, user, password, db_name)):
+        # Keys only, never values. These diagnostics help match custom Render
+        # variable naming conventions without revealing secrets.
+        found=[name for name in os.environ if any(term in name.lower() for term in ('db','database','postgres','pg','host','user','password','port','name','conn'))]
+        print('Player List database environment keys:', sorted(found), flush=True)
+        print('Player List missing connection components:', [name for name,present in [('host',host),('user',user),('password',password),('database name',db_name)] if not present], flush=True)
         raise RuntimeError('PostgreSQL connection settings are incomplete. Configure DATABASE_URL or DB_HOST, DB_PORT, DB_USER, DB_PASSWORD and DB_NAME in Render.')
     return {'host': host, 'port': int(port), 'user': user, 'password': password,
             'dbname': db_name, 'sslmode': _env('DB_SSLMODE', 'PGSSLMODE') or 'prefer'}
@@ -113,6 +118,7 @@ def startup():
 
 
 @app.get('/')
+@app.head('/')
 def home():
     return FileResponse(BASE / 'index.html', media_type='text/html', headers={'Cache-Control': 'no-cache'})
 
