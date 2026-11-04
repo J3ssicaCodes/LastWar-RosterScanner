@@ -108,8 +108,8 @@ def _ocr_line(image, box, config='--psm 7', scale=2):
 
 def _normalize_name(name):
     # Avoid normalizing actual usernames into something different. Only trim OCR UI residue.
-    name=re.sub(r'^[^\w\u00c0-\uffff]+','',name,flags=re.U)
-    name=re.sub(r'\s+',' ',name).strip(' |~:.,;![](){}<>\\')
+    name=re.sub(r'^[^\w\[\]\u00c0-\uffff]+','',name,flags=re.U)
+    name=re.sub(r'\s+',' ',name).strip(' |~:.,;!(){}<>\\')
     name=re.sub(r'\b(?:Online|Manage)\b\s*$','',name,flags=re.I).strip()
     # Decorative streamer/gender icon artifacts occasionally trail names.
     name=re.sub(r'\s+[tT][S™]$','',name).strip()
@@ -186,6 +186,94 @@ def _seen_fingerprint(fingerprints,print_arr):
     return False
 
 
+def _profile_text(image, box, threshold=210, psm=7):
+    """Read high contrast white game lettering, ignoring the blue or gray panel."""
+    height, width = image.shape[:2]
+    x0, y0, x1, y1 = (int(v) for v in box)
+    x0, y0 = max(0,x0),max(0,y0)
+    x1, y1 = min(width,x1),min(height,y1)
+    if x1-x0<10 or y1-y0<10:return ''
+    gray=cv2.cvtColor(image[y0:y1,x0:x1],cv2.COLOR_BGR2GRAY)
+    # White fill with a black outline is very readable when isolated from the
+    # brightly coloured game UI. This deliberately avoids translated labels.
+    if threshold is not None:
+        gray=cv2.threshold(gray,threshold,255,cv2.THRESH_BINARY)[1]
+    enlarged=cv2.resize(gray,None,fx=3,fy=3,interpolation=cv2.INTER_CUBIC)
+    return pytesseract.image_to_string(enlarged,config=f'--psm {psm}').strip().replace('\n',' ')
+
+
+def extract_profile(frame):
+    """Read one player's profile popup, independent of the scrolling roster.
+
+    Popups show 'Lv.XX PLAYER NAME' in a blue strip, power in the first stat
+    box, and an R1-R5 badge above the alliance name. Their position is
+    anchored to the blue strip, rather than the viewport height. Never scan
+    a member list card behind an open profile popup.
+    """
+    h0,w0=frame.shape[:2]
+    if w0<300 or h0<550:return None
+    width=709
+    frame=cv2.resize(frame,(width,max(1,round(h0*width/w0))),
+                     interpolation=cv2.INTER_AREA if w0>width else cv2.INTER_CUBIC)
+    h,w=frame.shape[:2]
+    hsv=cv2.cvtColor(frame,cv2.COLOR_BGR2HSV)
+    blue=hsv[:,int(w*.40):int(w*.73):8]
+    hits=((blue[:,:,0]>=95)&(blue[:,:,0]<=115)&
+          (blue[:,:,1]>105)&(blue[:,:,2]>120)).mean(axis=1)
+    yy=np.where((hits>.60)&(np.arange(h)>int(h*.075))&
+                (np.arange(h)<int(h*.58)))[0]
+    # A profile has a wide blue strip. Search its upper edge: dynamic vertical
+    # anchoring permits screenshots with notifications or differently sized UI.
+    starts=[first for first,last in _groups(yy,max_gap=3,min_span=13)]
+    for y in starts:
+        if y+300>=h:continue
+        header=_profile_text(frame,(int(w*.135),y+8,int(w*.75),y+96),210)
+        m=re.search(r'\b[LlI1]\s*[vVuU]\s*[.:]?\s*([1-9]\d?)\s+(.+)',header)
+        if not m:continue
+        level=int(m.group(1))
+        name=_normalize_name(m.group(2))
+        # The icon after the name represents player gender, not part of the
+        # username. It is ordinarily excluded by the white-text threshold.
+        name=re.sub(r'[♀♂⚥]','',name).strip()
+        if name.count('[')!=name.count(']'):
+            # UI glyph outlines can make a closing alliance-tag bracket look
+            # like a j. Try a less aggressive luminance cutoff before
+            # allowing an untrusted name to reach the database.
+            for threshold in (195,200,205,225):
+                revised=_profile_text(frame,(int(w*.135),y+8,int(w*.75),y+96),threshold)
+                variant=re.search(r'\b[LlI1]\s*[vVuU]\s*[.:]?\s*([1-9]\d?)\s+(.+)',revised)
+                if not variant or int(variant.group(1))!=level:continue
+                candidate=_normalize_name(variant.group(2))
+                if candidate.count('[')==candidate.count(']'):
+                    name=candidate
+                    break
+        if not name or not 1<=level<=99:continue
+        # Profile badges use dark orange lettering on a yellow shield. A tight
+        # crop reads the R number without including the alliance name beside it.
+        badge_box=(int(w*.46),y+240,int(w*.52),y+288)
+        bx0,by0,bx1,by1=badge_box
+        badge=frame[by0:by1,bx0:bx1]
+        if badge.size==0:continue
+        gray=cv2.cvtColor(badge,cv2.COLOR_BGR2GRAY)
+        versions=(gray,cv2.threshold(gray,130,255,cv2.THRESH_BINARY)[1])
+        rank=None
+        for version in versions:
+            up=cv2.resize(version,None,fx=4,fy=4,interpolation=cv2.INTER_CUBIC)
+            match=re.search(r'R\s*([1-5])',pytesseract.image_to_string(up,
+                config='--psm 7 -c tessedit_char_whitelist=Rr12345'),re.I)
+            if match:
+                rank='R'+match.group(1)
+                break
+        if not rank:continue
+        stat=_profile_text(frame,(int(w*.53),y+110,int(w*.73),y+188),225)
+        power_match=re.search(r'(?<!\d)(\d{1,4})[.,](\d)\s*[Mm]\b',stat)
+        power=float(power_match.group(1)+'.'+power_match.group(2)) if power_match else None
+        return {'name':name,'rank':rank,'power_millions':power,
+                'hq_level':level,'source_type':'profile',
+                'needs_review':name.count('[')!=name.count(']')}
+    return None
+
+
 def extract_frame(frame,known_fingerprints=None):
     frame=_resize_frame(frame);h,w=frame.shape[:2]
     if h<1400 or w<640:return []
@@ -232,7 +320,7 @@ def _key(name):
 
 def _rank_power_score(item):
     power=item.get('power_millions')
-    return (3 if power is not None and 100 <= power < 600 else 1 if power is not None else 0) + (2 if item.get('hq_level') else 0) + (1 if item.get('rank') else 0) - (2 if any(c in item['name'] for c in '—™*') else 0)
+    return (6 if item.get('source_type')=='profile' else 0) + (3 if power is not None and 100 <= power < 600 else 1 if power is not None else 0) + (2 if item.get('hq_level') else 0) + (1 if item.get('rank') else 0) - (2 if any(c in item['name'] for c in '—™*') else 0)
 
 
 def _edit_distance(a,b):
@@ -275,6 +363,9 @@ def reconcile_players(rows):
         if match_index is None:
             output.append(dict(row));continue
         prev=output[match_index]
+        # A clear profile is more authoritative than an OCR reading from a scrolling list.
+        if row.get('source_type')=='profile' and prev.get('source_type')!='profile':
+            prev.update({k:v for k,v in row.items() if v is not None})
         # Fill missing fields without replacing confirmed numeric values.
         if prev.get('power_millions') is None and row.get('power_millions') is not None:prev['power_millions']=row['power_millions']
         if prev.get('hq_level') is None and row.get('hq_level') is not None:prev['hq_level']=row['hq_level']
@@ -312,13 +403,21 @@ def scan_upload(paths,progress:Callable[[int,int,str],None]):
             frame=cv2.imread(str(frame_file))
             if frame is None:
                 warnings.append('Could not read an image frame.');continue
-            for row in extract_frame(frame,fps_seen if total>3 else None):
+            profile=extract_profile(frame)
+            rows=[profile] if profile else extract_frame(frame,fps_seen if total>3 else None)
+            for row in rows:
                 norm=_key(row['name'])
                 if not norm:continue
                 # Preserve name with most information; avoid replacing a valid
                 # value with a low confidence reading of the same visual row.
                 prev=observed.get(norm)
-                if not prev or _rank_power_score(row)>_rank_power_score(prev):observed[norm]=row
+                if not prev or _rank_power_score(row)>_rank_power_score(prev):
+                    if prev and row.get('power_millions') is None:row['power_millions']=prev.get('power_millions')
+                    if prev and row.get('hq_level') is None:row['hq_level']=prev.get('hq_level')
+                    observed[norm]=row
+                elif prev:
+                    if prev.get('power_millions') is None:prev['power_millions']=row.get('power_millions')
+                    if prev.get('hq_level') is None:prev['hq_level']=row.get('hq_level')
             progress(index,total,f'Reading frame {index} of {total}')
     finally:
         for f in all_frames:
