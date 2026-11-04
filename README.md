@@ -58,3 +58,21 @@ A scan job processes up to 150 sampled frames per video, with a 150 MB upload li
 This version includes the Canyon Storm faction banner OCR layout correction. OCR accuracy can vary by screenshot dimensions, compression, and game language; manually review the resulting roster before using it for an event.
 
 This is a private project and is not affiliated with the Last War game publisher.
+
+## Individual player profiles
+
+The Player List uploader accepts individual Player Profile screenshots as well as
+Member List screenshots and one MP4/MOV/WebM screen recording in the same batch.
+It detects the blue `Lv.XX NAME` profile header, the power value in the first
+stat box, and the `R1` through `R5` shield next to the alliance label. Player
+Profile screenshots are particularly useful for R5 leaders who appear above
+the member search bar and should not be counted as scrolling member cards.
+
+Profile entries are merged with players detected in the scrolling list using
+exact normalized player names. A complete, legible batch containing only
+profile screenshots can update the database automatically after uploading;
+other imports show an editable review table to avoid saving uncertain OCR.
+Profile-only uploads never flag other players as removed. Recordings can be
+combined with extra profile screenshots, and the complete-list setting must
+be confirmed before flagging missing members. Only the Player List tab and
+its backend import pipeline use the shared database.
