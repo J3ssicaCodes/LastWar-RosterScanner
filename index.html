@@ -279,7 +279,6 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
         <strong>Import options</strong>
         <div id="plFileNames" class="pl-file-names">No files selected</div>
         <label class="pl-check"><input type="checkbox" id="plFullCapture"> <span><b>Complete player list</b><small>Only check when the entire member list was captured. Missing players will be flagged; profile screenshots alone never count as a full capture.</small></span></label>
-        <label class="pl-key-label" id="plKeyLabel" hidden>Upload access key<input type="password" id="plUploadKey" autocomplete="off" placeholder="Key provided by your alliance admin"><small>Required to make changes to the shared player database.</small></label>
         <button class="btn primary pl-main-btn" type="button" id="plScanBtn" disabled>✧ Scan player list</button>
       </div>
     </div>
@@ -2016,14 +2015,10 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const state = {files:[], candidates:[], players:[], busy:false, databaseReady:false, protected:false};
+  const state = {files:[], candidates:[], players:[], busy:false, databaseReady:false};
   const escape = value => String(value??'').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const ext = file => (file.name.split('.').pop() || '').toLowerCase();
   const hasVideo = file => ['mp4','mov','m4v','webm'].includes(ext(file));
-  const headers = () => {
-    const key=$('plUploadKey').value.trim();
-    return key ? {'X-Player-List-Key':key}: {};
-  };
   const msg = (text,isError=false) => {
     const el=$('plNotice'); el.hidden=!text;el.textContent=text||'';el.classList.toggle('error',isError);
   };
@@ -2051,8 +2046,6 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       const r=await fetch('/api/player-list/health',{cache:'no-store'});
       const data=await r.json();
       state.databaseReady=!!data.database&&data.database==='connected';
-      state.protected=!!data.upload_protected;
-      $('plKeyLabel').hidden=!state.protected;
       $('plConnection').textContent=state.databaseReady?'● Player database connected':'● Player database unavailable. Check Render database settings.';
       $('plConnection').className='pl-connection '+(state.databaseReady?'ok':'bad');
     }catch{
@@ -2073,7 +2066,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     progress(0,'Uploading media…');
     try{
       const form=new FormData(); for(const file of state.files)form.append('files',file,file.name);
-      const response=await fetch('/api/player-list/scan',{method:'POST',headers:headers(),body:form});
+      const response=await fetch('/api/player-list/scan',{method:'POST',body:form});
       const {job_id}=await checkedJson(response);
       let result;
       for(let attempt=0;attempt<900;attempt++){
@@ -2097,7 +2090,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
         msg('Profile recognized. Automatically updating the player database…');
         try{
           const records=state.candidates.map(({name,rank,power_millions,hq_level})=>({name,rank,power_millions,hq_level}));
-          const r=await fetch('/api/player-list/import',{method:'POST',headers:{...headers(),'Content-Type':'application/json'},body:JSON.stringify({players:records,full_capture:false})});
+          const r=await fetch('/api/player-list/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({players:records,full_capture:false})});
           const saved=await checkedJson(r);
           msg(`Profile saved automatically. ${saved.new_count} new, ${saved.updated_count} updated. Other players were not marked missing.`);
           await loadDirectory();
@@ -2148,7 +2141,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     state.busy=true;$('plSyncBtn').disabled=true;
     msg('Syncing '+records.length+' reviewed players…');
     try{
-      const r=await fetch('/api/player-list/import',{method:'POST',headers:{...headers(),'Content-Type':'application/json'},body:JSON.stringify({players:records,full_capture})});
+      const r=await fetch('/api/player-list/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({players:records,full_capture})});
       const result=await checkedJson(r);
       msg(`Saved ${result.scanned_count} players. ${result.new_count} new, ${result.updated_count} updated, ${result.possibly_removed_count} possibly removed. Nothing was deleted.`);
       await loadDirectory();
