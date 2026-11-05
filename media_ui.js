@@ -26,6 +26,21 @@
   .media-progress small{display:block;margin-top:4px;color:var(--muted)}
   .media-banner{border:1px solid #9476b0;border-radius:11px;padding:12px 15px;margin:12px 0 18px;background:var(--panel2)}
   .media-banner[hidden],.media-progress[hidden]{display:none}
+  .media-notification-trigger{display:block;width:100%;text-align:left;color:var(--text);font:inherit;cursor:pointer;line-height:1.5}
+  .media-notification-trigger:hover,.media-notification-trigger:focus-visible{border-color:#c7a2e3;outline-offset:2px}
+  #mediaQueueDialog{width:min(680px,calc(100vw - 22px));max-height:88vh;overflow:auto;border:1px solid var(--stroke);border-radius:17px;background:var(--panel);color:var(--text);box-shadow:0 18px 70px #0009;padding:22px}
+  #mediaQueueDialog::backdrop{background:#040712b3}
+  .media-queue-summary{margin:14px 0;color:var(--muted);font-size:14px}
+  .media-queue-section{margin:16px 0}.media-queue-section h3{font-size:15px;margin:0 0 9px}
+  .media-queue-list{list-style:none;padding:0;margin:0;display:grid;gap:9px}
+  .media-queue-entry{border:1px solid var(--stroke);border-radius:11px;padding:12px;background:var(--panel2)}
+  .media-queue-line{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  .media-queue-entry strong{font-size:14px}.media-queue-entry small{display:block;color:var(--muted);font-size:12px;margin-top:4px}
+  .media-queue-state{font-size:12px;font-weight:700;color:var(--text);white-space:nowrap}
+  .media-queue-entry progress{width:100%;height:9px;accent-color:#a67ac1;margin-top:10px}
+  .media-queue-entry .media-queue-message{overflow-wrap:anywhere;color:var(--muted);font-size:13px;margin-top:6px}
+  .media-queue-empty{color:var(--muted);padding:14px 0}
+  .media-queue-footer{display:flex;justify-content:flex-end;margin-top:18px}
   .media-review{margin-top:18px}.media-review[hidden]{display:none}
   .media-review table{min-width:700px}.media-review td input,.media-review td select{width:100%;min-width:70px;box-sizing:border-box;font:inherit}
   .media-review .media-review-actions{display:flex;justify-content:flex-end;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:11px}
@@ -42,7 +57,7 @@
   .pl-rank-heading small{color:var(--muted);font-size:12px}.pl-rank-heading strong{font-size:15px}
   #playerListView .pl-upload-grid,#playerListView .pl-scan-progress,#playerListView #plReviewPanel{display:none!important}
   #rosterScannerView [aria-labelledby="uploadHeading"]{display:none!important}
-  @media(max-width:680px){.media-top-button{width:100%;margin:4px 0}.media-destination{font-size:12px;padding:13px 4px}#mediaDialog{padding:15px}.media-titlebar h2{font-size:20px}}
+  @media(max-width:680px){.media-top-button{width:100%;margin:4px 0}.media-destination{font-size:12px;padding:13px 4px}#mediaDialog,#mediaQueueDialog{padding:15px}.media-titlebar h2{font-size:20px}}
   `;
   document.head.append(css);
 
@@ -66,8 +81,32 @@
   <div id="mediaMessage" class="media-banner" role="status" aria-live="polite" hidden></div>
   <div class="media-actions"><small style="color:var(--muted)">Uploaded media is deleted when scanning completes.</small><button class="btn primary" id="mediaSubmit" disabled>Upload and scan</button></div>`;
   document.body.append(dialog);
-  const banner=document.createElement('div');banner.id='mediaNotification';banner.className='media-banner';banner.hidden=true;banner.setAttribute('role','status');
+  const banner=document.createElement('button');
+  banner.type='button';banner.id='mediaNotification';
+  banner.className='media-banner media-notification-trigger';banner.hidden=true;
+  banner.setAttribute('aria-live','polite');
+  banner.setAttribute('aria-haspopup','dialog');
+  banner.setAttribute('aria-controls','mediaQueueDialog');
+  banner.title='View current scanning status and queue';
   top?.after(banner);
+  const queueDialog=document.createElement('dialog');
+  queueDialog.id='mediaQueueDialog';queueDialog.setAttribute('aria-labelledby','mediaQueueTitle');
+  queueDialog.innerHTML=`<div class="media-titlebar">
+    <div><div class="eyebrow">Media Upload</div><h2 id="mediaQueueTitle">Scan Queue</h2>
+      <p>Live status from the Render scanning service.</p></div>
+    <button type="button" class="btn" id="mediaQueueClose" aria-label="Close scan queue">✕ Close</button>
+  </div>
+  <p class="media-queue-summary" id="mediaQueueSummary" role="status" aria-live="polite">Loading scans…</p>
+  <div id="mediaQueueEntries"><p class="media-queue-empty">Checking the queue…</p></div>
+  <div class="media-queue-footer"><button type="button" class="btn" id="mediaQueueRefresh">↻ Refresh status</button></div>`;
+  document.body.append(queueDialog);
+  $('mediaQueueClose').onclick=()=>queueDialog.close();
+  banner.onclick=()=>{
+    if(queueDialog.open)return;
+    queueDialog.showModal();
+    refreshJobs();
+  };
+  $('mediaQueueRefresh').onclick=()=>refreshJobs();
 
   const playerView=$('playerListView');
   const pendingPanel=document.createElement('section');
@@ -80,7 +119,10 @@
   const directory=playerView?.querySelector('[aria-labelledby="plDirectoryTitle"]');
   directory?.before(pendingPanel);
 
-  function announce(text){banner.hidden=false;banner.textContent=text;}
+  function announce(text){
+    banner.hidden=false;
+    banner.textContent=text+'  ·  Tap to view scan queue';
+  }
   function message(text,error=false){const el=$('mediaMessage');el.hidden=!text;el.textContent=text;el.style.borderColor=error?'#db7284':'#9476b0';}
   function updateTarget(){
     dialog.querySelectorAll('[data-dest]').forEach(btn=>btn.setAttribute('aria-pressed',String(btn.dataset.dest===destination)));
@@ -232,9 +274,44 @@
     }catch(e){announce('Could not dismiss entries: '+e.message);}
     finally{$('mediaDismiss').disabled=false;}
   };
+  function renderScanQueue(jobs){
+    const active=jobs.filter(job=>job.status==='scanning')
+      .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+    const waiting=jobs.filter(job=>job.status==='queued')
+      .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+    const history=jobs.filter(job=>!['queued','scanning'].includes(job.status))
+      .sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+    $('mediaQueueSummary').textContent=active.length+' scanning · '+waiting.length+' waiting · '+history.length+' recent results';
+    const label=job=>job.destination==='storm'?'Storm Roster':job.destination==='players'?'Player List':'Other upload';
+    const statuses={scanning:'Scanning',queued:'Waiting',review:'Awaiting player review',
+      ready:'Completed',approved:'Approved',error:'Failed',interrupted:'Interrupted'};
+    function item(job,queueIndex){
+      const pct=Math.min(100,Math.max(0,Number(job.progress)||0));
+      const date=new Date(job.created_at);
+      const time=Number.isNaN(date.getTime())?'':date.toLocaleString();
+      const statusText=statuses[job.status]||job.status;
+      const position=queueIndex!=null?' · Queue position '+(queueIndex+1):'';
+      const count=Number(job.result_count)||0;
+      const countText=['ready','review','approved'].includes(job.status)?' · '+count+' results':'';
+      return '<li class="media-queue-entry"><div class="media-queue-line"><strong>'+
+        escape(label(job))+'</strong><span class="media-queue-state">'+escape(statusText+position+countText)+
+        '</span></div><small>'+escape(time)+'</small>'+
+        (['queued','scanning'].includes(job.status)?'<progress max="100" value="'+pct+
+        '" aria-label="'+escape(label(job)+' scanning progress')+'"></progress><small>'+pct+'% completed</small>':'')+
+        '<div class="media-queue-message">'+escape(job.message||'No further details yet.')+'</div></li>';
+    }
+    const section=(heading,list,queue=false)=>list.length?
+      '<section class="media-queue-section"><h3>'+heading+'</h3><ol class="media-queue-list">'+
+      list.map((job,i)=>item(job,queue?i:null)).join('')+'</ol></section>':'';
+    $('mediaQueueEntries').innerHTML=
+      section('Currently scanning',active)+section('Waiting in queue',waiting,true)+
+      section('Recent results',history.slice(0,15))+
+      (!jobs.length?'<p class="media-queue-empty">No scans have been uploaded yet.</p>':'');
+  }
   async function refreshJobs(){
     try{
       const {jobs=[]}=await getJson('/api/media/jobs');
+      if(queueDialog.open)renderScanQueue(jobs);
       const newAlerts=[];
       for(const job of jobs){
         if(['ready','review','error','interrupted'].includes(job.status)){
@@ -265,7 +342,10 @@
         const j=jobs.find(j=>j.status==='scanning'||j.status==='queued');
         if(!newAlerts.length)announce('⌛ '+(j.destination==='storm'?'Storm Roster':'Player List')+' scan '+j.progress+'%: '+j.message);
       }
-    }catch(e){console.warn('Media jobs temporarily unavailable:',e.message);}
+    }catch(e){
+      console.warn('Media jobs temporarily unavailable:',e.message);
+      if(queueDialog.open)$('mediaQueueSummary').textContent='Unable to refresh. Check your connection and try again.';
+    }
   }
   window.refreshMediaUploads=()=>Promise.all([refreshJobs(),refreshPending()]);
   window.addEventListener('focus',()=>refreshJobs());
