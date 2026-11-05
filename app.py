@@ -10,6 +10,7 @@ import base64
 import binascii
 import csv
 import io
+import logging
 import os
 import re
 import shutil
@@ -42,6 +43,7 @@ MAX_UPLOAD_BYTES = 150 * 1024 * 1024
 MAX_FILES = 75
 DATABASE_OK = False
 DATABASE_ERROR = ''
+scan_logger = logging.getLogger('uvicorn.error')
 
 
 def _env(*names: str) -> str | None:
@@ -271,16 +273,20 @@ def _update_job(job_id, **fields):
 
 def _run_scan(job_id, paths, tempdir):
     try:
-        _update_job(job_id,status='scanning',message='Preparing uploaded media…',progress=1)
+        _update_job(job_id,status='scanning',message='Reading cached media on Render. Safe to lock your screen.',progress=2)
+        scan_logger.info('Player List OCR job %s started for %d cached file(s).',job_id,len(paths))
         def progress(current,total,message):
             _update_job(job_id,progress=round(current/max(total,1)*100),message=message)
         result=scan_upload(paths,progress)
+        scan_logger.info('Player List OCR job %s finished: %d candidates, %d frames.',job_id,len(result['players']),result['frames_examined'])
         _update_job(job_id,status='ready',message='Review extracted players before syncing.',progress=100,
                     players=result['players'],frames_examined=result['frames_examined'],warnings=result['warnings'])
     except Exception as exc:
-        _update_job(job_id,status='error',message=str(exc)[:350],progress=0)
+        scan_logger.exception('Player List OCR job %s failed.',job_id)
+        _update_job(job_id,status='error',message=str(exc)[:350],progress=1)
     finally:
         shutil.rmtree(tempdir,ignore_errors=True)
+        scan_logger.info('Player List temporary upload cache deleted for job %s.',job_id)
 
 
 @app.post('/api/player-list/scan',status_code=202)
@@ -314,7 +320,7 @@ async def upload_scan(files:list[UploadFile]=File(...)):
         raise
     job_id=str(uuid.uuid4())
     with job_lock:
-        jobs[job_id]={'created_at':time.time(),'status':'queued','message':'Queued for scanning','progress':0,'players':[], 'warnings':[]}
+        jobs[job_id]={'created_at':time.time(),'status':'queued','message':'Video cached on server; waiting for OCR worker…','progress':1,'players':[], 'warnings':[]}
     executor.submit(_run_scan,job_id,saved,tempdir)
     return {'job_id':job_id}
 
