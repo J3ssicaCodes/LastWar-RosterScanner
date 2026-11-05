@@ -131,6 +131,25 @@ def text_with_conf(im,psm=7,whitelist=None):
     return ' '.join(toks).strip(),round(float(np.mean(confidences)),1) if confidences else 0.
 
 
+def retry_name_crop(crop, name, confidence):
+    """Retry a weak name as a tight line of ink, without a character whitelist."""
+    if confidence >= 55 or not crop.size:
+        return name, confidence
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    # Dark ink on the ranking card. Retain grayscale details in the OCR input.
+    background = float(np.median(gray))
+    ys, xs = np.where(gray < min(115, background - 35))
+    if not xs.size:
+        return name, confidence
+    tight = gray[ys.min():ys.max()+1, xs.min():xs.max()+1]
+    padded = cv2.copyMakeBorder(enlarge(tight, 3), 24, 24, 24, 24,
+                                cv2.BORDER_CONSTANT, value=255)
+    candidate, score = text_with_conf(padded, 7)
+    if sum(character.isalnum() for character in candidate) >= 2 and score >= max(65, confidence + 15):
+        return candidate, score
+    return name, confidence
+
+
 def ocr_fields(im,cy):
     h,w=im.shape[:2];s=w/1080.; yy=lambda x:int(round(x*s))
     def crop(x0,x1,y0,y1):return im[max(0,cy+yy(y0)):min(h,cy+yy(y1)),yy(x0):yy(x1)]
@@ -160,6 +179,8 @@ def add_fallback_ocr(ob):
         txt,conf=text_with_conf(enlarge(ob['name_crop'],3),13)
         ob['alternate_name']=txt;ob['alternate_name_conf']=conf
         if not n or (conf>ob['name_conf']+18 and len(txt)>=len(n)):ob['name']=txt;ob['name_conf']=conf
+        ob['name'],ob['name_conf']=retry_name_crop(
+            ob['name_crop'],ob['name'],ob['name_conf'])
     if not v or not v.isdecimal() or ob['value_conf']<60:
         txt,conf=text_with_conf(enlarge(ob['value_crop'],3),13,'0123456789')
         ob['alternate_value']=txt;ob['alternate_value_conf']=conf

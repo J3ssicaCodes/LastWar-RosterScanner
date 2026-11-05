@@ -9,7 +9,7 @@ import tempfile
 import cv2
 import numpy as np
 from extract_ranking_pages import detect, extract
-from scan_rankings import card_borders, pinned_top, estimate_row_height, text_with_conf, enlarge, best_start
+from scan_rankings import card_borders, pinned_top, estimate_row_height, text_with_conf, enlarge, best_start, retry_name_crop
 
 from player_identity import corrected_name, name_key
 
@@ -91,10 +91,12 @@ def read_page(image, page, period, upper, targets=None, anchors=None):
         position=re.sub(r'\D','',position)
         position=int(position) if position.isdigit() and 1<=int(position)<=100 else None
         if targets is not None and position not in targets:continue
-        name, nc=text_with_conf(enlarge(crop(350,808,-57,-5)),7)
+        name_crop=crop(350,808,-57,-5)
+        name, nc=text_with_conf(enlarge(name_crop),7)
         if not name or nc<55:
-            alternate,confidence=text_with_conf(enlarge(crop(350,808,-57,-5),3),13)
+            alternate,confidence=text_with_conf(enlarge(name_crop,3),13)
             if alternate and (not name or confidence>nc):name,nc=alternate,confidence
+            name,nc=retry_name_crop(name_crop,name,nc)
         name=re.sub(r'\s+',' ',name).strip()
         zero=isolated_zero(crop(806,1035,-25,44))
         val,vc=('0',98.) if zero else text_with_conf(enlarge(crop(806,1035,-25,44)),7,'0123456789,')
