@@ -56,9 +56,9 @@ A scan job processes up to 96 adaptive sampled frames per video, with a 150 MB u
 
 ## Faster video scans and temporary media
 
-Player List uploads are streamed into a temporary directory on Render. Once the upload returns a scan job ID, OCR runs on the server in a background worker. The video, screenshots, and any extracted video frames are deleted from that temporary directory after scanning completes or fails. Only the extracted review results are retained in short-lived server memory until the user confirms an import; the shared MySQL player list is not changed by merely scanning.
+Player List uploads are streamed into a temporary directory on Render. Once the upload returns a scan job ID, OCR runs on the server in a background worker. The video, screenshots, and any extracted video frames are deleted from that temporary directory after scanning completes or fails. Results from the shared Media Upload route are staged in MySQL until approved. The shared MySQL player list is not changed by merely scanning.
 
-Android or iOS may suspend an upload when a phone locks. Keep the page open **until the upload finishes and the server confirms it is scanning**. After that acknowledgement, locking the screen will not stop the server's worker. Player List remembers the job ID in the browser and resumes progress or recovers the review table after a page reload. Jobs can be lost if Render restarts its process, and a long-running scan is subject to Render's free-service runtime limits; if that happens, upload the source again.
+Android or iOS may suspend an upload when a phone locks. Keep the page open **until the upload finishes and the server confirms it is scanning**. After that acknowledgement, locking the screen will not stop the server's worker. The shared Media Upload route stores job status and pending review rows in MySQL, so they can be recovered after a page reload. Jobs can be lost if Render restarts its process, and a long-running scan is subject to Render's free-service runtime limits; if that happens, upload the source again.
 
 The OCR engine remains free open source Tesseract running within Render. Videos use adaptive frame sampling, repeat-card skipping, and a dedicated member-list detector to avoid unnecessary OCR work. Highly rapid scrolling can still cause missed players and should be reviewed before a complete-roster import.
 
@@ -78,9 +78,7 @@ Profile screenshots are particularly useful for R5 leaders who appear above
 the member search bar and should not be counted as scrolling member cards.
 
 Profile entries are merged with players detected in the scrolling list using
-exact normalized player names. A complete, legible batch containing only
-profile screenshots can update the database automatically after uploading;
-other imports show an editable review table to avoid saving uncertain OCR.
+exact normalized player names. All new uploads through the common Media Upload button require review and approval before changing the official Player List.
 Profile-only uploads never flag other players as removed. Recordings can be
 combined with extra profile screenshots, and the complete-list setting must
 be confirmed before flagging missing members. Only the Player List tab and
@@ -96,3 +94,38 @@ The Player List backend uses the existing cPanel MySQL database via environment 
 * Crops are compressed as WebP and stored in the existing MySQL `player list` table. They persist through Render redeploys.
 * The optional birthday field is entered manually through a calendar icon in Player List and saved by `PATCH /api/player-list/{id}/birthday`. Scanning never invents birthdays or clears previously entered birthdays.
 * Existing MySQL player tables are upgraded in place with `birthday`, `avatar_image`, and `avatar_updated_at` columns at startup. Profiles and incomplete screenshots without a video retain existing portraits.
+
+## Shared Media Upload and approval workflow (current)
+
+All new uploads begin with the **Media Upload** button in the Alliance Tools header.
+Choose **Storm Roster** or **Player List**; **VS Scores** is intentionally disabled
+until that module is developed. You can send screenshots or one screen recording
+and optional screenshots in the same batch. After the server accepts the upload,
+the OCR job runs on Render even if the phone screen locks. Raw uploads and extracted
+video frames are kept in a temporary server directory and deleted after each job.
+
+Three new MySQL tables are automatically initialized, using the existing Render
+database configuration:
+
+* `media_scan_jobs` stores scan status and progress across page reloads. A server
+  restart may interrupt an active scan, but completed results remain available.
+* `storm roster` stores the **latest Storm scan only**. A successful scan replaces
+  the previous event snapshot. Roster Scanner loads that snapshot automatically,
+  preserving its existing planner, Event Manager and phase assignments.
+* `roster upload` stores extracted Player List records **awaiting approval**.
+  Pending changes are displayed in an editable review panel above the Player List
+  directory, and this panel is hidden when no records are pending.
+
+Approving Player List changes writes the accepted records to the official `player list`
+table and removes the reviewed entries from `roster upload`. Unchecked detections
+are dismissed. A full capture flag can only mark players possibly removed after
+review; incomplete captures do not affect other members. No Player List upload now
+writes directly to the official table during scanning.
+
+Player List is grouped under collapsible R5 through R1 rank headings rather than
+repeating the rank in every row. Last Seen is not shown or exported in the Player
+List CSV. Birthday and portrait data are retained across scans as before.
+
+Notifications are shown inside the web app when a scan finishes or when a pending
+Player List review becomes available. Opening or resuming the app refreshes the
+status. This is not a native Android/iOS push notification system.
