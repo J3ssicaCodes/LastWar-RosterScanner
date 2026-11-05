@@ -496,6 +496,11 @@ def recognize_player_row(row_image, layout, tab, source=None, geometry=None, cac
         avatar=cv2.resize(avatar,None,fx=factor,fy=factor,interpolation=cv2.INTER_AREA)
     ok,encoded=cv2.imencode('.png',avatar)
     avatar_bytes=encoded.tobytes() if ok else b''
+    # Keep a compact visual copy of this *complete* observed row for review.
+    # Full video/screenshot inputs are still deleted after server processing.
+    proof_ok,proof=cv2.imencode('.webp',row_image,
+        [int(cv2.IMWRITE_WEBP_QUALITY),84])
+    proof_base64=base64.b64encode(proof.tobytes()).decode() if proof_ok and len(proof)<180000 else None
     result={'name':name,'rank':rank,'power':stat if tab=='power' else None,
             'kills':stat if tab=='kills' else None,'donations':stat if tab=='donations' else None,
             'tab':tab,'leaderboard_position':pos,'avatar_base64':base64.b64encode(avatar_bytes).decode() if avatar_bytes else None,
@@ -505,7 +510,7 @@ def recognize_player_row(row_image, layout, tab, source=None, geometry=None, cac
             'name_text':name,'stat_text':stat_text,'name_confidence':round(name_conf,1),
             'stat_confidence':round(stat_conf,1),'rank_confidence':round(rank_conf,1),
             'rank_method':rank_method,'name_alternatives':alts,'stat_alternatives':stat_alternatives,
-            'source_type':'leaderboard','source_hash':digest}
+            'source_type':'leaderboard','source_hash':digest,'evidence_base64':proof_base64}
     cache[key]=dict(result)
     return result
 
@@ -718,7 +723,7 @@ def export_results(players,audit):
     exported=[]
     for p in players:
         public={key:p.get(key) for key in ('avatar_base64','rank','name','power','kills','donations','tab',
-                                           'source_image','review_required','review_reasons','source_type')}
+                                           'source_image','review_required','review_reasons','source_type','evidence_base64')}
         # Position is sent to staging/audit but is NOT a user-facing table field.
         public['internal_position']=p.get('leaderboard_position')
         public['audit']={key:p.get(key) for key in ('position_text','name_text','stat_text',
