@@ -423,3 +423,13 @@ def import_players(body: ImportData):
         raise HTTPException(503, detail='Could not sync Player List. Check the MySQL connection and Render logs.') from exc
     return {'import_id':batch_id,'scanned_count':len(unique),'new_count':created,
             'updated_count':updated,'possibly_removed_count':removed,'full_capture':body.full_capture}
+
+@app.get('/media_ui.js')
+def shared_media_script():
+    return FileResponse(BASE / 'media_ui.js', media_type='application/javascript',
+                        headers={'Cache-Control': 'no-cache'})
+
+# Register the common Media Upload API after the Player List models and import
+# transaction are defined, avoiding circular startup dependencies.
+from media_upload import install_media_upload
+install_media_upload(app, db_connect, import_players, ImportData)
