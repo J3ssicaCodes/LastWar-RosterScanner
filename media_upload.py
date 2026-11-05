@@ -20,7 +20,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from player_list_ocr import scan_upload, extract_profile
-from leaderboard_ocr import scan_leaderboard_upload, detect_leaderboard_layout, TAB_NAMES
+from tested_rankings_adapter import scan_tested_rankings_upload
 from storm_roster_ocr import scan_storm_upload
 import cv2
 
@@ -193,7 +193,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     else:
                         leaderboard_files.append(path)
                 if leaderboard_files:
-                    result = scan_leaderboard_upload(leaderboard_files, report)
+                    result = scan_tested_rankings_upload(leaderboard_files, report)
                 else:
                     result = {'players': [], 'audit': [], 'diagnostics': {},
                               'frames_examined':0,'warnings':[]}
