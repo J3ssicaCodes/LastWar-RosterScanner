@@ -32,7 +32,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
-from player_identity import match_master, name_key, corrected_name, load_name_corrections
+from player_identity import match_master, name_key, corrected_name, load_name_corrections, learn_name_correction
 from player_list_ocr import scan_upload
 
 BASE = Path(__file__).parent
@@ -430,6 +430,54 @@ class Member(BaseModel):
         return v
 
 
+class PlayerProfileUpdate(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    rank: str = Field(pattern=r'^R[1-5]$')
+    expected_name: str
+    expected_rank: str
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, value):
+        return Member.safe_name(value)
+
+
+@app.patch('/api/player-list/{player_id}/profile')
+def update_player_profile(player_id: int, body: PlayerProfileUpdate):
+    try:
+        with db_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute('SELECT id,player_name,player_rank FROM `player list` FOR UPDATE')
+                    players = cur.fetchall()
+                    player = next((p for p in players if p['id'] == player_id), None)
+                    if not player:
+                        raise HTTPException(404, detail='Player not found.')
+                    if (player['player_name'], player['player_rank']) != (body.expected_name, body.expected_rank):
+                        raise HTTPException(409, detail='This player changed. Close and reopen the profile before editing.')
+                    if match_master({'name': body.name}, [p for p in players if p['id'] != player_id]):
+                        raise HTTPException(409, detail='That name already belongs to another player.')
+                    key = normalize_name(body.name)
+                    cur.execute('SELECT id FROM vs_points WHERE normalized_name=%s AND (player_id IS NULL OR player_id<>%s)', (key, player_id))
+                    if cur.fetchone() and key != normalize_name(player['player_name']):
+                        raise HTTPException(409, detail='That name has separate VS records. Resolve those records before renaming.')
+                    cur.execute('UPDATE `player list` SET player_name=%s,normalized_name=%s,player_rank=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s',
+                                (body.name, key, body.rank, player_id))
+                    cur.execute('UPDATE vs_points SET player_name=%s,normalized_name=%s WHERE player_id=%s', (body.name, key, player_id))
+                    if body.name != player['player_name']:
+                        cur.execute('UPDATE player_name_dictionary SET player_name=%s WHERE player_name=%s', (body.name, player['player_name']))
+                        learn_name_correction(cur, player['player_name'], body.name)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return {'id': player_id, 'name': body.name, 'rank': body.rank}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail='Could not save player profile.') from exc
+
+
 class ImportData(BaseModel):
     players: list[Member] = Field(min_length=1,max_length=2000)
     full_capture: bool = False
@@ -564,3 +612,11 @@ install_media_upload(app, db_connect, import_players, ImportData)
 @app.get('/vs_ui.js')
 def vs_ui_script():
     return FileResponse(BASE / 'vs_ui.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})
+
+@app.get('/review_validation.js')
+def review_validation_script():
+    return FileResponse(BASE / 'review_validation.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})
+
+@app.get('/player_profile.js')
+def player_profile_script():
+    return FileResponse(BASE / 'player_profile.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})

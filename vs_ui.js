@@ -63,8 +63,7 @@
     $('vsReviewJobs').innerHTML=[...groups].map(([job,rows])=>{
       const first=rows[0],[min,max]=weekBounds(first.upload_date);
       return '<section class="panel" style="padding:16px;margin:14px 0" data-vs-job="'+esc(job)+'"><h4>'+esc(first.weekday)+' selected · '+rows.length+' scores</h4><label>Points earned on <input data-vs-date type="date" value="'+esc(first.score_date)+'" min="'+min+'" max="'+max+'"></label><p>Uploaded '+esc(first.upload_date)+' · Review names and points against the captured row.</p><div class="pl-table-wrap"><table class="pl-table"><thead><tr><th><label><input type="checkbox" data-vs-select-all checked aria-label="Select all scores in this batch"> Use</label></th><th>Player</th><th>Points</th><th>Captured row</th></tr></thead><tbody>'+rows.map(r=>
-        '<tr data-vs-row="'+r.id+'"><td><input type="checkbox" data-vs-use checked aria-label="Include score"></td><td><input data-vs-name list="vsPlayerNames" maxlength="80" aria-label="Player name" value="'+esc(r.name)+'">'+(r.review_reasons?.length?'<small class="media-flag" data-review-warning>'+
-        esc(r.review_reasons.join(' · '))+'</small><label><input type="checkbox" data-review-resolved> Mark resolved</label>':'')+'</td><td><input data-vs-points type="number" min="0" step="1" aria-label="VS points" value="'+(r.points??'')+'"></td><td>'+(r.evidence_base64?'<details><summary>View row</summary><img style="max-width:550px;width:min(70vw,550px)" src="data:image/webp;base64,'+r.evidence_base64+'" alt="Captured score row"></details>':'')+'</td></tr>').join('')+'</tbody></table></div><div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px"><button class="btn primary" data-vs-approve type="button">Save checked scores</button><button class="btn" data-vs-dismiss type="button">Dismiss checked</button></div></section>';
+        '<tr data-vs-row="'+r.id+'"><td><input type="checkbox" data-vs-use checked aria-label="Include score"></td><td><input data-vs-name list="vsPlayerNames" maxlength="80" aria-label="Player name" value="'+esc(r.name)+'">'+'<small class="media-flag" data-review-warning '+(r.review_reasons?.length?'':'hidden')+'>'+esc((r.review_reasons||[]).join(' · '))+'</small>'+'</td><td><input data-vs-points type="number" min="0" step="1" aria-label="VS points" value="'+(r.points??'')+'"></td><td>'+(r.evidence_base64?'<details><summary>View row</summary><img style="max-width:550px;width:min(70vw,550px)" src="data:image/webp;base64,'+r.evidence_base64+'" alt="Captured score row"></details>':'')+'</td></tr>').join('')+'</tbody></table></div><div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px"><button class="btn primary" data-vs-approve type="button">Save checked scores</button><button class="btn" data-vs-dismiss type="button">Dismiss checked</button></div></section>';
     }).join('');
     try{const players=await api('/api/player-list');$('vsPlayerNames').innerHTML=players.players.map(p=>'<option value="'+esc(p.name)+'">').join('');}catch{}
   }
@@ -78,12 +77,21 @@
     all.checked=checked===rows.length;
     all.indeterminate=checked>0&&checked<rows.length;
   });
-  $('vsReviewJobs').addEventListener('input',event=>{
-    const row=event.target.closest('[data-vs-row]');
-    const resolved=row?.querySelector('[data-review-resolved]');
-    if(!resolved||event.target.matches('[data-vs-use]'))return;
-    if(event.target!==resolved)resolved.checked=false;
-    row.querySelector('[data-review-warning]').hidden=resolved.checked;
+  function validateVSGroup(group){
+    const rows=[...group.querySelectorAll('[data-vs-row]')];
+    const names=[...$('vsPlayerNames').options].map(option=>option.value);
+    rows.forEach((row,i)=>{
+      const original=pending.find(p=>p.id===Number(row.dataset.vsRow));
+      const values={name:row.querySelector('[data-vs-name]').value.trim(),points:row.querySelector('[data-vs-points]').value};
+      const issues=window.reviewIssues(original,values,names,'vs',rows[i-1]?.querySelector('[data-vs-points]').value,rows[i+1]?.querySelector('[data-vs-points]').value);
+      const warning=row.querySelector('[data-review-warning]');
+      warning.textContent=issues.join(' · ');warning.hidden=!issues.length;
+      row.dataset.reviewInvalid=issues.length?'true':'false';
+    });
+  }
+  $('vsReviewJobs').addEventListener('focusout',event=>{
+    const group=event.target.closest('[data-vs-job]');
+    if(group&&event.target.matches('[data-vs-name],[data-vs-points]'))validateVSGroup(group);
   });
   $('vsReviewJobs').addEventListener('click',async event=>{
     const action=event.target.closest('[data-vs-approve],[data-vs-dismiss]');if(!action)return;
@@ -96,9 +104,9 @@
         if(!confirm('Dismiss '+ids.length+' checked VS scores?'))return;
         await api('/api/vs-points/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
       }else{
-        if(rows.some(row=>row.querySelector('[data-vs-use]').checked&&
-          row.querySelector('[data-review-resolved]:not(:checked)'))){
-          throw Error('Verify the flagged rows and mark them resolved before saving.');
+        validateVSGroup(group);
+        if(rows.some(row=>row.querySelector('[data-vs-use]').checked&&row.dataset.reviewInvalid==='true')){
+          throw Error('Correct the remaining warnings before saving the checked rows.');
         }
         const selected=rows.filter(r=>r.querySelector('[data-vs-use]').checked).map(r=>({id:Number(r.dataset.vsRow),name:r.querySelector('[data-vs-name]').value.trim(),points:r.querySelector('[data-vs-points]').value}));
         if(!selected.length)throw Error('Select at least one score.');
@@ -119,4 +127,7 @@
   $('vsRefresh').onclick=refresh;$('vsDate').onchange=load;$('vsSearch').oninput=render;
   document.getElementById('vsPointsTab').addEventListener('click',refresh);
   window.addEventListener('focus',refresh);refresh();
+  window.addEventListener('player-profile-updated',async()=>{
+    try{const data=await api('/api/player-list');document.getElementById('vsPlayerNames').innerHTML=data.players.map(p=>'<option value="'+esc(p.name)+'">').join('');}catch{}
+  });
 })();

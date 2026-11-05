@@ -293,8 +293,7 @@
           '<td><input data-field="name" list="playerMasterNames" value="'+escape(p.name||'')+'" maxlength="80" aria-label="Player name">'+
           (p.tab?'<small class="pl-source-label">'+escape(p.tab.toUpperCase())+'</small>':'')+
           (p.source_image?'<small class="pl-source-label" title="Original file and timestamp">'+escape(p.source_image)+'</small>':'')+
-          (flag?'<small class="media-flag" data-review-warning>'+escape(flag)+'</small>'+
-          '<label><input type="checkbox" data-review-resolved> Mark resolved</label>':'')+evidence+'</td>'+
+          '<small class="media-flag" data-review-warning '+(flag?'':'hidden')+'>'+escape(flag)+'</small>'+evidence+'</td>'+
           numeric('power')+numeric('kills')+numeric('donations')+numeric('power_millions','0.1')+numeric('hq_level')+'</tr>';
       }).join('');
       updateMediaSelection();
@@ -332,18 +331,25 @@
   pendingPanel.addEventListener('change',event=>{
     if(event.target.matches('#mediaSelectAll,[data-field="include"]'))updateMediaSelection(event);
   });
-  pendingPanel.addEventListener('input',event=>{
+  function validateMediaRow(row){
+    const original=pending.find(p=>p.id===Number(row.dataset.pendingId));
+    if(!original)return;
+    const values=Object.fromEntries([...row.querySelectorAll('[data-field]')].map(input=>[input.dataset.field,input.value]));
+    const names=[...masterNames.options].map(option=>option.value);
+    const issues=window.reviewIssues(original,values,names,'media');
+    const warning=row.querySelector('[data-review-warning]');
+    warning.textContent=issues.join(' · ');warning.hidden=!issues.length;
+    row.dataset.reviewInvalid=issues.length?'true':'false';
+  }
+  pendingPanel.addEventListener('focusout',event=>{
     const row=event.target.closest('[data-pending-id]');
-    const resolved=row?.querySelector('[data-review-resolved]');
-    if(!resolved||event.target.matches('[data-field="include"]'))return;
-    if(event.target!==resolved)resolved.checked=false;
-    row.querySelector('[data-review-warning]').hidden=resolved.checked;
+    if(row&&event.target.matches('[data-field]:not([data-field="include"])'))validateMediaRow(row);
   });
   $('mediaApprove').onclick=async()=>{
     const checkedRows=[...$('mediaPendingRows').querySelectorAll('tr[data-pending-id]')];
-    if(checkedRows.some(tr=>tr.querySelector('[data-field="include"]').checked&&
-      tr.querySelector('[data-review-resolved]:not(:checked)'))){
-      announce('Verify the flagged rows and mark them resolved before saving.');
+    checkedRows.forEach(validateMediaRow);
+    if(checkedRows.some(tr=>tr.querySelector('[data-field="include"]').checked&&tr.dataset.reviewInvalid==='true')){
+      announce('Correct the remaining warnings before saving the checked rows.');
       return;
     }
     const rows=checkedRows.map(tr=>{
@@ -485,4 +491,7 @@
   setInterval(refreshJobs,8000);
   window.loadServerStormRoster?.();
   window.refreshMediaUploads();
+  window.addEventListener('player-profile-updated',async()=>{
+    try{const data=await getJson('/api/player-list');document.getElementById('playerMasterNames').innerHTML=data.players.map(p=>'<option value="'+escape(p.name)+'">').join('');}catch{}
+  });
 })();

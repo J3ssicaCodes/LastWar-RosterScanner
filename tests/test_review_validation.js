@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict');
+const check=require('../review_validation.js');
+const original={name:'Jcss',points:100,review_reasons:['Check player name','Check points','Adjacent frames did not resolve all review flags']};
+assert.deepEqual(check(original,{name:'Jess',points:'100'},['Jess'],'vs'),['Check points']);
+assert.deepEqual(check(original,{name:'Jess',points:'200'},['Jess'],'vs'),[]);
+assert.ok(check(original,{name:'Jess',points:''},['Jess'],'vs').some(x=>x.includes('Enter valid')));
+assert.ok(check(original,{name:'Jess',points:'200'},['Jess'],'vs','150','50').includes('Points exceed the row above'));
+assert.ok(check(original,{name:'Jess',points:'-1'},['Jess'],'vs').length);
+assert.ok(check(original,{name:'Jess',points:'1.2'},['Jess'],'vs').length);
+assert.deepEqual(check({name:'Jess',rank:'Unknown',power:30,tab:'power',review_reasons:['uncertain_rank_badge']},{name:'Jess',rank:'R4',power:'30'},['Jess'],'media'),[]);
+assert.ok(check({name:'Jess',rank:'R4',power:30,tab:'power',review_reasons:['conflicting_stat']},{name:'Jess',rank:'R4',power:'30'},['Jess'],'media').includes('conflicting_stat'));
+console.log('8 review validation checks passed');
