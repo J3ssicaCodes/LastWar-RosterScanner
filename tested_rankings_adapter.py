@@ -99,11 +99,11 @@ def _record_from_csv(entry: dict, directory: Path, page_info: dict, tab: str):
     return output
 
 
-def _page_group(path: Path, staging: Path, idx: int):
+def _page_group(path: Path, staging: Path, idx: int, progress=None):
     """Keep screenshots and full-resolution video pauses in the same page format."""
     suffix = path.suffix.lower()
     if suffix in VIDEO_EXTENSIONS:
-        info = detect(path)
+        info = detect(path,progress=progress)
         manifest = extract(path, staging, *info)
         pages = []
         for item in manifest['kept']:
@@ -164,7 +164,7 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable):
             progress(2+round(23*(idx-1)/len(paths)), 100,
                      f'Finding stationary pages in {source.name}…')
             folder = workspace / ('input_' + str(idx))
-            pages, frame_count = _page_group(Path(source),folder,idx)
+            pages, frame_count = _page_group(Path(source),folder,idx,progress)
             diagnostics['source_frames'] += frame_count
             for page in pages:
                 groups[(page['selected_tab'],page['input_kind'],page.get('video_path'))].append(page)
@@ -191,8 +191,13 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable):
                      f'Reading {tab} complete rows, group {group_idx}/{len(groups)}…')
             # --keep-pages feeds the submitted source unchanged real screenshots.
             # Sample-specific manual overrides are deliberately NEVER supplied.
+            # For screenshot groups, pass an actual image path, even when the
+            # upload batch also contains a video. There are no intervening
+            # frames to recover from still images.
+            scan_input=(str(video_path) if kind=='video'
+                        else str(root / pages[0]['original_filename']))
             command=[sys.executable,str(Path(__file__).with_name('scan_rankings.py')),
-                     str(video_path or paths[0]),'--output',str(folder),'--keep-pages']
+                     scan_input,'--output',str(folder),'--keep-pages']
             result=subprocess.run(command,capture_output=True,text=True,timeout=900)
             if result.returncode:
                 message=(result.stderr or result.stdout or '').strip()[-650:]
