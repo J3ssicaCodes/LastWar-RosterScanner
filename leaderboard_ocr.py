@@ -423,7 +423,11 @@ def _badge_templates(path=None):
 def _badge_rank(badge,templates):
     # Digit OCR fallback when no validated template file was supplied.
     observed=cv2.resize(badge,None,fx=3,fy=3,interpolation=cv2.INTER_CUBIC)
-    text,conf=_ocr_data(observed,config='--psm 10 -c tessedit_char_whitelist=Rr12345')
+    text,conf=_ocr_data(observed,config='--psm 7 -c tessedit_char_whitelist=Rr12345')
+    if not re.search(r'R\\s*[1-5]',text,re.I):
+        fallback,score=_ocr_data(observed,config='--psm 13 -c tessedit_char_whitelist=Rr12345')
+        if re.search(r'R\\s*[1-5]',fallback,re.I) and score>conf:
+            text,conf=fallback,score
     match=re.search(r'R\s*([1-5])',text,re.I)
     if match and conf>=55:return 'R'+match.group(1),conf,'ocr'
     hsv=cv2.cvtColor(badge,cv2.COLOR_BGR2HSV)
@@ -560,8 +564,9 @@ def validate_results(players,expected_count=None):
         if holes:warnings.append(f'{TAB_LABELS[tab]} has {len(holes)} missing internal positions: '+', '.join(map(str,holes[:20])))
         for left,right in zip(positioned,positioned[1:]):
             if left.get(tab) is not None and right.get(tab) is not None and left[tab]<right[tab]:
-                right['review_required']=True
-                right['review_reasons'].append('Statistic breaks the descending leaderboard order')
+                for item in (left,right):
+                    item['review_required']=True
+                    item['review_reasons'].append('Adjacent leaderboard statistics conflict with descending order')
         if expected_count and len(positions)!=expected_count:
             warnings.append(f'{TAB_LABELS[tab]}: {len(positions)} positions observed; expected count {expected_count} is only a validation hint')
     for p in players:
@@ -766,5 +771,5 @@ def scan_leaderboard_upload(paths,progress:Callable|None=None,expected_count=Non
     result['warnings']=validity['warnings']
     # Keep rows with unreadable names in the review queue if a real complete
     # row and valid observed position exist; the reviewer must supply the name.
-    result['players']=[p for p in result['players'] if p.get('name') or p.get('internal_position') is not None]
+    # Keep unrecognized but fully observed rows in review, with blank names.
     return result
