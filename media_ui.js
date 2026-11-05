@@ -32,6 +32,9 @@
   .media-review .media-review-actions .btn{margin:0}
   .media-review th:first-child,.media-review td:first-child{width:45px}
   .media-review .media-flag{display:block;font-size:11px;color:#f4bd80;line-height:1.4;margin-top:4px}
+  .media-evidence{margin-top:6px;font-size:12px;color:var(--muted)}
+  .media-evidence summary{cursor:pointer;text-decoration:underline}
+  .media-evidence img{display:block;max-width:min(520px,75vw);width:100%;height:auto;border:1px solid var(--stroke);border-radius:7px;margin:6px 0;image-rendering:auto}
   #mediaDiagnostics{color:var(--muted);margin:7px 0;font-size:13px}
   #mediaDiagnostics[hidden]{display:none}
   .pl-rank-heading th{background:var(--panel2);padding:0!important;border-top:1px solid var(--stroke)}
@@ -151,13 +154,16 @@
         const flag=(p.review_required?(p.review_reasons||[]).join('; '):'');
         const avatar=p.avatar_base64&&/^[A-Za-z0-9+/=]+$/.test(p.avatar_base64)?
           '<img class="pl-avatar" src="data:image/'+(p.avatar_base64.startsWith('UklGR')?'webp':'png')+';base64,'+p.avatar_base64+'" alt="Player avatar">':'♡';
+        const evidence=p.evidence_base64 && p.evidence_base64.length<350000 && /^[A-Za-z0-9+/=]+$/.test(p.evidence_base64) ?
+          '<details class="media-evidence"><summary>View captured leaderboard row</summary><img loading="lazy" src="data:image/webp;base64,'+
+          p.evidence_base64+'" alt="Cropped original leaderboard row for '+escape(p.name||'this player')+'"></details>' : '';
         const numeric=(field,step='1')=>'<td><input data-field="'+field+'" type="number" step="'+step+'" min="0" value="'+(p[field]??'')+'" aria-label="'+field+'"></td>';
         return '<tr data-pending-id="'+p.id+'"><td><input type="checkbox" data-field="include" checked aria-label="Include '+escape(p.name||'unrecognized player')+'"></td>'+
           '<td>'+avatar+'</td><td><select data-field="rank">'+['Unknown','R5','R4','R3','R2','R1'].map(rank=>'<option value="'+rank+'" '+(p.rank===rank?'selected':'')+'>'+rank+'</option>').join('')+'</select></td>'+
           '<td><input data-field="name" value="'+escape(p.name||'')+'" maxlength="80" aria-label="Player name">'+
           (p.tab?'<small class="pl-source-label">'+escape(p.tab.toUpperCase())+'</small>':'')+
           (p.source_image?'<small class="pl-source-label" title="Original file and timestamp">'+escape(p.source_image)+'</small>':'')+
-          (flag?'<small class="media-flag">'+escape(flag)+'</small>':'')+'</td>'+
+          (flag?'<small class="media-flag">'+escape(flag)+'</small>':'')+evidence+'</td>'+
           numeric('power')+numeric('kills')+numeric('donations')+numeric('power_millions','0.1')+numeric('hq_level')+'</tr>';
       }).join('');
       await loadDiagnostics();
