@@ -129,3 +129,15 @@ List CSV. Birthday and portrait data are retained across scans as before.
 Notifications are shown inside the web app when a scan finishes or when a pending
 Player List review becomes available. Opening or resuming the app refreshes the
 status. This is not a native Android/iOS push notification system.
+
+## Leaderboard OCR uploads (Power, Kills, Donation)
+
+The shared **Media Upload** dialog accepts only PNG, JPEG, or WebP for Storm Roster. Player List accepts leaderboard screenshots and one video (plus screenshots). VS Scores is intentionally disabled.
+
+Player List leaderboard scans use `leaderboard_ocr.py`, a shared Python pipeline: visual tab selection, video pause detection, deduplicated full resolution pages, calibrated row borders, complete row OCR, alignment, gap validation, targeted transition recovery, and an auditable staged review. The scanner rejects clipped rows; it never fills missing positions to reach a target count. Positions are internal metadata, not player attributes. Power, Kills, and Donations are stored as integer columns. The original Power (M) profile field is retained for compatibility. Existing birthdays and HQ fields are never erased by missing OCR values.
+
+**Processing and privacy:** Uploads are temporarily held on the Render instance, then deleted when the scan ends. MySQL stores completed scan jobs, OCR diagnostics, staged review entries, and approved player data. The scan job continues on the server after the user closes or locks the phone, subject to Render instance restarts. Pending rows are only committed after explicit approval. Unchecked rows stay pending; use Dismiss to remove unwanted OCR candidates.
+
+**Dependencies:** OpenCV, NumPy, SciPy, Pillow, Tesseract, pytesseract, and FFmpeg are free, locally executed dependencies. The optional file `rank_badge_templates.npz` may be added when trustworthy badge samples exist; until then, ambiguous rank badges are left unresolved for user correction.
+
+**Acceptance test limitation:** The available earlier sample MP4 (`1000024431.mp4`) captures the older Member List interface, not the approximately 4,149 frame Power leaderboard recording described in the feature specification. The full 89 position regression and missing position 77 recovery cannot be claimed as verified until that leaderboard recording is provided. Tests on a controlled leaderboard fixture cover tab selection, pitch and full row recognition, uncertain OCR handling, and video pause extraction.
