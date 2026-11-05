@@ -211,7 +211,7 @@ def _update_job(job_id, **fields):
 
 def _run_scan(job_id, paths, tempdir):
     try:
-        _update_job(job_id,status='scanning',message='Preparing OCR',progress=0)
+        _update_job(job_id,status='scanning',message='Preparing uploaded media…',progress=1)
         def progress(current,total,message):
             _update_job(job_id,progress=round(current/max(total,1)*100),message=message)
         result=scan_upload(paths,progress)
