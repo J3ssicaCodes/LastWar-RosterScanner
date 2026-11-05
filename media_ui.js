@@ -31,6 +31,9 @@
   .media-review .media-review-actions{display:flex;justify-content:flex-end;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:11px}
   .media-review .media-review-actions .btn{margin:0}
   .media-review th:first-child,.media-review td:first-child{width:45px}
+  .media-review .media-flag{display:block;font-size:11px;color:#f4bd80;line-height:1.4;margin-top:4px}
+  #mediaDiagnostics{color:var(--muted);margin:7px 0;font-size:13px}
+  #mediaDiagnostics[hidden]{display:none}
   .pl-rank-heading th{background:var(--panel2);padding:0!important;border-top:1px solid var(--stroke)}
   .pl-rank-heading button{font:inherit;font-weight:700;color:var(--text);display:flex;width:100%;border:0;background:transparent;justify-content:space-between;padding:13px 18px;cursor:pointer;align-items:center;text-align:left}
   .pl-rank-heading small{color:var(--muted);font-size:12px}.pl-rank-heading strong{font-size:15px}
@@ -54,7 +57,7 @@
     <button type="button" class="media-destination" data-dest="players" aria-pressed="false">♙ Player List</button>
     <button type="button" class="media-destination" disabled title="Coming later" aria-disabled="true">▤ VS Scores<br><small>Coming soon</small></button>
   </div>
-  <div class="media-select" role="button" tabindex="0" id="mediaSelect"><span style="font-size:32px" aria-hidden="true">⇧</span><strong>Choose screenshots or a screen recording</strong><small>PNG, JPG, WebP, MP4, MOV or WebM. One video plus optional screenshots.</small><input type="file" id="mediaFileInput" accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,.m4v" multiple hidden></div>
+  <div class="media-select" role="button" tabindex="0" id="mediaSelect"><span style="font-size:32px" aria-hidden="true">⇧</span><strong id="mediaSelectTitle">Choose Storm Roster screenshots</strong><small id="mediaSelectHint">PNG, JPG or WebP images only.</small><input type="file" id="mediaFileInput" accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,.m4v" multiple hidden></div>
   <div id="mediaFileNames" class="media-files">No files selected</div>
   <label id="mediaCompleteLabel" style="display:none;gap:10px;align-items:flex-start;margin:12px 0"><input type="checkbox" id="mediaComplete"> <span><b>Complete Player List recording</b><small style="display:block;color:var(--muted)">Only enable if the entire member list was captured. Missing players can then be flagged after review.</small></span></label>
   <div class="media-progress" id="mediaProgress" hidden><progress id="mediaBar" max="100" value="0"></progress><small id="mediaProgressText">Uploading…</small></div>
@@ -69,14 +72,28 @@
   pendingPanel.id='mediaPendingPanel';pendingPanel.className='panel pl-section media-review';pendingPanel.hidden=true;
   pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Awaiting your approval</div><h2>Player changes to review</h2><p>New uploads are staged here, not saved to the official Player List until approved.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
     <div class="media-review-actions"><label><input type="checkbox" id="mediaApproveComplete"> This was a complete list</label><button class="btn primary" type="button" id="mediaApprove">Approve reviewed changes</button></div>
-    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Use</th><th>Photo</th><th>Rank</th><th>Player</th><th>Power (M)</th><th>HQ Lv.</th></tr></thead><tbody id="mediaPendingRows"></tbody></table></div>
+    <p id="mediaDiagnostics" hidden></p>
+    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Use</th><th>Photo</th><th>Rank</th><th>Player</th><th>Power</th><th>Kills</th><th>Donations</th><th>Power (M) / Profile</th><th>HQ Lv.</th></tr></thead><tbody id="mediaPendingRows"></tbody></table></div>
     <p class="pl-hint">Uncheck false detections to dismiss them. Correct names and values here before approval.</p>`;
   const directory=playerView?.querySelector('[aria-labelledby="plDirectoryTitle"]');
   directory?.before(pendingPanel);
 
   function announce(text){banner.hidden=false;banner.textContent=text;}
   function message(text,error=false){const el=$('mediaMessage');el.hidden=!text;el.textContent=text;el.style.borderColor=error?'#db7284':'#9476b0';}
-  function updateTarget(){dialog.querySelectorAll('[data-dest]').forEach(btn=>btn.setAttribute('aria-pressed',String(btn.dataset.dest===destination)));$('mediaCompleteLabel').style.display=destination==='players'?'flex':'none';$('mediaComplete').checked=false;}
+  function updateTarget(){
+    dialog.querySelectorAll('[data-dest]').forEach(btn=>btn.setAttribute('aria-pressed',String(btn.dataset.dest===destination)));
+    $('mediaCompleteLabel').style.display=destination==='players'?'flex':'none';
+    $('mediaComplete').checked=false;
+    const isStorm=destination==='storm';
+    $('mediaSelectTitle').textContent=isStorm?'Choose Storm Roster screenshots':'Choose leaderboard screenshots or an MP4 recording';
+    $('mediaSelectHint').textContent=isStorm?'PNG, JPG or WebP images only. MP4 is not allowed for Storm Roster.':'PNG, JPG, WebP, MP4, MOV or WebM. Record the Power or Kills leaderboard while scrolling; pause on each page.';
+    fileInput.accept=isStorm?'image/png,image/jpeg,image/webp':"image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,.m4v";
+    if(isStorm&&files.some(f=>/\.(mp4|mov|m4v|webm)$/i.test(f.name))){
+      files=[];fileInput.value='';$('mediaFileNames').textContent='No files selected';
+      $('mediaSubmit').disabled=true;
+      message('Storm Roster accepts screenshots only. Choose images again.');
+    }
+  }
   topButton.onclick=()=>{message('');dialog.showModal();};
   $('mediaClose').onclick=()=>dialog.close();
   dialog.querySelectorAll('[data-dest]').forEach(btn=>btn.addEventListener('click',()=>{destination=btn.dataset.dest;updateTarget();}));
@@ -86,10 +103,17 @@
   fileInput.onchange=()=>{
     files=[...fileInput.files||[]];
     const nVideo=files.filter(f=>/\.(mp4|mov|m4v|webm)$/i.test(f.name)).length;
-    if(nVideo>1){message('Choose one recording at a time. You can add screenshots.',true);files=[];}
+    if(destination==='storm'&&nVideo>0){
+      message('Storm Roster accepts image screenshots only. Videos are disabled.',true);
+      files=[];fileInput.value='';
+    }else if(nVideo>1){
+      message('Choose one recording at a time. You can add screenshots.',true);
+      files=[];fileInput.value='';
+    }
     $('mediaFileNames').textContent=files.length?files.map(f=>f.name).join(' · '):'No files selected';
     $('mediaSubmit').disabled=!files.length||busy;
   };
+  updateTarget();
   function setProgress(n,text){$('mediaProgress').hidden=false;$('mediaBar').value=n;$('mediaProgressText').textContent=text;}
   $('mediaSubmit').onclick=async()=>{
     if(!files.length||busy)return;
@@ -123,16 +147,48 @@
       $('mediaPendingCount').textContent=pending.length+' waiting';
       $('mediaApproveComplete').checked=false;
       $('mediaApproveComplete').disabled=new Set(pending.map(p=>p.job_id)).size!==1 || !pending.every(p=>p.full_capture);
-      $('mediaPendingRows').innerHTML=pending.map(p=>`<tr data-pending-id="${p.id}"><td><input type="checkbox" data-field="include" checked aria-label="Include ${escape(p.name)}"></td><td>${p.avatar_base64?`<img class="pl-avatar" src="data:image/webp;base64,${p.avatar_base64}" alt="Video portrait">`:'♡'}</td><td><select data-field="rank">${['R5','R4','R3','R2','R1'].map(r=>`<option ${p.rank===r?'selected':''}>${r}</option>`).join('')}</select></td><td><input data-field="name" value="${escape(p.name)}" maxlength="80" aria-label="Player name"></td><td><input data-field="power_millions" type="number" step="0.01" min="0" value="${p.power_millions??''}" aria-label="Power millions"></td><td><input data-field="hq_level" type="number" min="1" max="99" value="${p.hq_level??''}" aria-label="HQ level"></td></tr>`).join('');
+      $('mediaPendingRows').innerHTML=pending.map(p=>{
+        const flag=(p.review_required?(p.review_reasons||[]).join('; '):'');
+        const avatar=p.avatar_base64&&/^[A-Za-z0-9+/=]+$/.test(p.avatar_base64)?
+          '<img class="pl-avatar" src="data:image/'+(p.avatar_base64.startsWith('UklGR')?'webp':'png')+';base64,'+p.avatar_base64+'" alt="Player avatar">':'♡';
+        const numeric=(field,step='1')=>'<td><input data-field="'+field+'" type="number" step="'+step+'" min="0" value="'+(p[field]??'')+'" aria-label="'+field+'"></td>';
+        return '<tr data-pending-id="'+p.id+'"><td><input type="checkbox" data-field="include" checked aria-label="Include '+escape(p.name||'unrecognized player')+'"></td>'+
+          '<td>'+avatar+'</td><td><select data-field="rank">'+['Unknown','R5','R4','R3','R2','R1'].map(rank=>'<option value="'+rank+'" '+(p.rank===rank?'selected':'')+'>'+rank+'</option>').join('')+'</select></td>'+
+          '<td><input data-field="name" value="'+escape(p.name||'')+'" maxlength="80" aria-label="Player name">'+
+          (p.tab?'<small class="pl-source-label">'+escape(p.tab.toUpperCase())+'</small>':'')+
+          (flag?'<small class="media-flag">'+escape(flag)+'</small>':'')+'</td>'+
+          numeric('power')+numeric('kills')+numeric('donations')+numeric('power_millions','0.1')+numeric('hq_level')+'</tr>';
+      }).join('');
+      await loadDiagnostics();
       $('mediaBadge').hidden=!pending.length;$('mediaBadge').textContent=String(pending.length);
     }catch(e){console.warn('Could not load pending media:',e.message);}
+  }
+  async function loadDiagnostics(){
+    const jobs=new Set(pending.map(p=>p.job_id));
+    const box=$('mediaDiagnostics');
+    if(!jobs.size){box.hidden=true;return;}
+    const parts=[];
+    for(const id of [...jobs].slice(0,3)){
+      try{
+        const data=await getJson('/api/media/jobs/'+encodeURIComponent(id)+'/diagnostics');
+        const d=data.diagnostics||{};
+        if(!d.tabs?.length)continue;
+        parts.push('Categories: '+d.tabs.join(', ')+' · '+(d.distinct_pages??0)+' distinct pages · '+
+          (d.complete_rows??0)+' complete rows · '+(d.distinct_entries??0)+' entries · '+
+          (d.missing_count??0)+' gaps · '+(d.recovered_rows??0)+' recovered · '+
+          (d.review_count??0)+' needing review');
+      }catch{}
+    }
+    box.textContent=parts.join(' | ');
+    box.hidden=!parts.length;
   }
   $('mediaApprove').onclick=async()=>{
     const rows=[...$('mediaPendingRows').querySelectorAll('tr[data-pending-id]')].map(tr=>{
       const val=field=>tr.querySelector('[data-field="'+field+'"]');
       const n=v=>v===''?null:Number(v);
       return {id:Number(tr.dataset.pendingId),include:val('include').checked,name:val('name').value.trim(),
-              rank:val('rank').value,power_millions:n(val('power_millions').value),hq_level:n(val('hq_level').value)};
+              rank:val('rank').value,power_millions:n(val('power_millions').value),hq_level:n(val('hq_level').value),
+              power:n(val('power').value),kills:n(val('kills').value),donations:n(val('donations').value)};
     });
     if(!rows.length)return;
     $('mediaApprove').disabled=true;
