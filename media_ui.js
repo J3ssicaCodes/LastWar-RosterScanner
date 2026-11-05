@@ -4,7 +4,7 @@
   'use strict';
   const $=id=>document.getElementById(id);
   const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  let destination='storm',files=[],busy=false,pending=[],notified=new Set();
+  let destination='storm',files=[],busy=false,pending=[],notified=new Set(),driveSelection=null;
   const NOTIFICATIONS='lastwar.media.notified.v1';
   try{notified=new Set(JSON.parse(localStorage.getItem(NOTIFICATIONS)||'[]'));}catch{}
   const css=document.createElement('style');
@@ -21,6 +21,9 @@
   .media-destination:disabled{opacity:.4;cursor:not-allowed}
   .media-select{border:2px dashed #a77bba;border-radius:14px;padding:23px 14px;text-align:center;cursor:pointer;background:var(--panel2);margin:8px 0 16px}
   .media-select strong{display:block;margin:6px 0;font-size:17px}.media-select small{display:block;color:var(--muted)}
+  .media-source-options{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:-5px 0 15px}
+  .media-drive-trash{display:flex;align-items:flex-start;gap:9px;font-size:13px;line-height:1.45;padding:7px 0}
+  .media-drive-trash[hidden]{display:none}
   .media-files{white-space:normal;overflow-wrap:anywhere;color:var(--muted);font-size:12px;margin:11px 0}
   .media-progress{margin:14px 0}.media-progress progress{width:100%;accent-color:#a67ac1;height:11px}
   .media-progress small{display:block;margin-top:4px;color:var(--muted)}
@@ -76,7 +79,9 @@
     <button type="button" class="media-destination" disabled title="Coming later" aria-disabled="true">▤ VS Scores<br><small>Coming soon</small></button>
   </div>
   <div class="media-select" role="button" tabindex="0" id="mediaSelect"><span style="font-size:32px" aria-hidden="true">⇧</span><strong id="mediaSelectTitle">Choose Storm Roster screenshots</strong><small id="mediaSelectHint">PNG, JPG or WebP images only.</small><input type="file" id="mediaFileInput" accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,.m4v" multiple hidden></div>
+  <div class="media-source-options"><button type="button" id="mediaDriveButton" class="btn">Select from Google Drive</button></div>
   <div id="mediaFileNames" class="media-files">No files selected</div>
+  <label class="media-drive-trash" id="mediaDriveTrashWrap" hidden><input type="checkbox" id="mediaDriveTrash"> Move the original Google Drive file to Trash after the scan finishes successfully</label>
   <div class="media-progress" id="mediaProgress" hidden><progress id="mediaBar" max="100" value="0"></progress><small id="mediaProgressText">Uploading…</small></div>
   <div id="mediaMessage" class="media-banner" role="status" aria-live="polite" hidden></div>
   <div class="media-actions"><small style="color:var(--muted)">Review scanned results before applying changes.</small><button class="btn primary" id="mediaSubmit" disabled>Upload and scan</button></div>`;
@@ -145,6 +150,13 @@
   function updateTarget(){
     dialog.querySelectorAll('[data-dest]').forEach(btn=>btn.setAttribute('aria-pressed',String(btn.dataset.dest===destination)));
     const isStorm=destination==='storm';
+    if(driveSelection&&isStorm&&/\.(mp4|mov|m4v|webm)$/i.test(driveSelection.name)){
+      driveSelection=null;
+      $('mediaDriveTrashWrap').hidden=true;
+      $('mediaFileNames').textContent='No files selected';
+      message('Storm Roster only accepts screenshots. Please select an image.',true);
+    }
+    $('mediaSubmit').disabled=busy||(!driveSelection&&!files.length);
     $('mediaSelectTitle').textContent=isStorm?'Choose Storm Roster screenshots':'Choose leaderboard screenshots or an MP4 recording';
     $('mediaSelectHint').textContent=isStorm?'PNG, JPG or WebP images only. MP4 is not allowed for Storm Roster.':'PNG, JPG, WebP, MP4, MOV or WebM. Record the Power or Kills leaderboard while scrolling; pause on each page.';
     fileInput.accept=isStorm?'image/png,image/jpeg,image/webp':"image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,.m4v";
@@ -158,9 +170,41 @@
   $('mediaClose').onclick=()=>dialog.close();
   dialog.querySelectorAll('[data-dest]').forEach(btn=>btn.addEventListener('click',()=>{destination=btn.dataset.dest;updateTarget();}));
   const fileInput=$('mediaFileInput');
+  $('mediaDriveButton').onclick=()=>{
+    if(busy)return;
+    const picker=window.AllianceGoogleDrive;
+    if(!picker){message('Google Drive is not available yet. Refresh the page and try again.',true);return;}
+    if(!picker.isReady()){
+      message(picker.error()||'Google Drive is connecting. Tap Select from Google Drive again shortly.',true);
+      picker.prepare().catch(()=>{});
+      return;
+    }
+    if(dialog.open)dialog.close(); // Google Picker must not sit behind a native modal.
+    picker.choose({
+      destination,
+      onSelected:selected=>{
+        driveSelection=selected;
+        files=[];fileInput.value='';
+        $('mediaDriveTrashWrap').hidden=false;
+        $('mediaDriveTrash').checked=false;
+        $('mediaFileNames').textContent=selected.name+' · Google Drive';
+        $('mediaSubmit').disabled=false;
+        message('Google Drive file selected. Choose Upload and scan to start.');
+        if(!dialog.open)dialog.showModal();
+      },
+      onCancel:()=>{if(!dialog.open)dialog.showModal();},
+      onError:error=>{
+        if(!dialog.open)dialog.showModal();
+        message(error.message||'Could not open Google Drive.',true);
+      }
+    });
+  };
   $('mediaSelect').onclick=()=>{if(!busy)fileInput.click();};
   $('mediaSelect').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();if(!busy)fileInput.click();}};
   fileInput.onchange=()=>{
+    driveSelection=null;
+    $('mediaDriveTrashWrap').hidden=true;
+    $('mediaDriveTrash').checked=false;
     files=[...fileInput.files||[]];
     const nVideo=files.filter(f=>/\.(mp4|mov|m4v|webm)$/i.test(f.name)).length;
     if(destination==='storm'&&nVideo>0){
@@ -176,30 +220,44 @@
   updateTarget();
   function setProgress(n,text){$('mediaProgress').hidden=false;$('mediaBar').value=n;$('mediaProgressText').textContent=text;}
   $('mediaSubmit').onclick=async()=>{
-    if(!files.length||busy)return;
-    busy=true;$('mediaSubmit').disabled=true;message('');setProgress(1,'Uploading media…');
+    if((!files.length&&!driveSelection)||busy)return;
+    busy=true;$('mediaSubmit').disabled=true;message('');setProgress(1,'Preparing upload…');
     try{
+      let job;
+      if(driveSelection){
+        if(Date.now()>driveSelection.expires_at-30000)
+          throw Error('Google Drive authorization expired. Select the Drive file again to reconnect.');
+        setProgress(5,'Queuing Google Drive file…');
+        job=await getJson('/api/media/google-import',{method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({destination,file_id:driveSelection.file_id,
+            access_token:driveSelection.access_token,
+            move_to_trash:$('mediaDriveTrash').checked})});
+      }else{
       const form=new FormData();files.forEach(f=>form.append('files',f,f.name));
-      const job=await new Promise((resolve,reject)=>{
+      job=await new Promise((resolve,reject)=>{
         const xhr=new XMLHttpRequest();
         const url='/api/media/upload?destination='+encodeURIComponent(destination);
         xhr.open('POST',url);xhr.timeout=600000;
         xhr.upload.onprogress=e=>{if(e.lengthComputable)setProgress(Math.min(99,Math.round(e.loaded/e.total*100)),'Uploading: '+Math.round(e.loaded/e.total*100)+'%');};
         xhr.onload=()=>{let payload={};try{payload=JSON.parse(xhr.responseText);}catch{}if(xhr.status<200||xhr.status>=300)reject(Error(payload.detail||'Upload failed: '+xhr.status));else resolve(payload);};
         xhr.onerror=()=>reject(Error('Upload connection failed. Check your connection and retry.'));
-        xhr.ontimeout=()=>reject(Error('Upload timed out before Render received the recording.'));
+        xhr.ontimeout=()=>reject(Error('Upload timed out before the recording was accepted.'));
         xhr.send(form);
       });
-      // Close only after Render acknowledges the upload and queues the scan.
+      }
+      // Close only after the service acknowledges the upload and queues the scan.
       // The server continues processing; status and completion appear outside this dialog.
-      files=[];fileInput.value='';$('mediaFileNames').textContent='No files selected';
+      files=[];driveSelection=null;fileInput.value='';
+      $('mediaDriveTrashWrap').hidden=true;$('mediaDriveTrash').checked=false;
+      $('mediaFileNames').textContent='No files selected';
       $('mediaProgress').hidden=true;
       message('');
       announce('✓ '+(destination==='storm'?'Storm Roster':'Player List')+' upload accepted. Scan queued. You can continue using the app.');
       if(dialog.open)dialog.close();
       await refreshJobs();
     }catch(e){message(e.message,true);}
-    finally{busy=false;$('mediaSubmit').disabled=!files.length;}
+    finally{busy=false;$('mediaSubmit').disabled=!files.length&&!driveSelection;}
   };
 
   async function getJson(url,options){const r=await fetch(url,{cache:'no-store',...options});let data={};try{data=await r.json();}catch{}if(!r.ok)throw Error(data.detail||'Request failed ('+r.status+')');return data;}
