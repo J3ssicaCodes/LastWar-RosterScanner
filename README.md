@@ -239,9 +239,8 @@ Run regressions with `python -m unittest discover -s tests -v`.
 
 ### Admin reset
 
-Set `ADMIN_RESET_PASSWORD` in the Render service environment to a strong
-password of at least 16 ASCII characters. The Admin tab requires that password
-and the exact confirmation phrase `CLEAR DATA` before clearing shared data.
+In Admin, select **Clear Data** and then **Yes, clear data**. Anyone who
+can open the app can run this reset.
 Active uploads and scans must finish before a reset can proceed. The reset
 keeps the OCR dictionaries and clears saved app data in each browser the next
 time it opens the app online. Downloaded exports and source files are outside

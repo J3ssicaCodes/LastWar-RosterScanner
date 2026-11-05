@@ -1,7 +1,7 @@
 (() => {
-  const form=document.getElementById('adminClearForm');
+  const confirmDialog=document.getElementById('adminClearConfirm');
   const message=document.getElementById('adminClearMessage');
-  const submit=form.querySelector('button[type="submit"]');
+  const clearButton=document.getElementById('adminClearButton');
   const resetKey='lastwar.adminReset.v1';
   const dictionaryKey='lastwar.ocrNameDictionary.v1';
   const completedKey='lastwar.adminResetCompleted';
@@ -31,30 +31,29 @@
         location.reload();
         return;
       }
-      submit.disabled=!status.enabled;
-      if(!status.enabled)message.textContent='Set ADMIN_RESET_PASSWORD to at least 16 characters in Render to enable Clear Data.';
+      clearButton.disabled=false;
     }catch(error){
-      submit.disabled=true;
+      clearButton.disabled=true;
       message.textContent=error.message;
     }
   }
 
-  form.addEventListener('submit',async event=>{
-    event.preventDefault();
+  clearButton.addEventListener('click',()=>{
     if(clearing)return;
-    const confirmation=form.elements.confirmation.value;
-    if(confirmation!=='CLEAR DATA'){
-      message.textContent='Type CLEAR DATA to confirm.';
-      return;
-    }
+    confirmDialog.returnValue='';
+    confirmDialog.showModal();
+  });
+
+  confirmDialog.addEventListener('close',async()=>{
+    if(clearing||confirmDialog.returnValue!=='clear')return;
     clearing=true;
-    submit.disabled=true;
+    clearButton.disabled=true;
     message.textContent='Clearing saved data…';
     try{
       const response=await fetch('/api/admin/clear-data',{
         method:'POST',
-        headers:{'Content-Type':'application/json',Authorization:'Bearer '+form.elements.password.value},
-        body:JSON.stringify({confirmation}),
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({confirmation:'CLEAR DATA'}),
       });
       const result=await response.json();
       if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'Could not clear saved data.');
@@ -69,9 +68,8 @@
     }catch(error){
       message.textContent=error.message;
     }finally{
-      form.elements.password.value='';
       clearing=false;
-      submit.disabled=false;
+      clearButton.disabled=false;
     }
   });
 

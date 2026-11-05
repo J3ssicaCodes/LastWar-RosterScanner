@@ -1,9 +1,7 @@
-"""Authorized, transactional reset for Alliance Tools data."""
-import os
-import secrets
+"""Transactional reset for Alliance Tools data."""
 import uuid
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Literal
@@ -97,19 +95,11 @@ def install_admin_reset(app, connect_db, jobs, job_lock):
             cur.execute('SELECT reset_id FROM alliance_admin_state WHERE id=1')
             row = cur.fetchone()
         return JSONResponse({
-            'enabled': len(os.getenv('ADMIN_RESET_PASSWORD', '')) >= 16,
             'reset_id': row['reset_id'] if row else None,
         }, headers={'Cache-Control': 'no-store'})
 
     @app.post(CLEAR_PATH)
-    def clear_data(body: ClearData, request: Request):
-        password = os.getenv('ADMIN_RESET_PASSWORD', '')
-        if len(password) < 16:
-            raise HTTPException(503, 'Set an admin password in Render before using Clear Data.')
-        expected = ('Bearer ' + password).encode()
-        supplied = request.headers.get('authorization', '').encode()
-        if not secrets.compare_digest(supplied, expected):
-            raise HTTPException(401, 'Incorrect admin password.')
+    def clear_data(body: ClearData):
         with job_lock:
             if any(job['status'] in ('queued', 'scanning') for job in jobs.values()):
                 raise HTTPException(409, 'Wait for active and queued scans to finish.')

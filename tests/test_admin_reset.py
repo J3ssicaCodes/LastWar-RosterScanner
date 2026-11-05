@@ -1,10 +1,8 @@
-import os
 import sqlite3
 import unittest
 from threading import RLock
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import patch
 
 from fastapi import HTTPException
 from admin_reset import ClearData, USER_DATA_MARKER, install_admin_reset
@@ -33,11 +31,6 @@ class ResetTest(unittest.TestCase):
         self.jobs = {'legacy': {'status': 'ready'}}
         self.deps = []
         self.routes = {}
-        self.password = 'test-password-12345'
-        self.request = SimpleNamespace(headers={'authorization': f'Bearer {self.password}'})
-        self.addCleanup(patch.stopall)
-        patch.dict(os.environ, {'ADMIN_RESET_PASSWORD': self.password}).start()
-
         def register(path):
             def decorate(func):
                 self.routes[path] = func
@@ -87,7 +80,7 @@ class ResetTest(unittest.TestCase):
         sql_cursor.close()
 
     def clear(self):
-        return self.routes['/api/admin/clear-data'](ClearData(confirmation='CLEAR DATA'), self.request)
+        return self.routes['/api/admin/clear-data'](ClearData(confirmation='CLEAR DATA'))
 
     def count(self, table):
         return self.db.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
@@ -103,12 +96,7 @@ class ResetTest(unittest.TestCase):
         self.assertEqual(self.count('alliance_admin_state'), 1)
         self.assertFalse(self.jobs)
 
-    def test_rejects_wrong_password_and_active_scan(self):
-        self.request.headers['authorization'] = 'Bearer wrong'
-        with self.assertRaises(HTTPException) as error:
-            self.clear()
-        self.assertEqual(error.exception.status_code, 401)
-        self.request.headers['authorization'] = f'Bearer {self.password}'
+    def test_rejects_active_scan(self):
         self.db.execute("UPDATE media_scan_jobs SET status='scanning'")
         self.db.commit()
         with self.assertRaises(HTTPException) as error:
