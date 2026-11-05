@@ -37,9 +37,13 @@ def detect(path, min_pause=.38,threshold=2.5,stride=3,min_frames=15,progress=Non
     signatures=[(0,sign(first,top,bottom))]
     i=1
     while True:
-        ok,frame=cap.read()
-        if not ok:break
-        if i%stride==0: signatures.append((i,sign(frame,top,bottom)))
+        # Advance the decoder without materializing full RGB frames that motion
+        # detection won't compare. Keep original frame indices for exact pauses.
+        if not cap.grab():break
+        if i%stride==0:
+            ok,frame=cap.retrieve()
+            if not ok:break
+            signatures.append((i,sign(frame,top,bottom)))
         # Server jobs report frame analysis progress during long recordings,
         # instead of appearing stalled at the preparation stage.
         if progress and n>0 and i%max(90,n//25)==0:
