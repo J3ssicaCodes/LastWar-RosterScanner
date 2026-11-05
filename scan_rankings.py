@@ -119,7 +119,11 @@ def enlarge(im,scale=2,interp=cv2.INTER_CUBIC):
 def text_with_conf(im,psm=7,whitelist=None):
     args=f'--psm {psm}'
     if whitelist:args+=f' -c tessedit_char_whitelist={whitelist}'
-    info=pytesseract.image_to_data(im,config=args,output_type=pytesseract.Output.DICT)
+    try:
+        info=pytesseract.image_to_data(im,config=args,output_type=pytesseract.Output.DICT,timeout=18)
+    except (RuntimeError,pytesseract.TesseractError):
+        # Preserve the row for manual review when a crop exceeds OCR limits.
+        return '',0.0
     toks=[]; confidences=[]
     for t,cf in zip(info['text'],info['conf']):
         if t.strip():
@@ -203,7 +207,12 @@ def refine_numeric_ocr(ob,target_length=None):
     candidates=[]
     for src,psm in variants:
         big=cv2.resize(src,None,fx=3,fy=3,interpolation=cv2.INTER_CUBIC)
-        t=pytesseract.image_to_string(big,config=f'--psm {psm} -c tessedit_char_whitelist=0123456789')
+        try:
+            t=pytesseract.image_to_string(big,
+                config=f'--psm {psm} -c tessedit_char_whitelist=0123456789',
+                timeout=18)
+        except (RuntimeError,pytesseract.TesseractError):
+            continue
         val=re.sub(r'\D','',t)
         if val:candidates.append(val)
     tally=collections.Counter(candidates)
@@ -413,8 +422,11 @@ def main():
                 merged[pos]=r
     # Recovery seeks intermediate video frames. Screenshot batches have no
     # scrolling transitions to seek; never treat their source image as a video.
-    recovered=(recover_missing_full_rows(a.video,manifest,groups,merged,calibrated_period,templates,out)
-               if a.video.suffix.lower() in ('.mp4','.mov','.m4v','.webm') else [])
+    if a.video.suffix.lower() in ('.mp4','.mov','.m4v','.webm'):
+        print('Starting targeted recovery for missing leaderboard positions',flush=True)
+        recovered=recover_missing_full_rows(a.video,manifest,groups,merged,calibrated_period,templates,out)
+    else:
+        recovered=[]
     # Find conflicting views and rerun fields only on disagreement.
     for pos,obs in groups.items():
         values=[r['value'] for r in obs if r['value'].isdigit()]
