@@ -35,7 +35,7 @@ job_lock = threading.Lock()
 class ReviewEntry(BaseModel):
     id: int = Field(ge=1)
     name: str = Field(max_length=80)
-    rank: str = Field(pattern=r'^(R[1-5]|Unknown)
+    rank: str = Field(pattern=r'^(R[1-5]|Unknown)$')
     power_millions: float | None = Field(default=None, ge=0, le=1000000)
     hq_level: int | None = Field(default=None, ge=1, le=99)
     power: int | None = Field(default=None, ge=0, le=18446744073709551615)
