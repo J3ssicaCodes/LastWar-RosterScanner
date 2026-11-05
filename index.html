@@ -2066,13 +2066,33 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     progress(0,'Uploading media…');
     try{
       const form=new FormData(); for(const file of state.files)form.append('files',file,file.name);
-      const response=await fetch('/api/player-list/scan',{method:'POST',body:form});
-      const {job_id}=await checkedJson(response);
+      const {job_id}=await new Promise((resolve,reject)=>{
+        const request=new XMLHttpRequest();
+        request.open('POST','/api/player-list/scan');
+        request.timeout=600000;
+        request.upload.onprogress=event=>{
+          if(event.lengthComputable && event.total){
+            const uploadPercent=Math.min(100,Math.round(event.loaded/event.total*100));
+            progress(Math.round(uploadPercent*.15),'Uploading media: '+uploadPercent+'%');
+          }
+        };
+        request.onload=()=>{
+          let payload;
+          try{payload=JSON.parse(request.responseText);}catch{reject(Error('Server returned an unexpected response.'));return;}
+          if(request.status<200||request.status>=300){reject(Error(payload.detail||'Upload failed ('+request.status+').'));return;}
+          resolve(payload);
+        };
+        request.onerror=()=>reject(Error('Upload connection failed. Please check your internet connection.'));
+        request.ontimeout=()=>reject(Error('Upload timed out. Please try a shorter recording.'));
+        request.send(form);
+      });
+      progress(16,'Upload complete. Preparing video frames…');
       let result;
       for(let attempt=0;attempt<900;attempt++){
         await pause(1100);
         result=await checkedJson(await fetch('/api/player-list/scan/'+encodeURIComponent(job_id),{cache:'no-store'}));
-        progress(result.progress||0,result.message||'Scanning video…');
+        progress(result.status==='ready'?100:Math.min(99,16+Math.round(.84*(result.progress||0))),
+                 result.message||'Scanning video…');
         if(result.status==='error')throw Error(result.message||'Scan failed.');
         if(result.status==='ready')break;
       }
