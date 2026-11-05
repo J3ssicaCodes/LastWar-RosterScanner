@@ -37,7 +37,7 @@ Visit the Render hosted website, or open `index.html` in a modern Chrome or Edge
 
 The backend automatically creates a MySQL table named `"player list"` (and an import audit table `player_list_imports`) on startup, using Render environment variables. Configure either `DATABASE_URL` or the equivalent `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` variables. Other common MySQL environment variable names are supported too. Never place secrets in `index.html` or commit them to GitHub.
 
-Player List requires no upload key. Visitors can submit screenshots or videos and synchronize their player entries directly. This is convenient, but anyone with access to the public site can also modify the shared player list. If access restrictions are needed later, consider individual sign-in rather than sharing a single key.
+Player List does not require an upload key. Any visitor who can reach the website can upload screenshots or a video, and can synchronize scanned or reviewed players to the shared database. This keeps the user workflow simple, but also means edits are public. If you need to restrict changes in the future, implement a simple sign-in or invite system rather than a shared upload key.
 
 After a video or screenshot batch is OCR scanned, review the extracted entries and select **Sync**. Existing names are updated; new names are marked **New player**. When an import is explicitly marked as the complete roster, players not seen in that import are marked **Possibly removed** without being deleted. Incomplete screenshots should not be marked as complete.
 
@@ -80,3 +80,10 @@ its backend import pipeline use the shared database.
 ## MySQL database setup
 
 The Player List backend uses the existing cPanel MySQL database via environment variables `DB_HOST`, `DB_PORT` (normally 3306), `DB_USER`, `DB_PASSWORD`, and `DB_NAME`. At startup it creates the **`player list`** and **`player_list_imports`** tables, if they do not already exist, with no destructive migration. Render must be allowed to connect to the remote MySQL host and the database user needs permission to create tables. Use `GET /api/player-list/health` to confirm `table_ready: true`. Database credentials remain in Render settings, not source control.
+
+## Player List video portraits and birthdays
+
+* Portrait thumbnails are cropped from **video recordings only**, including the R5 leader portrait in the member list header. No screenshot is used as a portrait source.
+* Crops are compressed as WebP and stored in the existing MySQL `player list` table. They persist through Render redeploys.
+* The optional birthday field is entered manually through a calendar icon in Player List and saved by `PATCH /api/player-list/{id}/birthday`. Scanning never invents birthdays or clears previously entered birthdays.
+* Existing MySQL player tables are upgraded in place with `birthday`, `avatar_image`, and `avatar_updated_at` columns at startup. Profiles and incomplete screenshots without a video retain existing portraits.
