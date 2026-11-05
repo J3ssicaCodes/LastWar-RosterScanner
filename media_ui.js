@@ -51,6 +51,8 @@
   .media-review .media-review-actions{display:flex;justify-content:flex-end;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:11px}
   .media-review .media-review-actions .btn{margin:0}
   .media-review th:first-child,.media-review td:first-child{width:45px}
+  [data-review-warning][hidden]{display:none!important}
+  [data-review-warning]{display:block}
   .media-review .media-flag{display:block;font-size:11px;color:#f4bd80;line-height:1.4;margin-top:4px}
   .media-evidence{margin-top:6px;font-size:12px;color:var(--muted)}
   .media-evidence summary{cursor:pointer;text-decoration:underline}
@@ -137,10 +139,10 @@
   const pendingPanel=document.createElement('section');
   pendingPanel.id='mediaPendingPanel';pendingPanel.className='panel pl-section media-review';pendingPanel.hidden=true;
   pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Awaiting your approval</div><h2>Player changes to review</h2><p>Recognized players merge into the master list. Review new or uncertain detections here; Power, Kills and Donations are kept together.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
-    <div class="media-review-actions"><button class="btn" type="button" id="mediaDismiss">Dismiss unchecked</button><button class="btn primary" type="button" id="mediaApprove">Approve checked changes</button></div>
+    <div class="media-review-actions"><button class="btn" type="button" id="mediaDismiss">Dismiss checked</button><button class="btn primary" type="button" id="mediaApprove">Approve checked changes</button></div>
     <p id="mediaDiagnostics" hidden></p>
-    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Use</th><th>Change</th><th>Photo</th><th>Rank</th><th>Player</th><th>Power</th><th>Kills</th><th>Donations</th><th>Power (M) / Profile</th><th>HQ Lv.</th></tr></thead><tbody id="mediaPendingRows"></tbody></table></div>
-    <p class="pl-hint">Check the entries to approve. Unchecked entries remain pending until you explicitly dismiss them. Correct uncertain names and numbers before approval.</p>`;
+    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th><label><input type="checkbox" id="mediaSelectAll" checked aria-label="Select all Player List review rows"> Use</label></th><th>Change</th><th>Photo</th><th>Rank</th><th>Player</th><th>Power</th><th>Kills</th><th>Donations</th><th>Power (M) / Profile</th><th>HQ Lv.</th></tr></thead><tbody id="mediaPendingRows"></tbody></table></div>
+    <p class="pl-hint">Check the entries to approve. Save and Dismiss apply to checked entries. Correct uncertain names and numbers before approval.</p>`;
   const directory=playerView?.querySelector('[aria-labelledby="plDirectoryTitle"]');
   directory?.before(pendingPanel);
   const masterNames=document.createElement('datalist');masterNames.id='playerMasterNames';document.body.append(masterNames);
@@ -265,14 +267,19 @@
   };
 
   async function getJson(url,options){const r=await fetch(url,{cache:'no-store',...options});let data={};try{data=await r.json();}catch{}if(!r.ok)throw Error(data.detail||'Request failed ('+r.status+')');return data;}
+  let pendingSnapshot;
   async function refreshPending(){
     try{
-      const result=await getJson('/api/media/pending');pending=result.players||[];
+      const result=await getJson('/api/media/pending');
+      const snapshot=JSON.stringify(result.players||[]);
+      if(snapshot===pendingSnapshot)return;
+      pendingSnapshot=snapshot;
+      pending=result.players||[];
       try{const master=await getJson('/api/player-list');masterNames.innerHTML=master.players.map(p=>'<option value="'+escape(p.name)+'">').join('');}catch{}
       pendingPanel.hidden=!pending.length;
       $('mediaPendingCount').textContent=pending.length+' waiting';
                   $('mediaPendingRows').innerHTML=pending.map(p=>{
-        const flag=(p.review_required?(p.review_reasons||[]).join('; '):'');
+        const flag=p.review_required?((p.review_reasons||[]).join(' · ')||'Verify this row against the capture.'):'';
         const avatar=p.avatar_base64&&/^[A-Za-z0-9+/=]+$/.test(p.avatar_base64)?
           '<img class="pl-avatar" src="data:image/'+(p.avatar_base64.startsWith('UklGR')?'webp':'png')+';base64,'+p.avatar_base64+'" alt="Player avatar">':'♡';
         const evidence=p.evidence_base64 && p.evidence_base64.length<350000 && /^[A-Za-z0-9+/=]+$/.test(p.evidence_base64) ?
@@ -286,9 +293,11 @@
           '<td><input data-field="name" list="playerMasterNames" value="'+escape(p.name||'')+'" maxlength="80" aria-label="Player name">'+
           (p.tab?'<small class="pl-source-label">'+escape(p.tab.toUpperCase())+'</small>':'')+
           (p.source_image?'<small class="pl-source-label" title="Original file and timestamp">'+escape(p.source_image)+'</small>':'')+
-          (flag?'<small class="media-flag">'+escape(flag)+'</small>':'')+evidence+'</td>'+
+          (flag?'<small class="media-flag" data-review-warning>'+escape(flag)+'</small>'+
+          '<label><input type="checkbox" data-review-resolved> Mark resolved</label>':'')+evidence+'</td>'+
           numeric('power')+numeric('kills')+numeric('donations')+numeric('power_millions','0.1')+numeric('hq_level')+'</tr>';
       }).join('');
+      updateMediaSelection();
       await loadDiagnostics();
       $('mediaBadge').hidden=!pending.length;$('mediaBadge').textContent=String(pending.length);
     }catch(e){console.warn('Could not load pending media:',e.message);}
@@ -312,8 +321,32 @@
     box.textContent=parts.join(' | ');
     box.hidden=!parts.length;
   }
+  function updateMediaSelection(event){
+    const all=$('mediaSelectAll');
+    const rows=[...$('mediaPendingRows').querySelectorAll('[data-field="include"]')];
+    if(event?.target===all)rows.forEach(row=>{row.checked=all.checked;});
+    const checked=rows.filter(row=>row.checked).length;
+    all.checked=rows.length>0&&checked===rows.length;
+    all.indeterminate=checked>0&&checked<rows.length;
+  }
+  pendingPanel.addEventListener('change',event=>{
+    if(event.target.matches('#mediaSelectAll,[data-field="include"]'))updateMediaSelection(event);
+  });
+  pendingPanel.addEventListener('input',event=>{
+    const row=event.target.closest('[data-pending-id]');
+    const resolved=row?.querySelector('[data-review-resolved]');
+    if(!resolved||event.target.matches('[data-field="include"]'))return;
+    if(event.target!==resolved)resolved.checked=false;
+    row.querySelector('[data-review-warning]').hidden=resolved.checked;
+  });
   $('mediaApprove').onclick=async()=>{
-    const rows=[...$('mediaPendingRows').querySelectorAll('tr[data-pending-id]')].map(tr=>{
+    const checkedRows=[...$('mediaPendingRows').querySelectorAll('tr[data-pending-id]')];
+    if(checkedRows.some(tr=>tr.querySelector('[data-field="include"]').checked&&
+      tr.querySelector('[data-review-resolved]:not(:checked)'))){
+      announce('Verify the flagged rows and mark them resolved before saving.');
+      return;
+    }
+    const rows=checkedRows.map(tr=>{
       const val=field=>tr.querySelector('[data-field="'+field+'"]');
       const n=v=>v===''?null:Number(v);
       return {id:Number(tr.dataset.pendingId),include:val('include').checked,name:val('name').value.trim(),
@@ -343,10 +376,10 @@
   };
   $('mediaDismiss').onclick=async()=>{
     const ids=[...$('mediaPendingRows').querySelectorAll('tr[data-pending-id]')]
-      .filter(tr=>!tr.querySelector('[data-field="include"]').checked)
+      .filter(tr=>tr.querySelector('[data-field="include"]').checked)
       .map(tr=>Number(tr.dataset.pendingId));
-    if(!ids.length){announce('Uncheck the incorrect entries you want to dismiss.');return;}
-    if(!confirm('Permanently dismiss '+ids.length+' unchecked OCR entries? They will not update your player database.'))return;
+    if(!ids.length){announce('Check the entries you want to dismiss.');return;}
+    if(!confirm('Permanently dismiss '+ids.length+' checked OCR entries? They will not update your player database.'))return;
     $('mediaDismiss').disabled=true;
     try{
       const result=await getJson('/api/media/dismiss',{method:'POST',

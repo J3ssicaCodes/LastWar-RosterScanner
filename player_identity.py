@@ -29,3 +29,31 @@ def match_master(row, players):
                 SequenceMatcher(None,compact,compact_key(p.get('player_name',p.get('name')))).ratio()>=.78
                 and p.get('avatar_base64') and portraits_match(row['avatar_base64'],p['avatar_base64'])]
     return candidates[0] if len(candidates)==1 else None
+
+
+def load_name_corrections(cursor):
+    cursor.execute('SELECT ocr_key, player_name FROM player_name_dictionary')
+    return {row['ocr_key']: row['player_name'] for row in cursor.fetchall()}
+
+
+def corrected_name(name, corrections, master_keys):
+    original = name
+    visited = set()
+    while True:
+        key = name_key(name)
+        # A real roster name takes precedence over a learned OCR alias.
+        if key in master_keys or key not in corrections:
+            return name
+        if key in visited:
+            return original
+        visited.add(key)
+        name = corrections[key]
+
+
+def learn_name_correction(cursor, original, corrected):
+    key = name_key(original)
+    if not key or key == name_key(corrected) or len(key) > 255:
+        return
+    cursor.execute('''INSERT INTO player_name_dictionary (ocr_key, player_name)
+        VALUES (%s, %s) ON DUPLICATE KEY UPDATE player_name=VALUES(player_name)''',
+        (key, corrected))

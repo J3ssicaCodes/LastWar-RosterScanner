@@ -180,7 +180,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
 #vsPointsView p{color:var(--muted)}
 #vsPointsView input,#vsPointsView select{color:var(--text);background:var(--panel2);border:1px solid var(--stroke);border-radius:7px;padding:8px;font:inherit}
 #vsPointsView #vsRows{font-variant-numeric:tabular-nums}
-#vsPointsView .pl-table-wrap:has(#vsRows) .pl-table{min-width:0}
+#vsPointsView .pl-table-wrap:has(#vsRows) .pl-table{min-width:720px}
 #vsReviewJobs input[data-vs-name]{min-width:180px;width:100%}
 #vsReviewJobs input[data-vs-points]{min-width:130px;width:100%}
 /* Workspace navigation. Keep the complete roster scanner mounted while inactive. */
@@ -324,8 +324,8 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
   <section class="panel pl-section"><div class="pl-title-row"><div><div class="eyebrow">Alliance competition</div><h2>VS Points</h2><p>Daily scores, one record per player and date. Upload a Daily Rank recording using Media Upload.</p></div><button class="btn" id="vsRefresh" type="button">↻ Refresh</button></div>
   <p id="vsMessage" role="status" aria-live="polite"></p>
   <div id="vsPending" hidden><h3>Review scanned points</h3><p>Verify the highlighted day and earned date. Dates use the uploader’s local calendar week ending Sunday. Sunday uploads belong to the week that just ended.</p><div id="vsReviewJobs"></div></div>
-  <div class="pl-filters"><label>Date <select id="vsDate" aria-label="Score date"><option value="">No saved dates</option></select></label><input id="vsSearch" type="search" placeholder="Search player names…" aria-label="Search VS players"><a class="btn" id="vsExport" href="/api/vs-points/export.csv">↓ Export CSV</a></div>
-  <p id="vsSummary"></p><div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Date</th><th>Player</th><th>VS points</th></tr></thead><tbody id="vsRows"><tr><td colspan="3">No scores saved yet.</td></tr></tbody></table></div>
+  <div class="pl-filters"><label>Week <select id="vsDate" aria-label="Score week"><option value="">Current week</option></select></label><input id="vsSearch" type="search" placeholder="Search player names…" aria-label="Search VS players"><a class="btn" id="vsExport" href="/api/vs-points/export.csv">↓ Export CSV</a></div>
+  <p id="vsSummary"></p><div class="pl-table-wrap"><table class="pl-table"><thead><tr id="vsWeekColumns"><th>Player</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Total</th></tr></thead><tbody id="vsRows"><tr><td colspan="8">No scores saved yet.</td></tr></tbody></table></div>
   <datalist id="vsPlayerNames"></datalist>
   </section>
 </section>
@@ -646,7 +646,14 @@ function saveNameDictionary(){
 function updateDictionaryCount(){
   const el=$('dictionaryCount');if(el)el.textContent=String(nameDictionary.size);
 }
-function correctedOCRName(name){return nameDictionary.get(nameKey(name))?.corrected||cleanName(name);}
+let sharedOCRNames=new Map();
+function sharedOCRName(name){
+  const key=String(name||'').normalize('NFKC').toLowerCase().replace(/\s+/g,'');
+  return sharedOCRNames.get(key);
+}
+function correctedOCRName(name){
+  return nameDictionary.get(nameKey(name))?.corrected||sharedOCRName(name)||cleanName(name);
+}
 function setNameRule(ocr,corrected){
   ocr=cleanName(ocr);corrected=cleanName(corrected);
   if(!ocr||!corrected)throw Error('Enter both the OCR name and corrected name.');
@@ -1227,7 +1234,7 @@ function compileRows(){
     // Team edits take effect BEFORE deduplication, so a player intentionally
     // moved from B to A is not merged with a future B screenshot of that name.
     const override=manualOverrides.get(entry.id)||{};
-    const displayName=override.name??(nameDictionary.get(nameKey(rawName))?.corrected||entry.confirmedAlias||cleanName(rawName));
+    const displayName=override.name??(nameDictionary.get(nameKey(rawName))?.corrected||sharedOCRName(rawName)||entry.confirmedAlias||cleanName(rawName));
     const effectiveTeam=override.team??entry.team;
     const key=effectiveTeam+'|'+displayName.toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
     if(displayName&&seen.has(key)){
@@ -1472,6 +1479,10 @@ async function scan(){
   scanning=true;stopRequested=false;$('cancelBtn').disabled=false;$('cancelBtn').hidden=false;$('scanBtn').disabled=true;$('clearBtn').disabled=true;
   showState('Loading the OCR engine…');let worker;
   try{
+    try{
+      const response=await fetch('/api/player-list/name-dictionary',{cache:'no-store'});
+      if(response.ok)sharedOCRNames=new Map(Object.entries(await response.json()));
+    }catch{}
     worker=await Tesseract.createWorker('eng',1,{logger:m=>{
       if(m.status==='recognizing text'&&Number.isFinite(m.progress)){
         const current=todo.findIndex(i=>i.status==='scanning');if(current>=0)setProgress(current,todo.length,Math.min(.90,m.progress*.75),'Reading '+todo[current].file.name);

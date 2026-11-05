@@ -460,7 +460,7 @@ def main():
                 value_key[best['tab']]:value, 'tab':best['tab'],
                 'page':best['page'],'confidence_name':best['name_conf'],
                 'confidence_stat':best['value_conf'],'review':';'.join(sorted(set(allissues))),
-                'position_internal':pos,'observed_pages':','.join(str(r['page']) for r in obs)}
+                'position_internal':pos,'center_y':best['y'],'source_frame':best.get('frame'),'observed_pages':','.join(str(r['page']) for r in obs)}
         final.append(result)
         if result['review']:review.append(result)
     # Monotonicity expected for descending leaderboard metrics; flag anomalies.
@@ -494,7 +494,7 @@ def main():
                 r['review']=(r['review']+';verify_decorative_unicode').strip(';')
     # Preserve fields with natural, selected-column names and no leaderboard position.
     columns=['avatar','rank','name','power','kills','donations','tab','page','review',
-             'confidence_name','confidence_stat','observed_pages']
+             'confidence_name','confidence_stat','observed_pages','center_y','source_frame']
     with (out/'rankings.csv').open('w',newline='',encoding='utf-8-sig') as f:
         wr=csv.DictWriter(f,fieldnames=columns);wr.writeheader();wr.writerows({k:r.get(k,'') for k in columns} for r in final)
     with (out/'review_needed.csv').open('w',newline='',encoding='utf-8-sig') as f:

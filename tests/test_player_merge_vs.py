@@ -24,6 +24,9 @@ class SQLDatabase:
             last_seen_at TEXT,updated_at TEXT,last_import_id TEXT);
             CREATE TABLE player_list_imports (id TEXT,is_full_capture INTEGER,scanned_count INTEGER,
             created_count INTEGER,updated_count INTEGER,possible_removed_count INTEGER);
+            CREATE TABLE player_name_dictionary (ocr_key TEXT PRIMARY KEY,player_name TEXT);
+            CREATE TABLE player_stat_history (player_id INTEGER,import_id TEXT,recorded_at TEXT,
+            power INTEGER,power_millions REAL,kills INTEGER);
             CREATE TABLE vs_points (id INTEGER PRIMARY KEY,score_date TEXT,player_id INTEGER,
             player_name TEXT,normalized_name TEXT,points INTEGER,source_job_id TEXT,updated_at TEXT,
             UNIQUE(score_date,normalized_name),UNIQUE(score_date,player_id));
@@ -53,12 +56,14 @@ class Cursor:
         if row is None:return None
         row=dict(row)
         if 'upload_date' in row:row['upload_date']=date.fromisoformat(row['upload_date'])
+        if 'score_date' in row:row['score_date']=date.fromisoformat(row['score_date'])
         return row
     def fetchall(self):
         rows=[]
         for row in self.cursor_.fetchall():
             row=dict(row)
             if 'upload_date' in row:row['upload_date']=date.fromisoformat(row['upload_date'])
+            if 'score_date' in row:row['score_date']=date.fromisoformat(row['score_date'])
             if row.get('birthday'):row['birthday']=date.fromisoformat(row['birthday'])
             rows.append(row)
         return rows
@@ -103,6 +108,12 @@ class PlayerMergeTests(unittest.TestCase):
         row=self.db.db.execute('SELECT birthday,power FROM `player list`').fetchone()
         self.assertEqual(tuple(row),(None,123))
 
+    def test_power_and_kills_history_keeps_changes(self):
+        for power,kills in [(100,None),(None,20),(125,None),(125,None)]:
+            app.import_players(app.ImportData(players=[app.Member(name='Jess',rank='R4',power=power,kills=kills)]))
+        snapshots=self.db.db.execute('SELECT power,kills FROM player_stat_history ORDER BY rowid').fetchall()
+        self.assertEqual([tuple(row) for row in snapshots],[(100,None),(100,20),(125,20)])
+
     def test_birthday_has_no_year_and_supports_leap_day(self):
         self.assertEqual(app.BirthdayUpdate(birthday='02-29').birthday,'02-29')
         self.assertEqual(app.BirthdayUpdate(birthday='1999-05-07').birthday,'05-07')
@@ -110,6 +121,41 @@ class PlayerMergeTests(unittest.TestCase):
 
 
 class VSDateAndPersistenceTests(unittest.TestCase):
+    def test_adjacent_frames_require_agreement_for_each_field(self):
+        from unittest.mock import patch
+        from vs_points_ocr import recheck_neighbors
+        original={'internal_position':4,'page':1,'name':'Ladv Jess','value':'123',
+                  'name_conf':85,'value_conf':85}
+        frames=iter([{'name':'Lady Jess','value':'124'}, {'name':'Lady Jess','value':'125'}])
+        capture=Mock()
+        capture.read.side_effect=lambda: (True,next(frames))
+        def read_frame(image,anchors):
+            return [{**image,'matched_position':4,'name_conf':90,'value_conf':90}]
+        with patch('vs_points_ocr.cv2.VideoCapture',return_value=capture):
+            confirmed=recheck_neighbors({4:original},{1:('sample.mp4',40)},{4:['Check']},
+                                       str,Mock(),read_frame)
+        self.assertEqual([call.args[1] for call in capture.set.call_args_list],[39,41])
+        self.assertEqual(confirmed[4],{'name'})
+        self.assertEqual(original['name'],'Lady Jess')
+        self.assertEqual(original['value'],'123')
+        self.assertIn('Points differs across adjacent frames',original['neighbor_conflicts'])
+
+    def test_weekly_scores_keep_dates_and_learn_reviewed_names(self):
+        from player_identity import corrected_name, load_name_corrections
+        db=SQLDatabase(); web=Mock(); install_vs_points(web,db)
+        routes={r.path:r.endpoint for r in web.include_router.call_args.args[0].routes}
+        for idx, day in enumerate(('2026-10-31','2026-11-02','2026-11-04'),1):
+            db.db.execute('INSERT INTO vs_scan_rows (id,job_id,upload_date,player_name) VALUES (?,?,?,?)',
+                          (idx,'job',day,'Ladv Jess'))
+            routes['/api/vs-points/approve'](VSApproval(job_id='job',score_date=day,
+                rows=[{'id':idx,'name':'Lady Jess','points':idx}]))
+        week=routes['/api/vs-points/weekly'](date(2026,11,5))
+        self.assertEqual(week['days'],[f'2026-11-0{day}' for day in range(2,8)])
+        self.assertEqual(week['weeks'],['2026-11-02','2026-10-26'])
+        self.assertEqual({(r['score_date'],r['points']) for r in week['rows']},
+                         {('2026-11-02',2),('2026-11-04',3)})
+        self.assertEqual(corrected_name('Ladv Jess',load_name_corrections(db.cursor()),set()),'Lady Jess')
+
     def test_selected_day_uses_current_week_ending_sunday(self):
         self.assertEqual(score_date_for_day(date(2026,11,5),2),date(2026,11,4))
         self.assertEqual(score_date_for_day(date(2026,11,8),5),date(2026,11,7))

@@ -23,7 +23,8 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from player_list_ocr import scan_upload, extract_profile
-from player_identity import match_master
+from player_identity import (match_master, name_key, corrected_name,
+                             load_name_corrections, learn_name_correction)
 from vs_points_ocr import scan_vs_upload
 from vs_points import stage_vs_result
 from tested_rankings_adapter import scan_tested_rankings_upload
@@ -132,6 +133,10 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                     KEY idx_roster_upload_job (job_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4''')
+                cur.execute('''CREATE TABLE IF NOT EXISTS player_name_dictionary (
+                    ocr_key VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin PRIMARY KEY,
+                    player_name VARCHAR(255) NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4''')
                 cur.execute('''CREATE TABLE IF NOT EXISTS media_scan_audit (
                     job_id CHAR(36) NOT NULL PRIMARY KEY,
                     diagnostics_json LONGTEXT NULL,
@@ -205,9 +210,14 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     report.last_at = time.monotonic()
             report.last = None
             report.last_at = 0.0
+            with connect_db() as conn:
+                with conn.cursor() as cur:
+                    corrections = load_name_corrections(cur)
+                    cur.execute('SELECT player_name FROM `player list`')
+                    master_keys = {name_key(row['player_name']) for row in cur.fetchall()}
             if destination == 'vs':
                 if upload_date is None:raise ValueError('Upload date is missing. Select the file again.')
-                result=scan_vs_upload(paths,report,upload_date)
+                result=scan_vs_upload(paths,report,upload_date,corrections,master_keys)
                 count=stage_vs_result(connect_db,job_id,result)
                 set_job(job_id,status='review',progress=100,count=count,
                         message=f"{result['weekday']} · {result['score_date']} · {count} VS scores ready to review")
@@ -229,8 +239,15 @@ def install_media_upload(app, connect_db, import_players, import_model):
                         profiles.append(path)
                     else:
                         leaderboard_files.append(path)
+                with connect_db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute('SELECT id,player_name,player_rank,normalized_name,avatar_image FROM `player list`')
+                        master=cur.fetchall()
+                for player in master:
+                    portrait=player.pop('avatar_image',None)
+                    player['avatar_base64']=base64.b64encode(portrait).decode() if portrait else None
                 if leaderboard_files:
-                    result = scan_tested_rankings_upload(leaderboard_files, report)
+                    result = scan_tested_rankings_upload(leaderboard_files, report, corrections, master_keys)
                 else:
                     result = {'players': [], 'audit': [], 'diagnostics': {},
                               'frames_examined':0,'warnings':[]}
@@ -247,12 +264,12 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 from app import normalize_name
                 dedup = {}
                 for row in records:
-                    name = str(row.get('name') or '').strip()
+                    name = corrected_name(str(row.get('name') or '').strip(),corrections,master_keys)
                     team = str(row.get('team') or '?').upper()
                     if not name or team not in ('A','B'): continue
                     key = (team, normalize_name(name))
                     if key[1] and (key not in dedup or not dedup[key].get('power')):
-                        dedup[key] = row
+                        dedup[key] = {**row,'name':name}
                 if not dedup:
                     raise ValueError('Team A or B was not readable. Previous Storm Roster remains unchanged.')
                 with connect_db() as conn:
@@ -273,15 +290,9 @@ def install_media_upload(app, connect_db, import_players, import_model):
                         message=f'Storm Roster ready: {len(dedup)} players. Scanner updated.')
             else:
                 from app import Member, ImportData, normalize_name
-                with connect_db() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute('SELECT id,player_name,player_rank,normalized_name,avatar_image FROM `player list`')
-                        master=cur.fetchall()
-                for player in master:
-                    portrait=player.pop('avatar_image',None)
-                    player['avatar_base64']=base64.b64encode(portrait).decode() if portrait else None
                 merge=[];needs_review=[]
                 for row in records:
+                    row={**row,'name':corrected_name(row.get('name') or '',corrections,master_keys)}
                     current=match_master(row,master)
                     if current:
                         row={**row,'name':current['player_name']}
@@ -595,7 +606,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
         with connect_db() as conn:
             with conn.cursor() as cur:
                 marks=','.join(['%s']*len(ids))
-                cur.execute(f'''SELECT r.id,r.job_id,r.avatar_base64,j.full_capture FROM `roster upload` r
+                cur.execute(f'''SELECT r.id,r.job_id,r.player_name,r.avatar_base64,j.full_capture FROM `roster upload` r
                     JOIN media_scan_jobs j ON j.id=r.job_id WHERE r.id IN ({marks})''',tuple(ids))
                 matching={int(r['id']):r for r in cur.fetchall()}
         if len(matching)!=len(ids):
@@ -614,6 +625,9 @@ def install_media_upload(app, connect_db, import_players, import_model):
         approved_ids=[item.id for item in body.rows if item.include]
         with connect_db() as conn:
             with conn.cursor() as cur:
+                for item in body.rows:
+                    if item.include:
+                        learn_name_correction(cur, matching[item.id]['player_name'], item.name.strip())
                 marks=','.join(['%s']*len(approved_ids))
                 cur.execute(f'DELETE FROM `roster upload` WHERE id IN ({marks})',tuple(approved_ids))
                 cur.execute('''UPDATE media_scan_jobs j SET status='approved',

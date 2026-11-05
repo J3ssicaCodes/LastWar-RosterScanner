@@ -1,5 +1,5 @@
 """Persistent VS daily scores and review, keyed by player and earned date."""
-from datetime import date
+from datetime import date, timedelta
 import base64
 import csv
 import io
@@ -7,7 +7,7 @@ import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from player_identity import match_master, name_key
+from player_identity import match_master, name_key, learn_name_correction
 from vs_points_ocr import score_date_for_day
 
 
@@ -97,9 +97,32 @@ def install_vs_points(app, connect_db):
         for row in rows:row['score_date']=row['score_date'].isoformat()
         return {'rows':rows,'dates':dates,'score_date':chosen.isoformat() if chosen else None}
 
+    @router.get('/weekly')
+    def weekly_scores(week_start: date):
+        monday = week_start - timedelta(days=week_start.weekday())
+        days = [monday + timedelta(days=i) for i in range(6)]
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute('SELECT DISTINCT score_date FROM vs_points')
+                dates = [row['score_date'] for row in cur.fetchall()]
+                cur.execute('''SELECT v.score_date,v.points,
+                    COALESCE(p.player_name,v.player_name) AS name,
+                    COALESCE(p.normalized_name,v.normalized_name) AS player_key
+                    FROM vs_points v LEFT JOIN `player list` p ON p.id=v.player_id
+                    WHERE v.score_date BETWEEN %s AND %s
+                    ORDER BY v.player_id IS NULL,v.updated_at DESC''',(days[0],days[-1]))
+                rows = cur.fetchall()
+        weeks = {day - timedelta(days=day.weekday()) for day in dates}
+        weeks.add(monday)
+        for row in rows:
+            row['score_date'] = row['score_date'].isoformat()
+        return {'rows':rows, 'days':[day.isoformat() for day in days],
+                'weeks':[week.isoformat() for week in sorted(weeks,reverse=True)],
+                'week_start':monday.isoformat()}
+
     @router.get('/export.csv')
-    def export_scores(score_date: date | None = None):
-        result=list_scores(score_date)
+    def export_scores(score_date: date | None = None, week_start: date | None = None):
+        result=weekly_scores(week_start) if week_start else list_scores(score_date)
         buf=io.StringIO();writer=csv.writer(buf);writer.writerow(['Date','Player Name','VS Points'])
         for row in result['rows']:writer.writerow([row['score_date'],row['name'],row['points']])
         return Response(buf.getvalue(),media_type='text/csv',headers={'Content-Disposition':'attachment; filename="vs_points.csv"'})
@@ -128,9 +151,10 @@ def install_vs_points(app, connect_db):
             try:
                 with conn.cursor() as cur:
                     marks=','.join(['%s']*len(ids))
-                    cur.execute(f'SELECT id,upload_date FROM vs_scan_rows WHERE job_id=%s AND id IN ({marks}) FOR UPDATE', (body.job_id,*ids))
+                    cur.execute(f'SELECT id,upload_date,player_name FROM vs_scan_rows WHERE job_id=%s AND id IN ({marks}) FOR UPDATE', (body.job_id,*ids))
                     staged=cur.fetchall()
                     if len(staged)!=len(ids):raise HTTPException(409,detail='Review changed. Refresh and retry.')
+                    original_names={source['id']:source['player_name'] for source in staged}
                     for source in staged:
                         monday=score_date_for_day(source['upload_date'],0)
                         saturday=score_date_for_day(source['upload_date'],5)
@@ -144,6 +168,8 @@ def install_vs_points(app, connect_db):
                         key=name_key(name)
                         if key in seen:raise HTTPException(409,detail='Two reviewed rows match the same player. Keep one score.')
                         seen.add(key)
+                        if name_key(original_names[row.id]) != name_key(row.name):
+                            learn_name_correction(cur,original_names[row.id],name)
                         cur.execute('''INSERT INTO vs_points
                             (score_date,player_id,player_name,normalized_name,points,source_job_id)
                             VALUES (%s,%s,%s,%s,%s,%s)

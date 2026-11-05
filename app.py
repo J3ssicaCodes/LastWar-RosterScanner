@@ -32,7 +32,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
-from player_identity import match_master
+from player_identity import match_master, name_key, corrected_name, load_name_corrections
 from player_list_ocr import scan_upload
 
 BASE = Path(__file__).parent
@@ -149,6 +149,22 @@ def initialize_db():
                     cur.execute('SHOW COLUMNS FROM `player list` LIKE %s',(field,))
                     if not cur.fetchone():
                         cur.execute(f'ALTER TABLE `player list` ADD COLUMN `{field}` {definition}')
+                cur.execute('''CREATE TABLE IF NOT EXISTS player_stat_history (
+                    player_id BIGINT UNSIGNED NOT NULL,
+                    import_id VARCHAR(36) NOT NULL,
+                    recorded_at DATETIME(6) NOT NULL,
+                    power BIGINT UNSIGNED NULL,
+                    power_millions DECIMAL(12,1) NULL,
+                    kills BIGINT UNSIGNED NULL,
+                    PRIMARY KEY (player_id, import_id),
+                    KEY idx_player_stat_history_time (player_id, recorded_at)
+                ) ENGINE=InnoDB''')
+                cur.execute('''INSERT IGNORE INTO player_stat_history
+                    (player_id,import_id,recorded_at,power,power_millions,kills)
+                    SELECT p.id,'baseline',UTC_TIMESTAMP(6),p.power,p.power_millions,p.kills
+                    FROM `player list` p
+                    WHERE (p.power IS NOT NULL OR p.power_millions IS NOT NULL OR p.kills IS NOT NULL)
+                      AND NOT EXISTS (SELECT 1 FROM player_stat_history h WHERE h.player_id=p.id)''')
                 cur.execute('SHOW TABLES LIKE %s', ('player list',))
                 if cur.fetchone() is None:
                     raise RuntimeError('Player List table not visible after creation.')
@@ -295,6 +311,17 @@ def _update_job(job_id, **fields):
         if job:job.update(fields)
 
 
+@app.get('/api/player-list/name-dictionary')
+def player_name_dictionary():
+    with db_connect() as conn:
+        with conn.cursor() as cur:
+            corrections = load_name_corrections(cur)
+            cur.execute('SELECT player_name FROM `player list`')
+            master_keys = {name_key(row['player_name']) for row in cur.fetchall()}
+    return {key: corrected_name(key, corrections, master_keys)
+            for key in corrections if key not in master_keys}
+
+
 def _run_scan(job_id, paths, tempdir):
     try:
         _update_job(job_id,status='scanning',message='Reading cached media on Render. Safe to lock your screen.',progress=2)
@@ -302,6 +329,9 @@ def _run_scan(job_id, paths, tempdir):
         def progress(current,total,message):
             _update_job(job_id,progress=round(current/max(total,1)*100),message=message)
         result=scan_upload(paths,progress)
+        corrections=player_name_dictionary()
+        for player in result['players']:
+            player['name']=corrections.get(name_key(player['name']),player['name'])
         scan_logger.info('Player List OCR job %s finished: %d candidates, %d frames.',job_id,len(result['players']),result['frames_examined'])
         _update_job(job_id,status='ready',message='Review extracted players before syncing.',progress=100,
                     players=result['players'],frames_examined=result['frames_examined'],warnings=result['warnings'])
@@ -451,7 +481,7 @@ def import_players(body: ImportData):
                             ):
                                 raise HTTPException(400,detail='Invalid PNG or WebP portrait image.')
                         avatar_mime = ('image/png' if portrait and portrait.startswith(b'\x89PNG') else 'image/webp')
-                        cur.execute('SELECT id FROM `player list` WHERE normalized_name=%s FOR UPDATE', (key,))
+                        cur.execute('SELECT id,power,power_millions,kills FROM `player list` WHERE normalized_name=%s FOR UPDATE', (key,))
                         existing = cur.fetchone()
                         if existing:
                             cur.execute("""UPDATE `player list` SET
@@ -480,6 +510,18 @@ def import_players(body: ImportData):
                                 (member.name,key,member.rank,member.power_millions,member.power,member.kills,member.donations,
                                  member.hq_level,portrait,avatar_mime,portrait,batch_id))
                             created += 1
+                        supplied_stats = {
+                            'power': member.power,
+                            'power_millions': member.power_millions,
+                            'kills': member.kills,
+                        }
+                        if any(value is not None and (existing is None or
+                               (Decimal(str(value)) if field == 'power_millions' else value) != existing[field])
+                               for field,value in supplied_stats.items()):
+                            cur.execute('''INSERT INTO player_stat_history
+                                (player_id,import_id,recorded_at,power,power_millions,kills)
+                                SELECT id,%s,UTC_TIMESTAMP(6),power,power_millions,kills
+                                FROM `player list` WHERE normalized_name=%s''',(batch_id,key))
                     if body.full_capture:
                         cur.execute("""UPDATE `player list` SET possibly_removed=TRUE,
                             updated_at=UTC_TIMESTAMP(6) WHERE (last_import_id IS NULL OR last_import_id<>%s)

@@ -28,6 +28,51 @@ import numpy as np
 from extract_ranking_pages import detect, extract
 from scan_rankings import tabs
 
+from player_identity import corrected_name, name_key
+from scan_rankings import add_fallback_ocr, ocr_fields, pinned_top, row_centers
+from vs_points_ocr import recheck_neighbors
+
+
+def recheck_ranking_group(records, anchors, sources, tab, period, resolve, progress):
+    def read_frame(image, targets):
+        if tabs(image)[0] != tab:
+            return []
+        upper = int(image.shape[0]*.18)
+        centers, _, _ = row_centers(image,upper,pinned_top(image),period)
+        readings = []
+        scale = image.shape[1]/1080
+        for center in centers:
+            candidates = [row for row in targets if abs(row['center']-center) < period*.30]
+            if len(candidates) != 1:
+                continue
+            row = candidates[0]
+            crop = image[round(center-52*scale):round(center+54*scale),
+                         round(211*scale):round(316*scale)]
+            if not crop.size:
+                continue
+            signature = cv2.resize(cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY),(24,24))
+            if cv2.absdiff(signature,row['signature']).mean() >= 14:
+                continue
+            reading = ocr_fields(image,center)
+            add_fallback_ocr(reading)
+            readings.append({**reading,'matched_position':row['internal_position']})
+        return readings
+
+    confirmed = recheck_neighbors(anchors,sources,{pos:True for pos in anchors},
+                                  resolve,progress,read_frame)
+    field = TAB_FIELD[tab]
+    for record in records:
+        position = record['internal_position']
+        if position not in anchors:
+            continue
+        row = anchors[position]
+        if 'name' in confirmed[position]:
+            record['name'] = row['name'].strip()
+        if 'value' in confirmed[position]:
+            record[field] = int(row['value'])
+        record['review_reasons'].extend(row.get('neighbor_conflicts',[]))
+
+
 VIDEO_EXTENSIONS = {'.mp4', '.mov', '.m4v', '.webm'}
 TAB_FIELD = {'Power': 'power', 'Kills': 'kills', 'Donation': 'donations'}
 
@@ -143,7 +188,7 @@ def _page_group(path: Path, staging: Path, idx: int, progress=None):
               'input_kind': 'image', 'fps': None }], 0
 
 
-def scan_tested_rankings_upload(paths: list[Path], progress: Callable):
+def scan_tested_rankings_upload(paths: list[Path], progress: Callable, corrections=None, master_keys=None):
     """Run original tested scan code on video pauses and uploaded screenshots.
 
     Each tab is scanned separately so Power position 1 and Kills position 1
@@ -153,6 +198,8 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable):
     if not paths:
         raise ValueError('No media supplied.')
     records = []
+    def resolve(name):
+        return corrected_name(name,corrections or {},master_keys or set())
     diagnostics = {'scanner':'tested-user-supplied-v3', 'distinct_pages':0,
                    'source_frames':0, 'tabs':[], 'missing_positions':{},
                    'review_count':0, 'recovered_rows':0, 'complete_rows':0}
@@ -250,11 +297,36 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable):
             if not (folder/'rankings.csv').exists():
                 raise ValueError('Ranking OCR produced no results.')
             report=json.loads((folder/'audit.json').read_text())
+            group_records, anchors, sources = [], {}, {}
             with (folder/'rankings.csv').open(newline='',encoding='utf-8-sig') as f:
                 for entry in csv.DictReader(f):
                     record=_record_from_csv(entry,folder,metadata,tab)
-                    if record:
-                        records.append(record)
+                    if not record:
+                        continue
+                    group_records.append(record)
+                    unmatched = master_keys is not None and name_key(resolve(record['name'])) not in master_keys
+                    if not video_path or not (record['review_required'] or unmatched) or not entry.get('center_y'):
+                        continue
+                    page = record['audit']['source_page']
+                    frame = entry.get('source_frame') or metadata.get(page,{}).get('frame')
+                    if frame is None:
+                        continue
+                    portrait = cv2.imread(str(folder/entry['avatar']),cv2.IMREAD_GRAYSCALE)
+                    if portrait is None:
+                        continue
+                    pos = record['internal_position']
+                    field = TAB_FIELD[tab]
+                    sources[page] = (Path(video_path),int(frame))
+                    anchors[pos] = {'internal_position':pos,'page':page,'center':int(entry['center_y']),
+                                    'signature':cv2.resize(portrait,(24,24)),
+                                    'name':record['name'],'name_conf':record['audit']['name_confidence'],
+                                    'value':str(record[field]) if record[field] is not None else '',
+                                    'value_conf':record['audit']['stat_confidence']}
+            if anchors:
+                recheck_ranking_group(group_records,anchors,sources,tab,
+                                      report['calibrated_row_height_pixels'],resolve,
+                                      lambda _p,_n,message: progress(94,100,message))
+            records.extend(group_records)
             audit.append({'source_group':group_idx,'tab':tab,'kind':kind,
                           'pages':len(kept),'scanner_report':report})
             diagnostics['tabs'].append(TAB_FIELD[tab])
