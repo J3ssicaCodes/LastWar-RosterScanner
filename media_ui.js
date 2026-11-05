@@ -234,7 +234,7 @@
       const {jobs=[]}=await getJson('/api/media/jobs');
       const newAlerts=[];
       for(const job of jobs){
-        if(job.status==='ready'||job.status==='review'){
+        if(['ready','review','error','interrupted'].includes(job.status)){
           const key=job.id+':'+job.status;
           if(!notified.has(key)){
             newAlerts.push(job);notified.add(key);
@@ -243,7 +243,10 @@
       }
       if(newAlerts.length){
         for(const job of newAlerts){
-          if(job.destination==='storm'){
+          if(job.status==='error'||job.status==='interrupted'){
+            announce('⚠ '+(job.destination==='storm'?'Storm Roster':'Player List')+
+              ' scan did not finish: '+(job.message||'Server processing was interrupted. Please retry.'));
+          }else if(job.destination==='storm'){
             await window.loadServerStormRoster?.();
             announce('✓ Storm Roster scanned! '+job.result_count+' players loaded into Roster Scanner.');
           }else{
