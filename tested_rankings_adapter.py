@@ -206,6 +206,7 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable):
             scan_start=time.monotonic()
             output_tail=[]
             page_number=0
+            last_heartbeat=scan_start
             deadline=scan_start+720
             process=subprocess.Popen(command,stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,text=True,bufsize=1)
@@ -226,8 +227,14 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable):
                                     f'Recognizing {tab} page {page_number} of {len(kept)} ({found.group(2)} rows)…')
                             elif 'calibrated row height:' in line:
                                 progress(29,100,f'Calibrating {tab} player rows…')
+                            elif 'Starting targeted recovery' in line:
+                                progress(86,100,f'Checking missing {tab} leaderboard rows…')
                             elif 'SUMMARY' in line:
-                                progress(85,100,f'Checking {tab} ranking order and gaps…')
+                                progress(90,100,f'Checking {tab} ranking order and gaps…')
+                    if process.poll() is None and time.monotonic()-last_heartbeat>12:
+                        last_heartbeat=time.monotonic()
+                        progress(29+round(56*page_number/max(1,len(kept))),100,
+                            f'Working on {tab} page {min(len(kept),page_number+1)} of {len(kept)}…')
                     if process.poll() is not None:
                         output_tail.extend(line.strip() for line in process.stdout if line.strip())
                         break
