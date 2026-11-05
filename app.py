@@ -257,10 +257,10 @@ def export_csv():
     data=list_players()['players']
     buf=io.StringIO()
     writer=csv.writer(buf)
-    writer.writerow(['Rank','Player Name','Power (M)','HQ Level','Birthday','Status','Last Seen'])
+    writer.writerow(['Rank','Player Name','Power (M)','HQ Level','Birthday','Status'])
     for p in data:
         status='Possibly removed' if p['possibly_removed'] else 'New player' if p['is_new'] else 'Active'
-        writer.writerow([p['rank'],p['name'],p['power_millions'] if p['power_millions'] is not None else '',p['hq_level'] or '',p.get('birthday') or '',status,p['last_seen_at'].isoformat()])
+        writer.writerow([p['rank'],p['name'],p['power_millions'] if p['power_millions'] is not None else '',p['hq_level'] or '',p.get('birthday') or '',status])
     buf.seek(0)
     return StreamingResponse(iter([buf.getvalue()]),media_type='text/csv',headers={'Content-Disposition':'attachment; filename="lastwar_player_list.csv"'})
 
