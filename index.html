@@ -2301,6 +2301,15 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
   }
 
   const collapsedRanks=new Set((()=>{try{return JSON.parse(localStorage.getItem('lastwar.playerList.collapsedRanks.v1')||'[]');}catch{return [];}})());
+  function formatTablePower(player){
+    const power=player.power ?? (player.power_millions==null?null:Math.round(player.power_millions*1000000));
+    if(power==null)return '—';
+    const value=Number(power);
+    const [unit,suffix]=value>=1000000?[1000000,'M']:value>=1000?[1000,'K']:[1,''];
+    if(!suffix)return value.toLocaleString('en-US');
+    const truncated=Math.floor(value/(unit/100))/100;
+    return truncated.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+suffix;
+  }
   function renderDirectory(){
     const rows=state.players,query=$('plSearch').value.trim().toLocaleLowerCase(),filter=$('plFilter').value;
     $('plTotal').textContent=rows.length;
@@ -2312,7 +2321,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       const [status,cls]=p.possibly_removed?['Possibly removed','removed']:p.is_new?['New player','new']:['Active','active'];
       const birthday=p.birthday?new Date('2000-'+p.birthday+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—';
       const avatar=p.has_avatar?`<img class="pl-avatar" loading="lazy" src="${escape(p.avatar_url)}?v=${encodeURIComponent(p.avatar_updated_at||'1')}" alt="${escape(p.name)} video portrait">`:'<span class="pl-avatar-empty" title="No video portrait yet">♡</span>';
-      return `<tr data-player-profile="${p.id}"><td>${avatar}</td><td class="pl-player-name"><button type="button" class="btn" data-player-profile="${p.id}" aria-label="View ${escape(p.name)} profile">${escape(p.name)}</button></td><td>${p.power!=null?escape(Number(p.power).toLocaleString()):p.power_millions!=null?escape(Number(p.power_millions).toFixed(1)+'M'):'—'}</td><td>${p.kills!=null?escape(Number(p.kills).toLocaleString()):'—'}</td><td>${p.donations!=null?escape(Number(p.donations).toLocaleString()):'—'}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
+      return `<tr data-player-profile="${p.id}"><td>${avatar}</td><td class="pl-player-name"><button type="button" class="btn" data-player-profile="${p.id}" aria-label="View ${escape(p.name)} profile">${escape(p.name)}</button></td><td>${escape(formatTablePower(p))}</td><td>${p.kills!=null?escape(Number(p.kills).toLocaleString()):'—'}</td><td>${p.donations!=null?escape(Number(p.donations).toLocaleString()):'—'}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
        <td><div class="pl-birthday-wrap"><span class="pl-birthday-date" title="${escape(p.birthday||'Birthday not set')}">${escape(birthday)}</span><button type="button" class="pl-calendar-btn" data-player-birthday="${p.id}" aria-label="Edit ${escape(p.name)} birthday" title="Set birthday">📅</button></div></td>
        <td><span class="pl-status ${cls}">${status}</span></td></tr>`;
     };
