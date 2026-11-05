@@ -33,9 +33,9 @@ Visit the Render hosted website, or open `index.html` in a modern Chrome or Edge
 
 **Roster Scanner:** screenshots are read locally in the browser, not uploaded to the server. Event configurations, OCR name dictionary, and preferences remain in browser storage.
 
-**Player List:** the new importer sends selected screenshots or screen recordings to the Render service for OCR. The server keeps files only in a temporary directory during scanning, then deletes them. The user reviews names, in-game ranks, power values and HQ levels before syncing. Confirmed player details are saved to PostgreSQL and shared between browsers.
+**Player List:** the new importer sends selected screenshots or screen recordings to the Render service for OCR. The server keeps files only in a temporary directory during scanning, then deletes them. The user reviews names, in-game ranks, power values and HQ levels before syncing. Confirmed player details are saved to MySQL and shared between browsers.
 
-The backend automatically creates a PostgreSQL table named `"player list"` (and an import audit table `player_list_imports`) on startup, using Render environment variables. Configure either `DATABASE_URL` or the equivalent `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` variables. Other common PostgreSQL environment variable names are supported too. Never place secrets in `index.html` or commit them to GitHub.
+The backend automatically creates a MySQL table named `"player list"` (and an import audit table `player_list_imports`) on startup, using Render environment variables. Configure either `DATABASE_URL` or the equivalent `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` variables. Other common MySQL environment variable names are supported too. Never place secrets in `index.html` or commit them to GitHub.
 
 For safer public access, set `PLAYER_LIST_UPLOAD_KEY` as a Render environment variable; authorized uploaders enter it in the Player List tab. Viewing the shared roster does not require the key. The key is never sent to the browser as a page variable, and is checked on the server for uploads and imports.
 
@@ -76,3 +76,7 @@ Profile-only uploads never flag other players as removed. Recordings can be
 combined with extra profile screenshots, and the complete-list setting must
 be confirmed before flagging missing members. Only the Player List tab and
 its backend import pipeline use the shared database.
+
+## MySQL database setup
+
+The Player List backend uses the existing cPanel MySQL database via environment variables `DB_HOST`, `DB_PORT` (normally 3306), `DB_USER`, `DB_PASSWORD`, and `DB_NAME`. At startup it creates the **`player list`** and **`player_list_imports`** tables, if they do not already exist, with no destructive migration. Render must be allowed to connect to the remote MySQL host and the database user needs permission to create tables. Use `GET /api/player-list/health` to confirm `table_ready: true`. Database credentials remain in Render settings, not source control.
