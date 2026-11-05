@@ -14,7 +14,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY index.html app.py player_list_ocr.py ./
+COPY index.html app.py player_list_ocr.py media_upload.py storm_roster_ocr.py media_ui.js ./
 
 EXPOSE 10000
 CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1"]
