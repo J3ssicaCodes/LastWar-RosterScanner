@@ -1,6 +1,6 @@
 """Backend for the Player List tab.
 
-Only the Player List API accesses PostgreSQL. Roster Scanner remains client-side.
+Only the Player List API accesses MySQL. Roster Scanner remains client-side.
 Database passwords and upload keys are read from Render environment variables,
 never returned to the browser or written to the frontend source.
 """
@@ -18,11 +18,13 @@ import unicodedata
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from decimal import Decimal
+from urllib.parse import unquote, urlsplit
 from pathlib import Path
 from typing import Any
 
-import psycopg
-from psycopg.rows import dict_row
+import pymysql
+from pymysql.cursors import DictCursor
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
@@ -47,68 +49,91 @@ def _env(*names: str) -> str | None:
 
 
 def _db_config():
-    url = _env('DATABASE_URL', 'POSTGRES_URL', 'DATABASE_URI', 'POSTGRESQL_URL', 'DB_URL', 'POSTGRES_CONNECTION_STRING', 'DB_CONNECTION_STRING')
-    if url:
-        return {'conninfo': url}
-    host = _env('DB_HOST', 'DBHOST', 'DB_HOSTNAME', 'POSTGRES_HOST', 'POSTGRESQL_HOST', 'PGHOST', 'DATABASE_HOST', 'HOST')
-    user = _env('DB_USERNAME', 'DB_USER', 'DBUSER', 'POSTGRES_USER', 'POSTGRESQL_USER', 'PGUSER', 'DATABASE_USER', 'USERNAME', 'USER')
-    password = _env('DB_PASSWORD', 'DBPASSWORD', 'POSTGRES_PASSWORD', 'POSTGRESQL_PASSWORD', 'PGPASSWORD', 'DATABASE_PASSWORD', 'PASSWORD')
-    db_name = _env('DB_NAME', 'POSTGRES_DB', 'POSTGRES_DATABASE', 'DATABASE_NAME', 'DB_DATABASE', 'DB_DATABASE_NAME', 'PGDATABASE', 'DATABASE', 'DBNAME')
-    port = _env('DB_PORT', 'DBPORT', 'POSTGRES_PORT', 'POSTGRESQL_PORT', 'DATABASE_PORT', 'PGPORT')
-    if not port:
-        # Render reserves PORT for the *webserver*. Only accept a conventional
-        # PostgreSQL number as a fallback if the user named their variable PORT.
-        candidate = _env('PORT')
-        port = candidate if candidate in ('5432', '5433', '6543') else '5432'
-    if not all((host, user, password, db_name)):
-        # Keys only, never values. These diagnostics help match custom Render
-        # variable naming conventions without revealing secrets.
-        found=[name for name in os.environ if any(term in name.lower() for term in ('db','database','postgres','pg','host','user','password','port','name','conn'))]
-        print('Player List database environment keys:', sorted(found), flush=True)
-        print('Player List missing connection components:', [name for name,present in [('host',host),('user',user),('password',password),('database name',db_name)] if not present], flush=True)
-        raise RuntimeError('PostgreSQL connection settings are incomplete. Configure DATABASE_URL or DB_HOST, DB_PORT, DB_USER, DB_PASSWORD and DB_NAME in Render.')
-    return {'host': host, 'port': int(port), 'user': user, 'password': password,
-            'dbname': db_name, 'sslmode': _env('DB_SSLMODE', 'PGSSLMODE') or 'prefer'}
+    """Read a cPanel / MySQL connection from Render environment variables.
+
+    Secrets stay on the server. Never include configuration values in errors,
+    logs, or HTTP responses.
+    """
+    uri = _env('DATABASE_URL', 'MYSQL_URL', 'MYSQL_DATABASE_URL', 'DB_URL', 'DB_CONNECTION_STRING')
+    if uri:
+        parts = urlsplit(uri)
+        if parts.scheme not in ('mysql', 'mysql+pymysql'):
+            raise RuntimeError('The database URL must use MySQL, not PostgreSQL.')
+        return {
+            'host': parts.hostname,
+            'port': parts.port or 3306,
+            'user': unquote(parts.username or ''),
+            'password': unquote(parts.password or ''),
+            'database': unquote(parts.path.lstrip('/')),
+        }
+    host = _env('DB_HOST', 'MYSQL_HOST', 'DBHOST', 'DB_HOSTNAME', 'DATABASE_HOST')
+    user = _env('DB_USER', 'DB_USERNAME', 'MYSQL_USER', 'DATABASE_USER', 'DBUSER')
+    password = _env('DB_PASSWORD', 'MYSQL_PASSWORD', 'DATABASE_PASSWORD', 'DBPASSWORD')
+    database = _env('DB_NAME', 'MYSQL_DATABASE', 'DATABASE_NAME', 'DB_DATABASE', 'DB_DATABASE_NAME', 'DBNAME')
+    port = _env('DB_PORT', 'MYSQL_PORT', 'DATABASE_PORT', 'DBPORT') or '3306'
+    if not all((host, user, password, database)):
+        missing = [name for name, present in (
+            ('DB_HOST', host), ('DB_USER', user), ('DB_PASSWORD', password),
+            ('DB_NAME', database)) if not present]
+        print('Player List missing MySQL environment variable names:', missing, flush=True)
+        raise RuntimeError('MySQL connection settings are incomplete.')
+    try:
+        parsed_port = int(port)
+    except ValueError as exc:
+        raise RuntimeError('DB_PORT must be numeric.') from exc
+    return {'host': host, 'port': parsed_port, 'user': user,
+            'password': password, 'database': database}
 
 
 def db_connect():
     params = _db_config()
-    conn = psycopg.connect(**params, connect_timeout=8, row_factory=dict_row)
-    return conn
+    return pymysql.connect(**params, charset='utf8mb4', cursorclass=DictCursor,
+                           connect_timeout=9, read_timeout=20, write_timeout=20,
+                           autocommit=False)
 
 
 def initialize_db():
+    """Idempotent MySQL schema creation; never deletes existing player data."""
     global DATABASE_OK, DATABASE_ERROR
     try:
         with db_connect() as conn:
-            conn.execute('''CREATE TABLE IF NOT EXISTS "player list" (
-                id BIGSERIAL PRIMARY KEY,
-                player_name TEXT NOT NULL,
-                normalized_name TEXT NOT NULL UNIQUE,
-                player_rank TEXT NOT NULL CHECK (player_rank IN ('R1','R2','R3','R4','R5')),
-                power_millions NUMERIC(10,1),
-                hq_level INTEGER CHECK (hq_level BETWEEN 1 AND 99),
-                is_new BOOLEAN NOT NULL DEFAULT TRUE,
-                possibly_removed BOOLEAN NOT NULL DEFAULT FALSE,
-                first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                last_import_id UUID
-            )''')
-            conn.execute('''CREATE TABLE IF NOT EXISTS player_list_imports (
-                id UUID PRIMARY KEY,
-                imported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                is_full_capture BOOLEAN NOT NULL,
-                scanned_count INTEGER NOT NULL,
-                created_count INTEGER NOT NULL,
-                updated_count INTEGER NOT NULL,
-                possible_removed_count INTEGER NOT NULL
-            )''')
+            with conn.cursor() as cur:
+                cur.execute("""CREATE TABLE IF NOT EXISTS `player list` (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    player_name VARCHAR(255) NOT NULL,
+                    normalized_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                    player_rank VARCHAR(2) NOT NULL,
+                    power_millions DECIMAL(12,1) NULL,
+                    hq_level SMALLINT UNSIGNED NULL,
+                    is_new BOOLEAN NOT NULL DEFAULT TRUE,
+                    possibly_removed BOOLEAN NOT NULL DEFAULT FALSE,
+                    first_seen_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    last_seen_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    last_import_id CHAR(36) NULL,
+                    UNIQUE KEY uq_player_list_normalized_name (normalized_name),
+                    KEY idx_player_list_rank_power (player_rank,power_millions),
+                    KEY idx_player_list_import (last_import_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+                cur.execute("""CREATE TABLE IF NOT EXISTS player_list_imports (
+                    id CHAR(36) NOT NULL PRIMARY KEY,
+                    imported_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    is_full_capture BOOLEAN NOT NULL,
+                    scanned_count INT UNSIGNED NOT NULL,
+                    created_count INT UNSIGNED NOT NULL,
+                    updated_count INT UNSIGNED NOT NULL,
+                    possible_removed_count INT UNSIGNED NOT NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+                cur.execute('SHOW TABLES LIKE %s', ('player list',))
+                if cur.fetchone() is None:
+                    raise RuntimeError('Player List table not visible after creation.')
+            conn.commit()
         DATABASE_OK, DATABASE_ERROR = True, ''
-        print('Player List database initialized', flush=True)
+        print('Player List MySQL tables initialized', flush=True)
     except Exception as exc:
         DATABASE_OK, DATABASE_ERROR = False, type(exc).__name__
-        print('Player List database initialization unavailable:', type(exc).__name__, flush=True)
+        # Only log class name, never secret-bearing exception text.
+        print('Player List MySQL initialization unavailable:', type(exc).__name__, flush=True)
 
 
 @app.on_event('startup')
@@ -127,25 +152,42 @@ def home():
 def health():
     try:
         with db_connect() as conn:
-            conn.execute('SELECT 1')
-        return {'online': True, 'database': 'connected', 'upload_protected': bool(_env('PLAYER_LIST_UPLOAD_KEY'))}
+            with conn.cursor() as cur:
+                cur.execute('SHOW TABLES LIKE %s', ('player list',))
+                if not cur.fetchone():
+                    raise RuntimeError('Player List table is missing.')
+                cur.execute('SELECT COUNT(*) AS n FROM `player list`')
+                count = int(cur.fetchone()['n'])
+        return {'online': True, 'database': 'connected', 'table_ready': True,
+                'player_count': count, 'upload_protected': bool(_env('PLAYER_LIST_UPLOAD_KEY'))}
     except Exception:
-        return JSONResponse(status_code=503, content={'online': True, 'database': 'disconnected', 'upload_protected': bool(_env('PLAYER_LIST_UPLOAD_KEY')), 'hint': 'Check database environment variables and connection in Render.'})
+        return JSONResponse(status_code=503, content={
+            'online': True, 'database': 'disconnected', 'table_ready': False,
+            'upload_protected': bool(_env('PLAYER_LIST_UPLOAD_KEY')),
+            'hint': 'Check the MySQL connection settings and Render logs.'})
 
 
 @app.get('/api/player-list')
 def list_players():
     try:
         with db_connect() as conn:
-            rows=conn.execute('''SELECT id,player_name AS name,player_rank AS rank,
-                power_millions::float8 AS power_millions,hq_level,
-                is_new,possibly_removed,first_seen_at,last_seen_at,updated_at
-                FROM "player list"
-                ORDER BY player_rank DESC,power_millions DESC NULLS LAST,lower(player_name)
-                LIMIT 10000''').fetchall()
+            with conn.cursor() as cur:
+                cur.execute("""SELECT id, player_name AS name, player_rank AS `rank`,
+                    power_millions, hq_level, is_new, possibly_removed,
+                    first_seen_at, last_seen_at, updated_at
+                    FROM `player list`
+                    ORDER BY player_rank DESC, power_millions IS NULL,
+                    power_millions DESC, LOWER(player_name)
+                    LIMIT 10000""")
+                rows=cur.fetchall()
+        for row in rows:
+            if isinstance(row['power_millions'], Decimal):
+                row['power_millions'] = float(row['power_millions'])
+            row['is_new'] = bool(row['is_new'])
+            row['possibly_removed'] = bool(row['possibly_removed'])
         return {'players': rows, 'total': len(rows)}
     except Exception as exc:
-        raise HTTPException(503, detail='Database unavailable. Check your Render database connection settings.') from exc
+        raise HTTPException(503, detail='Database unavailable. Check Render MySQL connection settings.') from exc
 
 
 @app.get('/api/player-list/export.csv')
@@ -262,48 +304,57 @@ class ImportData(BaseModel):
 
 
 @app.post('/api/player-list/import')
-def import_players(body:ImportData,x_player_list_key:str|None=Header(default=None)):
+def import_players(body: ImportData, x_player_list_key: str | None = Header(default=None)):
     _authorize(x_player_list_key)
-    batch_id=uuid.uuid4()
-    # A capture must have unique names; dedupe here defensively.
-    unique={normalize_name(member.name):member for member in body.players}
-    if len(unique)<1:raise HTTPException(400,detail='No valid players were provided.')
-    created=updated=removed=0
+    batch_id = str(uuid.uuid4())
+    # Exact normalized matches only. Never merge merely similar player names.
+    unique = {normalize_name(member.name): member for member in body.players}
+    if not unique:
+        raise HTTPException(400, detail='No valid players were provided.')
+    created = updated = removed = 0
     try:
         with db_connect() as conn:
-            # The transaction prevents half-imports and guarantees consistent statuses.
-            with conn.transaction():
-                conn.execute('UPDATE "player list" SET is_new=FALSE WHERE is_new=TRUE')
-                for key,member in unique.items():
-                    existing=conn.execute('SELECT id FROM "player list" WHERE normalized_name=%s FOR UPDATE',(key,)).fetchone()
-                    if existing:
-                        conn.execute('''UPDATE "player list" SET
-                            player_name=%s,player_rank=%s,
-                            power_millions=COALESCE(%s,power_millions),
-                            hq_level=COALESCE(%s,hq_level),
-                            is_new=FALSE,possibly_removed=FALSE,
-                            last_seen_at=now(),updated_at=now(),last_import_id=%s
-                            WHERE id=%s''',
-                            (member.name,member.rank,member.power_millions,member.hq_level,batch_id,existing['id']))
-                        updated+=1
-                    else:
-                        conn.execute('''INSERT INTO "player list" (
-                            player_name,normalized_name,player_rank,power_millions,hq_level,
-                            is_new,possibly_removed,last_import_id)
-                            VALUES (%s,%s,%s,%s,%s,TRUE,FALSE,%s)''',
-                            (member.name,key,member.rank,member.power_millions,member.hq_level,batch_id))
-                        created+=1
-                if body.full_capture:
-                    conn.execute('''UPDATE "player list" SET possibly_removed=TRUE,updated_at=now()
-                        WHERE last_import_id IS DISTINCT FROM %s AND possibly_removed=FALSE''',(batch_id,))
-                    removed=conn.execute('''SELECT count(*) AS n FROM "player list"
-                        WHERE possibly_removed=TRUE''').fetchone()['n']
-                conn.execute('''INSERT INTO player_list_imports (
-                    id,is_full_capture,scanned_count,created_count,updated_count,possible_removed_count)
-                    VALUES (%s,%s,%s,%s,%s,%s)''',
-                    (batch_id,body.full_capture,len(unique),created,updated,removed))
+            try:
+                # One transaction, including new/removed status changes.
+                with conn.cursor() as cur:
+                    cur.execute('UPDATE `player list` SET is_new=FALSE WHERE is_new=TRUE')
+                    for key, member in unique.items():
+                        cur.execute('SELECT id FROM `player list` WHERE normalized_name=%s FOR UPDATE', (key,))
+                        existing = cur.fetchone()
+                        if existing:
+                            cur.execute("""UPDATE `player list` SET
+                                player_name=%s, player_rank=%s,
+                                power_millions=COALESCE(%s,power_millions),
+                                hq_level=COALESCE(%s,hq_level),
+                                is_new=FALSE, possibly_removed=FALSE,
+                                last_seen_at=UTC_TIMESTAMP(6),updated_at=UTC_TIMESTAMP(6),last_import_id=%s
+                                WHERE id=%s""",
+                                (member.name, member.rank, member.power_millions,
+                                 member.hq_level, batch_id, existing['id']))
+                            updated += 1
+                        else:
+                            cur.execute("""INSERT INTO `player list` (
+                                player_name,normalized_name,player_rank,power_millions,hq_level,
+                                is_new,possibly_removed,last_import_id)
+                                VALUES (%s,%s,%s,%s,%s,TRUE,FALSE,%s)""",
+                                (member.name,key,member.rank,member.power_millions,
+                                 member.hq_level,batch_id))
+                            created += 1
+                    if body.full_capture:
+                        cur.execute("""UPDATE `player list` SET possibly_removed=TRUE,
+                            updated_at=UTC_TIMESTAMP(6) WHERE (last_import_id IS NULL OR last_import_id<>%s)
+                            AND possibly_removed=FALSE""", (batch_id,))
+                        cur.execute('SELECT COUNT(*) AS n FROM `player list` WHERE possibly_removed=TRUE')
+                        removed = int(cur.fetchone()['n'])
+                    cur.execute("""INSERT INTO player_list_imports (
+                        id,is_full_capture,scanned_count,created_count,updated_count,possible_removed_count)
+                        VALUES (%s,%s,%s,%s,%s,%s)""",
+                        (batch_id,body.full_capture,len(unique),created,updated,removed))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     except Exception as exc:
-        # Avoid leaking connection URLs or passwords through API error messages.
-        raise HTTPException(503,detail='Could not sync Player List. Check the database connection and Render logs.') from exc
-    return {'import_id':str(batch_id),'scanned_count':len(unique),'new_count':created,
+        raise HTTPException(503, detail='Could not sync Player List. Check the MySQL connection and Render logs.') from exc
+    return {'import_id':batch_id,'scanned_count':len(unique),'new_count':created,
             'updated_count':updated,'possibly_removed_count':removed,'full_capture':body.full_capture}
