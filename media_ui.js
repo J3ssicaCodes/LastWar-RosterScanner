@@ -35,6 +35,7 @@
   .pl-rank-heading button{font:inherit;font-weight:700;color:var(--text);display:flex;width:100%;border:0;background:transparent;justify-content:space-between;padding:13px 18px;cursor:pointer;align-items:center;text-align:left}
   .pl-rank-heading small{color:var(--muted);font-size:12px}.pl-rank-heading strong{font-size:15px}
   #playerListView .pl-upload-grid,#playerListView .pl-scan-progress,#playerListView #plReviewPanel{display:none!important}
+  #rosterScannerView [aria-labelledby="uploadHeading"]{display:none!important}
   @media(max-width:680px){.media-top-button{width:100%;margin:4px 0}.media-destination{font-size:12px;padding:13px 4px}#mediaDialog{padding:15px}.media-titlebar h2{font-size:20px}}
   `;
   document.head.append(css);
