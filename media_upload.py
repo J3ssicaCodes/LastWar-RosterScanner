@@ -102,6 +102,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     power_millions DECIMAL(12,2) NULL,
                     hq_level SMALLINT UNSIGNED NULL,
                     avatar_base64 MEDIUMTEXT NULL,
+                    evidence_base64 MEDIUMTEXT NULL,
                     source_type VARCHAR(32) NULL,
                     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                     KEY idx_roster_upload_job (job_id)
@@ -122,6 +123,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     ('review_required','BOOLEAN NOT NULL DEFAULT FALSE'),
                     ('review_reasons','TEXT NULL'),
                     ('source_image','VARCHAR(255) NULL'),
+                    ('evidence_base64','MEDIUMTEXT NULL'),
                     ('audit_json','LONGTEXT NULL'),
                 ):
                     cur.execute('SHOW COLUMNS FROM `roster upload` LIKE %s',(field,))
@@ -246,15 +248,16 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                 cur.execute("""INSERT INTO `roster upload`
                                     (job_id,player_name,player_rank,power_millions,hq_level,avatar_base64,
                                      source_type,leaderboard_tab,leaderboard_position,power,kills,donations,
-                                     review_required,review_reasons,source_image,audit_json)
-                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                     review_required,review_reasons,source_image,audit_json,evidence_base64)
+                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                     (job_id,name[:255],rank,row.get('power_millions'),row.get('hq_level'),
                                      row.get('avatar_base64'),row.get('source_type','leaderboard'),
                                      row.get('tab'),row.get('internal_position'),row.get('power'),
                                      row.get('kills'),row.get('donations'),review,
                                      json.dumps(reasons,ensure_ascii=False)[:8000],
                                      str(row.get('source_image') or '')[:255],
-                                     json.dumps(audit_fields,ensure_ascii=False)[:60000]))
+                                     json.dumps(audit_fields,ensure_ascii=False)[:60000],
+                                     str(row.get('evidence_base64') or '')[:320000] or None))
                             cur.execute('SELECT COUNT(*) AS n FROM `roster upload` WHERE job_id=%s',(job_id,))
                             inserted=int(cur.fetchone()['n'])
                             details=result.get('diagnostics') or {
@@ -371,7 +374,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 cur.execute('''SELECT r.id,r.job_id,r.player_name AS name,r.player_rank AS `rank`,
                     r.power_millions,r.hq_level,r.avatar_base64,r.source_type,
                     r.leaderboard_tab AS tab,r.power,r.kills,r.donations,
-                    r.review_required,r.review_reasons,r.source_image,
+                    r.review_required,r.review_reasons,r.source_image,r.evidence_base64,
                     j.full_capture FROM `roster upload` r JOIN media_scan_jobs j ON j.id=r.job_id
                     ORDER BY r.id LIMIT 2000''')
                 rows=cur.fetchall()
