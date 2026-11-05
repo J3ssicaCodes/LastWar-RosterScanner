@@ -2069,11 +2069,42 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     $('plProgressPct').textContent=value+'%';$('plProgressBar').style.width=value+'%';$('plProgressMessage').textContent=label;
   }
   const pause = ms => new Promise(resolve=>setTimeout(resolve,ms));
+
+  // Scan jobs run on Render, not on the phone. Keep the id so Android can close
+  // or suspend this tab after the upload receives a server job id.
+  const pendingScanKey='lastwar.playerList.pendingScan.v1';
+  function rememberScan(job_id){
+    try{localStorage.setItem(pendingScanKey,JSON.stringify({
+      job_id,full_capture:$('plFullCapture').checked,created_at:Date.now()
+    }));}catch{}
+  }
+  async function waitForScan(job_id){
+    let consecutiveNetworkErrors=0;
+    for(let attempt=0;attempt<900;attempt++){
+      await pause(1300);
+      let result;
+      try {
+        result=await checkedJson(await fetch('/api/player-list/scan/'+encodeURIComponent(job_id),{cache:'no-store'}));
+        consecutiveNetworkErrors=0;
+      } catch(err) {
+        consecutiveNetworkErrors++;
+        if(consecutiveNetworkErrors<=8){
+          progress(1,'Reconnecting to the server. The scan continues in the background…');
+          continue;
+        }
+        throw Error('Cannot reach the server. Reopen Player List to resume your saved scan.');
+      }
+      progress(result.progress??1,result.message||'Scanning on the server…');
+      if(result.status==='error')throw Error(result.message||'Scan failed.');
+      if(result.status==='ready')return result;
+    }
+    throw Error('The scan has exceeded its expected processing window. Reopen this tab to check its progress.');
+  }
   async function scan(){
     if(state.busy||!state.files.length)return;
     state.busy=true; $('plScanBtn').disabled=true;$('plSyncBtn').disabled=true;
     msg('');$('plReviewPanel').hidden=true;
-    progress(0,'Uploading media…');
+    progress(1,'Uploading media… Keep this tab open until the server confirms your upload.');
     try{
       const form=new FormData(); for(const file of state.files)form.append('files',file,file.name);
       const {job_id}=await new Promise((resolve,reject)=>{
@@ -2096,16 +2127,10 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
         request.ontimeout=()=>reject(Error('Upload timed out. Please try a shorter recording.'));
         request.send(form);
       });
-      progress(1,'Upload complete. Preparing video frames…');
-      let result;
-      for(let attempt=0;attempt<900;attempt++){
-        await pause(1100);
-        result=await checkedJson(await fetch('/api/player-list/scan/'+encodeURIComponent(job_id),{cache:'no-store'}));
-        progress(result.progress||0,result.message||'Scanning video…');
-        if(result.status==='error')throw Error(result.message||'Scan failed.');
-        if(result.status==='ready')break;
-      }
-      if(!result||result.status!=='ready')throw Error('Scan timed out. Please try a shorter recording or fewer screenshots.');
+      rememberScan(job_id);
+      progress(1,'Upload securely cached. Server OCR is running. You can now lock your screen.');
+      msg('Upload complete. The server will keep scanning if you lock your screen. Reopen Player List for progress and results.');
+      const result=await waitForScan(job_id);
       state.candidates=(result.players||[]).map((p,i)=>({...p,included:true,_id:'p'+i}));
       const notes=(result.warnings||[]).join('\n');
       // A single confirmed profile image has four legible fields, making it
@@ -2134,6 +2159,43 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       if(!profilesOnly || notes)msg(`${state.candidates.length} players found from ${result.frames_examined||0} image frames. Review the extracted names and values before saving.${notes?'\n'+notes:''}`);
     }catch(err){msg('Scan could not finish: '+err.message,true);}
     finally{state.busy=false;$('plScanBtn').disabled=!state.files.length;$('plSyncBtn').disabled=false;}
+  }
+
+  async function resumeScan(){
+    let stored;
+    try{stored=JSON.parse(localStorage.getItem(pendingScanKey)||'null');}catch{return;}
+    if(!stored||!stored.job_id||state.busy)return;
+    if(Date.now()-(stored.created_at||0)>3600000){
+      try{localStorage.removeItem(pendingScanKey);}catch{}
+      return;
+    }
+    state.busy=true;
+    $('plScanBtn').disabled=true;
+    $('plSyncBtn').disabled=true;
+    $('plFullCapture').checked=!!stored.full_capture;
+    progress(1,'Reconnecting to your saved server scan…');
+    try{
+      const result=await waitForScan(stored.job_id);
+      state.candidates=(result.players||[]).map((p,i)=>({...p,included:true,_id:'p'+i}));
+      renderReview();
+      $('plReviewPanel').hidden=false;
+      $('plFullCapture').disabled=state.candidates.length>0 &&
+        state.candidates.every(p=>p.source_type==='profile');
+      const warnings=(result.warnings||[]).join(' ');
+      msg(state.candidates.length+' scanned players recovered from your server job. Review them before syncing.'+
+          (warnings?' '+warnings:''));
+    }catch(err){
+      if(/not found|expired|404/.test(err.message.toLowerCase())){
+        try{localStorage.removeItem(pendingScanKey);}catch{}
+        msg('The server no longer has that scan (it may have restarted). Please upload the video again.',true);
+      }else{
+        msg('Could not restore the scan yet: '+err.message,true);
+      }
+    }finally{
+      state.busy=false;
+      $('plScanBtn').disabled=!state.files.length;
+      $('plSyncBtn').disabled=false;
+    }
   }
   function renderReview(){
     $('plScannedCount').textContent=state.candidates.length+' found';
@@ -2240,7 +2302,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
   });
   $('plSearch').addEventListener('input',renderDirectory);
   $('plFilter').addEventListener('change',renderDirectory);
-  status();loadDirectory();
+  status();loadDirectory();resumeScan();
 })();
 
 </script>
