@@ -2084,9 +2084,15 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       await pause(1300);
       let result;
       try {
-        result=await checkedJson(await fetch('/api/player-list/scan/'+encodeURIComponent(job_id),{cache:'no-store'}));
+        const response=await fetch('/api/player-list/scan/'+encodeURIComponent(job_id),{cache:'no-store'});
+        if(response.status===404||response.status===410){
+          try{localStorage.removeItem(pendingScanKey);}catch{}
+          throw Error('Scan not found or expired (the server may have restarted).');
+        }
+        result=await checkedJson(response);
         consecutiveNetworkErrors=0;
       } catch(err) {
+        if(/scan not found or expired/i.test(err.message))throw err;
         consecutiveNetworkErrors++;
         if(consecutiveNetworkErrors<=8){
           progress(1,'Reconnecting to the server. The scan continues in the background…');
