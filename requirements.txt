@@ -5,3 +5,5 @@ PyMySQL>=1.1,<2
 opencv-python-headless>=4.10,<5
 numpy>=2.0,<3
 pytesseract>=0.3.13,<1
+scipy>=1.13,<2
+Pillow>=10.2,<13
