@@ -490,6 +490,11 @@ def shared_media_script():
     return FileResponse(BASE / 'media_ui.js', media_type='application/javascript',
                         headers={'Cache-Control': 'no-cache'})
 
+@app.get('/google_drive_picker.js')
+def google_drive_picker_script():
+    return FileResponse(BASE / 'google_drive_picker.js', media_type='application/javascript',
+                        headers={'Cache-Control':'no-cache'})
+
 # Register the common Media Upload API after the Player List models and import
 # transaction are defined, avoiding circular startup dependencies.
 from media_upload import install_media_upload
