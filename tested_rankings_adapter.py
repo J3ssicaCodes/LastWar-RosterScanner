@@ -28,7 +28,7 @@ import numpy as np
 from extract_ranking_pages import detect, extract
 from scan_rankings import tabs
 
-from player_identity import corrected_name, name_key
+from player_identity import corrected_name, name_key, NUMBER_REVIEW_PREFIX
 from scan_rankings import add_fallback_ocr, ocr_fields, pinned_top, row_centers
 from vs_points_ocr import recheck_neighbors
 
@@ -53,12 +53,12 @@ def recheck_ranking_group(records, anchors, sources, tab, period, resolve, progr
             signature = cv2.resize(cv2.cvtColor(crop,cv2.COLOR_BGR2GRAY),(24,24))
             if cv2.absdiff(signature,row['signature']).mean() >= 14:
                 continue
-            reading = ocr_fields(image,center)
-            add_fallback_ocr(reading)
+            reading = ocr_fields(image,center,read_name=row['check_name'],read_position=False)
+            add_fallback_ocr(reading,read_name=row['check_name'])
             readings.append({**reading,'matched_position':row['internal_position']})
         return readings
 
-    confirmed = recheck_neighbors(anchors,sources,{pos:True for pos in anchors},
+    confirmed = recheck_neighbors(anchors,sources,{pos:row['needs_name'] for pos,row in anchors.items()},
                                   resolve,progress,read_frame)
     field = TAB_FIELD[tab]
     for record in records:
@@ -71,6 +71,7 @@ def recheck_ranking_group(records, anchors, sources, tab, period, resolve, progr
         if 'value' in confirmed[position]:
             record[field] = int(row['value'])
         record['review_reasons'].extend(row.get('neighbor_conflicts',[]))
+        record['review_required']=bool(record['review_reasons'])
 
 
 VIDEO_EXTENSIONS = {'.mp4', '.mov', '.m4v', '.webm'}
@@ -115,6 +116,8 @@ def _record_from_csv(entry: dict, directory: Path, page_info: dict, tab: str):
         name_score = number_score = 0
     if name_score < 55 or number_score < 60:
         issues.append('OCR confidence below recommended threshold')
+    if number_score<55 or any(reason in ('conflicting_stat','multi_view_difference','stat_not_descending') for reason in issues):
+        issues.append(f'{NUMBER_REVIEW_PREFIX} captured numbers disagree or the number is unclear.')
     page_number = int(entry.get('page') or 0)
     meta = page_info.get(page_number, {})
     src = meta.get('original_filename') or meta.get('source') or 'ranking upload'
@@ -305,20 +308,29 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable, correctio
                         continue
                     group_records.append(record)
                     unmatched = master_keys is not None and name_key(resolve(record['name'])) not in master_keys
-                    if not video_path or not (record['review_required'] or unmatched) or not entry.get('center_y'):
+                    if not video_path:
+                        continue
+                    if not entry.get('center_y'):
+                        record['review_reasons'].append(f'{NUMBER_REVIEW_PREFIX} the row could not be located in three frames.')
+                        record['review_required']=True
                         continue
                     page = record['audit']['source_page']
                     frame = entry.get('source_frame') or metadata.get(page,{}).get('frame')
                     if frame is None:
+                        record['review_reasons'].append(f'{NUMBER_REVIEW_PREFIX} source frame unavailable.')
+                        record['review_required']=True
                         continue
                     portrait = cv2.imread(str(folder/entry['avatar']),cv2.IMREAD_GRAYSCALE)
                     if portrait is None:
+                        record['review_reasons'].append(f'{NUMBER_REVIEW_PREFIX} the row could not be matched across frames.')
+                        record['review_required']=True
                         continue
                     pos = record['internal_position']
                     field = TAB_FIELD[tab]
                     sources[page] = (Path(video_path),int(frame))
                     anchors[pos] = {'internal_position':pos,'page':page,'center':int(entry['center_y']),
                                     'signature':cv2.resize(portrait,(24,24)),
+                                    'needs_name':record['review_required'] or unmatched,
                                     'name':record['name'],'name_conf':record['audit']['name_confidence'],
                                     'value':str(record[field]) if record[field] is not None else '',
                                     'value_conf':record['audit']['stat_confidence']}
@@ -345,6 +357,11 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable, correctio
             prev=unique.get(key)
             if prev is None or (prev['review_required'] and not row['review_required']):
                 unique[key]=row
+            if prev is not None and prev[row['tab']] is not None and row[row['tab']] is not None and prev[row['tab']]!=row[row['tab']]:
+                chosen=unique[key]
+                chosen['review_reasons'].append(
+                    f"{NUMBER_REVIEW_PREFIX} captures read {prev[row['tab']]} and {row[row['tab']]}.")
+                chosen['review_required']=True
         records=list(unique.values())
         diagnostics['tabs']=sorted(set(diagnostics['tabs']))
         diagnostics['distinct_entries']=len(records)

@@ -47,13 +47,23 @@
   .media-queue-empty{color:var(--muted);padding:14px 0}
   .media-queue-footer{display:flex;justify-content:flex-end;margin-top:18px}
   .media-review{margin-top:18px}.media-review[hidden]{display:none}
-  .media-review table{min-width:700px}.media-review td input,.media-review td select{width:100%;min-width:70px;box-sizing:border-box;font:inherit}
-  .media-review .media-review-actions{display:flex;justify-content:flex-end;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:11px}
-  .media-review .media-review-actions .btn{margin:0}
-  .media-review th:first-child,.media-review td:first-child{width:45px}
+  .review-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+  .review-toolbar .btn,.review-card .btn{margin:0}
+  .review-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,350px),1fr));gap:12px;align-items:start}
+  .review-card{border:1px solid var(--stroke);background:var(--panel2);border-radius:12px;padding:14px;min-width:0}
+  .review-card-head,.review-card-actions{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+  .review-card-actions{justify-content:flex-end;margin:12px 0 0}
+  .review-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,130px),1fr));gap:8px}
+  .review-fields label{display:grid;gap:3px;font-size:13px}
+  .review-fields input,.review-fields select{width:100%;min-width:0!important;font:inherit}
+  .review-name{grid-column:1/-1}
+  .review-card [data-review-warning]{color:var(--text);background:rgba(190,120,0,.12);border-left:3px solid #b9781d;padding:6px 9px;margin:8px 0;overflow-wrap:anywhere}
+  .review-card details{margin-top:8px}
+  .review-card details img{display:block;width:100%;height:auto;margin-top:6px}
+  .review-verify{display:flex;align-items:center;gap:6px;margin:10px 0}
   [data-review-warning][hidden]{display:none!important}
   [data-review-warning]{display:block}
-  .media-review .media-flag{display:block;font-size:11px;color:#f4bd80;line-height:1.4;margin-top:4px}
+
   .media-evidence{margin-top:6px;font-size:12px;color:var(--muted)}
   .media-evidence summary{cursor:pointer;text-decoration:underline}
   .media-evidence img{display:block;max-width:min(520px,75vw);width:100%;height:auto;border:1px solid var(--stroke);border-radius:7px;margin:6px 0;image-rendering:auto}
@@ -138,12 +148,17 @@
   const playerView=$('playerListView');
   const pendingPanel=document.createElement('section');
   pendingPanel.id='mediaPendingPanel';pendingPanel.className='panel pl-section media-review';pendingPanel.hidden=true;
-  pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Awaiting your approval</div><h2>Player changes to review</h2><p>Recognized players merge into the master list. Review new or uncertain detections here; Power, Kills and Donations are kept together.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
-    <div class="media-review-actions"><button class="btn" type="button" id="mediaDismiss">Dismiss checked</button><button class="btn" type="button" id="mediaApproveClean">Add rows without concerns</button><button class="btn primary" type="button" id="mediaApprove">Approve checked changes</button></div>
+  pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Scan review</div><h2>Player changes to review</h2><p>Correct a name to match the Player List to save it automatically. Compare any flagged number with the capture before saving.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
+    <div class="review-toolbar">
+      <label><input type="checkbox" id="mediaSelectAll" aria-label="Select all Player List review rows"> Select all</label>
+      <span id="mediaSelectedCount"></span>
+      <button class="btn" type="button" id="mediaDismiss">Dismiss selected</button>
+      <button class="btn" type="button" id="mediaApproveClean">Save rows without warnings</button>
+      <button class="btn primary" type="button" id="mediaApprove">Save selected</button>
+    </div>
     <p id="mediaReviewMessage" role="status" aria-live="polite" tabindex="-1" hidden></p>
-    <p id="mediaDiagnostics" hidden></p>
-    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th><label><input type="checkbox" id="mediaSelectAll" checked aria-label="Select all Player List review rows"> Use</label></th><th>Change</th><th>Photo</th><th>Rank</th><th>Player</th><th>Power</th><th>Kills</th><th>Donations</th><th>Power (M) / Profile</th><th>HQ Lv.</th></tr></thead><tbody id="mediaPendingRows"></tbody></table></div>
-    <p class="pl-hint">Edit a name to match an available Player List entry and leave the field to save that row. Check any other rows you’ve reviewed to approve them. Add rows without concerns saves all rows with no warnings, regardless of the checkboxes.</p>`;
+    <details><summary>Scan details</summary><p id="mediaDiagnostics" hidden></p></details>
+    <div id="mediaPendingRows" class="review-grid"></div>`;
   const directory=playerView?.querySelector('[aria-labelledby="plDirectoryTitle"]');
   directory?.before(pendingPanel);
   const masterNames=document.createElement('datalist');masterNames.id='playerMasterNames';document.body.append(masterNames);
@@ -303,22 +318,28 @@
       pendingPanel.hidden=!pending.length;
       $('mediaPendingCount').textContent=pending.length+' waiting';
       $('mediaPendingRows').innerHTML=pending.map(p=>{
-        const flag=p.review_required?((p.review_reasons||[]).join(' · ')||'Verify this row against the capture.'):'';
+        const flag=p.review_required?(window.reviewIssues.displayWarnings(p.review_reasons||[])||'Verify this row against the capture.'):'';
         const avatar=p.avatar_base64&&/^[A-Za-z0-9+/=]+$/.test(p.avatar_base64)?
           '<img class="pl-avatar" src="data:image/'+(p.avatar_base64.startsWith('UklGR')?'webp':'png')+';base64,'+p.avatar_base64+'" alt="Player avatar">':'♡';
         const evidence=p.evidence_base64 && p.evidence_base64.length<350000 && /^[A-Za-z0-9+/=]+$/.test(p.evidence_base64) ?
           '<details class="media-evidence"><summary>View captured leaderboard row</summary><img loading="lazy" src="data:image/webp;base64,'+
           p.evidence_base64+'" alt="Cropped original leaderboard row for '+escape(p.name||'this player')+'"></details>' : '';
-        const numeric=(field,step='1')=>'<td><input data-field="'+field+'" type="number" step="'+step+'" min="0" value="'+(p[field]??'')+'" aria-label="'+field+'"></td>';
-        const type=p.change_kind==='new'?'New':p.change_kind==='updated'?'Updated':'Needs review';
-        return '<tr data-pending-id="'+p.id+'"><td><input type="checkbox" data-field="include" checked aria-label="Include '+escape(p.name||'unrecognized player')+'"></td>'+
-          '<td><span class="pl-status '+(type==='New'?'new':type==='Updated'?'active':'removed')+'">'+type+'</span></td>'+
-          '<td>'+avatar+'</td><td><select data-field="rank">'+['Unknown','R5','R4','R3','R2','R1'].map(rank=>'<option value="'+rank+'" '+(p.rank===rank?'selected':'')+'>'+rank+'</option>').join('')+'</select></td>'+
-          '<td><input data-field="name" list="playerMasterNames" value="'+escape(p.name||'')+'" maxlength="80" aria-label="Player name">'+
-          (p.tab?'<small class="pl-source-label">'+escape(p.tab.toUpperCase())+'</small>':'')+
-          (p.source_image?'<small class="pl-source-label" title="Original file and timestamp">'+escape(p.source_image)+'</small>':'')+
-          '<small class="media-flag" data-review-warning '+(flag?'':'hidden')+'>'+escape(flag)+'</small>'+evidence+'</td>'+
-          numeric('power')+numeric('kills')+numeric('donations')+numeric('power_millions','0.1')+numeric('hq_level')+'</tr>';
+        const requiresCheck=window.reviewIssues.numberNeedsReview(p);
+        const numeric=(field,label,step='1')=>'<label>'+label+'<input data-field="'+field+'" type="number" step="'+step+'" min="0" value="'+(p[field]??'')+'"></label>';
+        const type=p.change_kind==='new'?'New player':p.change_kind==='updated'?'Update':'Needs review';
+        const fields=[['power','Power'],['kills','Kills'],['donations','Donations'],
+          ['power_millions','Power (millions)','0.1'],['hq_level','HQ level']]
+          .filter(([field])=>field===p.tab||p[field]!=null||(!p.tab&&['power_millions','hq_level'].includes(field)));
+        return '<article class="review-card" data-pending-id="'+p.id+'"><div class="review-card-head">'+
+          '<label><input type="checkbox" data-field="include" aria-label="Select '+escape(p.name||'unrecognized player')+'"> Select</label>'+
+          '<span class="pl-status '+(type==='New player'?'new':type==='Update'?'active':'removed')+'">'+type+'</span></div>'+
+          '<div class="review-fields"><label class="review-name">Player name<input data-field="name" list="playerMasterNames" value="'+escape(p.name||'')+'" maxlength="80"></label>'+
+          '<label>Rank<select data-field="rank">'+['Unknown','R5','R4','R3','R2','R1'].map(rank=>'<option value="'+rank+'" '+(p.rank===rank?'selected':'')+'>'+rank+'</option>').join('')+'</select></label>'+
+          fields.map(([field,label,step])=>numeric(field,label,step)).join('')+'</div>'+
+          '<small data-review-warning '+(flag?'':'hidden')+'>'+escape(flag)+'</small>'+
+          (p.source_image?'<small class="pl-source-label">'+escape(p.source_image)+'</small>':'')+
+          evidence+(requiresCheck?'<label class="review-verify"><input type="checkbox" data-field="number_checked"> I checked the numbers</label>':'')+
+          '<p data-review-feedback role="status" hidden></p><div class="review-card-actions">'+avatar+'<button class="btn primary" type="button" data-save-media>Save row</button></div></article>';
       }).join('');
       const originals=new Map(pending.map(row=>[row.id,row]));
       for(const row of $('mediaPendingRows').querySelectorAll('[data-pending-id]')){
@@ -363,6 +384,7 @@
     const checked=rows.filter(row=>row.checked).length;
     all.checked=rows.length>0&&checked===rows.length;
     all.indeterminate=checked>0&&checked<rows.length;
+    $('mediaSelectedCount').textContent=checked+' selected';
   }
   pendingPanel.addEventListener('change',event=>{
     if(event.target.matches('#mediaSelectAll,[data-field="include"]'))updateMediaSelection(event);
@@ -372,27 +394,34 @@
     if(!original)return;
     const values=Object.fromEntries([...row.querySelectorAll('[data-field]')].map(input=>[input.dataset.field,input.value]));
     names??=reviewNames.names();
+    values.number_checked=row.querySelector('[data-field="number_checked"]')?.checked||false;
     const issues=window.reviewIssues(original,values,names,'media');
     const errors=window.reviewIssues.mediaInputIssues(original,values);
+    if(window.reviewIssues.numberNeedsReview(original)&&!values.number_checked)errors.push('Check the number against the capture');
     for(const input of row.querySelectorAll('input[type="number"]')){
       if(input.validity.badInput)errors.push('Check '+input.dataset.field.replaceAll('_',' '));
     }
     const warning=row.querySelector('[data-review-warning]');
-    warning.textContent=[...new Set([...issues,...errors])].join(' · ');
+    warning.textContent=window.reviewIssues.displayWarnings([...issues,...errors]);
     warning.hidden=!issues.length&&!errors.length;
     return {row,original,values,issues,errors};
   }
+  pendingPanel.addEventListener('input',event=>{
+    if(!event.target.matches('input[type="number"]'))return;
+    const confirmation=event.target.closest('.review-card')?.querySelector('[data-field="number_checked"]');
+    if(confirmation)confirmation.checked=false;
+  });
   pendingPanel.addEventListener('focusout',event=>{
     const row=event.target.closest('[data-pending-id]');
     if(!row||!event.target.matches('[data-field]:not([data-field="include"])'))return;
     validateMediaRow(row);
-    if(event.relatedTarget?.closest('#mediaApprove,#mediaApproveClean,#mediaDismiss'))return;
+    if(event.relatedTarget?.closest('#mediaApprove,#mediaApproveClean,#mediaDismiss,[data-save-media]'))return;
     autoTail=autoTail.then(()=>autoSaveMedia(Number(row.dataset.pendingId)));
   });
   function mediaPayload(original,values){
     const numbers=Object.fromEntries(['power','kills','donations','power_millions','hq_level']
-      .map(field=>[field,values[field]===''?null:Number(values[field])]));
-    return {id:original.id,name:values.name.trim(),rank:values.rank,...numbers};
+      .map(field=>[field,values[field]===''||values[field]==null?null:Number(values[field])]));
+    return {id:original.id,name:values.name.trim(),rank:values.rank,number_checked:values.number_checked,...numbers};
   }
   function removeSavedMedia(ids){
     ++pendingRequest;
@@ -411,7 +440,7 @@
     const row=$('mediaPendingRows').querySelector('[data-pending-id="'+id+'"]');
     if(!row||savingReview)return;
     const item=validateMediaRow(row);
-    if(!item||item.values.name.trim()===(item.original.name||'').trim())return;
+    if(!item||window.reviewIssues.numberNeedsReview(item.original)||item.values.name.trim()===(item.original.name||'').trim())return;
     const player=reviewNames.match(item.original.job_id,item.values.name);
     if(!player)return;
     const values={...item.values,name:player.name,rank:item.values.rank==='Unknown'?player.rank:item.values.rank};
@@ -435,48 +464,70 @@
     status.textContent=text;
   }
   let savingReview=false;
-  async function approveRows(onlyClean){
+  async function approveRows(onlyClean,onlyRow){
     await autoTail;
-    if(savingReview)return;
+    if(savingReview||onlyRow&&!onlyRow.isConnected)return;
+    const action=onlyRow?.querySelector('[data-save-media]');
+    const feedback=onlyRow?.querySelector('[data-review-feedback]');
+    const notify=text=>{
+      if(feedback?.isConnected){feedback.hidden=false;feedback.textContent=text;}
+      reviewMessage(text);
+    };
     try{
       const originals=new Map(pending.map(item=>[item.id,item]));
       const names=reviewNames.names();
       const candidates=[...$('mediaPendingRows').querySelectorAll('[data-pending-id]')]
-        .filter(row=>onlyClean||row.querySelector('[data-field="include"]').checked)
+        .filter(row=>onlyRow?row===onlyRow:onlyClean||row.querySelector('[data-field="include"]').checked)
         .map(row=>validateMediaRow(row,originals.get(Number(row.dataset.pendingId)),names)).filter(Boolean);
       const selected=onlyClean?candidates.filter(item=>!item.issues.length&&!item.errors.length):candidates;
       if(!selected.length){
         reviewMessage(onlyClean?'No rows without concerns are ready to add.':'Check at least one row to approve.');
         return;
       }
+      for(const item of selected){
+        const known=reviewNames.match(item.original.job_id,item.values.name);
+        if(known&&item.values.rank==='Unknown'){
+          item.values.rank=known.rank;
+          item.errors=item.errors.filter(error=>error!=='Choose a rank from R1 to R5');
+        }
+      }
       const invalid=selected.find(item=>item.errors.length);
       if(invalid){
-        reviewMessage((invalid.values.name||'Unnamed row')+': '+invalid.errors.join(' · ')+'. Correct this row or uncheck it.');
+        const error=(invalid.values.name||'Unnamed row')+': '+invalid.errors.join(' · ')+'.';
+        const rowFeedback=invalid.row.querySelector('[data-review-feedback]');
+        rowFeedback.hidden=false;rowFeedback.textContent=error;
+        notify(error);
         invalid.row.scrollIntoView({block:'nearest'});
         return;
       }
       const rows=selected.map(({original,values})=>mediaPayload(original,values));
       savingReview=true;
       for(const id of ['mediaApprove','mediaApproveClean','mediaDismiss'])$(id).disabled=true;
-      reviewMessage('Saving '+rows.length+' rows…');
+      if(action)action.disabled=true;
+      notify(rows.length===1?'Saving row…':'Saving '+rows.length+' rows…');
       const result=await getJson('/api/media/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows})});
       removeSavedMedia(new Set(rows.map(row=>row.id)));
       const summary='Added '+result.approved+' rows to the Player List.';
       reviewMessage(summary+(pending.length?' '+pending.length+' rows still awaiting review.':''));
       await Promise.all([refreshPending(),window.playerListRefresh?.()]);
     }catch(error){
-      reviewMessage('Could not approve player changes: '+error.message);
+      notify('Could not save: '+error.message);
     }finally{
+      if(action)action.disabled=false;
       savingReview=false;
       for(const id of ['mediaApprove','mediaApproveClean','mediaDismiss'])$(id).disabled=false;
     }
   }
+  pendingPanel.addEventListener('click',event=>{
+    const action=event.target.closest('[data-save-media]');
+    if(action)approveRows(false,action.closest('[data-pending-id]'));
+  });
   $('mediaApprove').onclick=()=>approveRows(false);
   $('mediaApproveClean').onclick=()=>approveRows(true);
   $('mediaDismiss').onclick=async()=>{
     await autoTail;
     if(savingReview)return;
-    const ids=[...$('mediaPendingRows').querySelectorAll('tr[data-pending-id]')]
+    const ids=[...$('mediaPendingRows').querySelectorAll('[data-pending-id]')]
       .filter(tr=>tr.querySelector('[data-field="include"]').checked)
       .map(tr=>Number(tr.dataset.pendingId));
     if(!ids.length){announce('Check the entries you want to dismiss.');return;}

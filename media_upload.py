@@ -23,7 +23,8 @@ from pydantic import BaseModel, Field
 
 from player_list_ocr import scan_upload, extract_profile
 from player_identity import (match_master, name_key, corrected_name,
-                             load_name_corrections, learn_name_correction, exact_player_index, scan_player_ids, record_scan_players)
+                             load_name_corrections, learn_name_correction, exact_player_index, scan_player_ids, record_scan_players,
+                             number_needs_review, NUMBER_REVIEW_PREFIX)
 from vs_points_ocr import scan_vs_upload
 from vs_points import stage_vs_result
 from tested_rankings_adapter import scan_tested_rankings_upload
@@ -49,6 +50,7 @@ class ReviewEntry(BaseModel):
     kills: int | None = Field(default=None, ge=0, le=18446744073709551615)
     donations: int | None = Field(default=None, ge=0, le=18446744073709551615)
     include: bool = True
+    number_checked: bool = False
 
 
 class ApprovalRequest(BaseModel):
@@ -304,11 +306,24 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     exact=exact_player_index(cur.fetchall())
                     corrections=load_name_corrections(cur)
                 merge=[];needs_review=[]; merged_ids=set()
+                prepared=[]
+                numbers_by_player={}
                 for row in records:
                     raw_name=row.get('ocr_name',row.get('name')) or ''
                     row={**row,'ocr_name':raw_name,'name':corrected_name(raw_name,corrections,exact.keys())}
+                    stat=row.get('tab')
+                    key=(name_key(row['name']),stat)
+                    if key[0] and stat and type(row.get(stat)) is int:
+                        numbers_by_player.setdefault(key,set()).add(row[stat])
+                    prepared.append(row)
+                for row in prepared:
                     current=exact.get(name_key(row['name']))
                     stat=row.get('tab')
+                    readings=numbers_by_player.get((name_key(row['name']),stat),set())
+                    if len(readings)>1:
+                        row['review_required']=True
+                        row['review_reasons']=[*(row.get('review_reasons') or []),
+                            f'{NUMBER_REVIEW_PREFIX} conflicting {stat} values: '+', '.join(map(str,sorted(readings)))+'.']
                     valid_stat=not stat or (type(row.get(stat)) is int and 0 <= row[stat] <= 18446744073709551615)
                     if stat and not valid_stat:
                         row[stat]=None
@@ -318,7 +333,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                         row['name']=current['player_name']
                         if stat:
                             row['rank']=current['player_rank']
-                        if valid_stat and (stat or (not row.get('review_required') and row.get('rank') in ('R1','R2','R3','R4','R5'))):
+                        if valid_stat and not number_needs_review(row.get('review_reasons') or []) and (stat or (not row.get('review_required') and row.get('rank') in ('R1','R2','R3','R4','R5'))):
                             fields={field:row.get(field) for field in
                                     ('power_millions','power','kills','donations','hq_level','avatar_base64')}
                             merge.append(Member(name=current['player_name'],
@@ -374,18 +389,20 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                         unchanged += 1
                                         continue
                                     change_kind='review' if review else 'updated'
-                                cur.execute('SELECT id,player_name,player_rank FROM `roster upload` WHERE job_id=%s ORDER BY id',(job_id,))
+                                cur.execute('SELECT id,player_name,player_rank,review_reasons FROM `roster upload` WHERE job_id=%s ORDER BY id',(job_id,))
                                 previous=exact_player_index(cur.fetchall()).get(name_key(name))
-                                if previous and name:
+                                earlier_reasons=json.loads(previous.get('review_reasons') or '[]') if previous else []
+                                if previous and name and not number_needs_review(earlier_reasons+reasons):
+                                    combined=list(dict.fromkeys(earlier_reasons+reasons))
                                     cur.execute("""UPDATE `roster upload` SET
                                         power=COALESCE(%s,power),kills=COALESCE(%s,kills),
                                         donations=COALESCE(%s,donations),power_millions=COALESCE(%s,power_millions),
                                         hq_level=COALESCE(%s,hq_level),
                                         player_rank=IF(%s='Unknown',player_rank,%s),
-                                        review_required=TRUE,evidence_base64=COALESCE(%s,evidence_base64)
+                                        review_required=TRUE,review_reasons=%s,evidence_base64=COALESCE(%s,evidence_base64)
                                         WHERE id=%s""",
                                         (row.get('power'),row.get('kills'),row.get('donations'),row.get('power_millions'),
-                                         row.get('hq_level'),rank,rank,row.get('evidence_base64'),previous['id']))
+                                         row.get('hq_level'),rank,rank,json.dumps(combined),row.get('evidence_base64'),previous['id']))
                                     continue
                                 cur.execute("""INSERT INTO `roster upload`
                                     (job_id,player_name,player_rank,power_millions,hq_level,avatar_base64,
@@ -638,7 +655,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
             try:
                 with conn.cursor() as cur:
                     marks=','.join(['%s']*len(ids))
-                    cur.execute(f'''SELECT id,job_id,COALESCE(ocr_name,player_name) AS original_name,avatar_base64,leaderboard_tab FROM `roster upload`
+                    cur.execute(f'''SELECT id,job_id,COALESCE(ocr_name,player_name) AS original_name,avatar_base64,leaderboard_tab,review_reasons FROM `roster upload`
                         WHERE id IN ({marks}) FOR UPDATE''',tuple(ids))
                     matching={int(row['id']):row for row in cur.fetchall()}
                     if len(matching)!=len(ids):
@@ -652,6 +669,8 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     keys_by_job={job:set() for job in jobs}
                     for item in selected:
                         info=matching[item.id]
+                        if number_needs_review(json.loads(info['review_reasons'] or '[]')) and (body.auto_match or not item.number_checked):
+                            raise HTTPException(422,detail='Compare the number with the capture and mark it checked before saving.')
                         player=exact.get(name_key(item.name)) if body.auto_match else match_master({'name':item.name},roster)
                         if body.auto_match:
                             if not player:

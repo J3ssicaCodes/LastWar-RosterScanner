@@ -28,6 +28,7 @@
     const statFixed=numberValid(values[stat],stat)&&changed(stat);
     const rankFixed=/^R[1-5]$/.test(values.rank||'');
     let reasons=(original.review_reasons||[]).filter(reason=>{
+      if(reason.startsWith('Number needs verification:'))return true;
       if(/Adjacent frames did not resolve/.test(reason))return false;
       if(/row above|Next row has higher|out of descending/.test(reason))return false; // Recomputed below.
       if(/name/i.test(reason))return !nameFixed;
@@ -51,6 +52,24 @@
     }
     return [...new Set(reasons)];
   }
+  issues.displayWarnings=reasons=>{
+    const labels={
+      uncertain_name:'Check the player name.',
+      uncertain_stat:'Check the scanned number.',
+      uncertain_rank_badge:'Check the rank.',
+      conflicting_name:'The name differed between captures.',
+      conflicting_stat:'The number differed between captures.',
+      multi_view_difference:'The number differed between captures.',
+      missing_position_gap:'A nearby leaderboard row was missing.',
+      stat_not_descending:'The number is out of leaderboard order.',
+      internal_position_mismatch:'Check that this is the right leaderboard row.',
+      review_inferred_pitch_from_screenshot:'Check that the capture shows the full row.',
+    };
+    return [...new Set(reasons.map(reason=>labels[reason]||reason))]
+      .sort((a,b)=>Number(b.startsWith('Number needs verification:'))-Number(a.startsWith('Number needs verification:')))
+      .join(' · ');
+  };
+  issues.numberNeedsReview=row=>(row.review_reasons||[]).some(reason=>reason.startsWith('Number needs verification:'));
   issues.nameKey=key;
   issues.scanNames=list=>{
     let roster=[];

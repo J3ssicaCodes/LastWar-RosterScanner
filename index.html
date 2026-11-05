@@ -324,7 +324,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
 <section id="vsPointsView" class="workspace-view" role="tabpanel" aria-labelledby="vsPointsTab" tabindex="0" hidden>
   <section class="panel pl-section"><div class="pl-title-row"><div><div class="eyebrow">Alliance competition</div><h2>VS Points</h2><p>Daily scores, one record per player and date. Upload a Daily Rank recording using Media Upload.</p></div><button class="btn" id="vsRefresh" type="button">↻ Refresh</button></div>
   <p id="vsMessage" role="status" aria-live="polite"></p>
-  <div id="vsPending" hidden><h3>Review scanned points</h3><p>Verify the highlighted day and earned date. Dates use the uploader’s local calendar week ending Sunday. Sunday uploads belong to the week that just ended.</p><div id="vsReviewJobs"></div></div>
+  <div id="vsPending" hidden><h3>Review scanned points</h3><p>Choose a player and check the score date. Compare any flagged number with the capture before saving.</p><div id="vsReviewJobs"></div></div>
   <div class="pl-filters"><label>Week <select id="vsDate" aria-label="Score week"><option value="">Current week</option></select></label><input id="vsSearch" type="search" placeholder="Search player names…" aria-label="Search VS players"><a class="btn" id="vsExport" href="/api/vs-points/export.csv">↓ Export CSV</a></div>
   <p id="vsSummary"></p><div class="pl-table-wrap"><table class="pl-table"><thead><tr id="vsWeekColumns"><th>Player</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Total</th></tr></thead><tbody id="vsRows"><tr><td colspan="8">No scores saved yet.</td></tr></tbody></table></div>
   <datalist id="vsPlayerNames"></datalist>

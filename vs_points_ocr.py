@@ -11,7 +11,7 @@ import numpy as np
 from extract_ranking_pages import detect, extract
 from scan_rankings import card_borders, pinned_top, estimate_row_height, text_with_conf, enlarge, best_start, retry_name_crop
 
-from player_identity import corrected_name, name_key
+from player_identity import corrected_name, name_key, NUMBER_REVIEW_PREFIX
 
 DAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
 
@@ -87,13 +87,14 @@ def read_page(image, page, period, upper, targets=None, anchors=None):
             if len(matches) != 1:
                 continue
             matched = matches[0]['internal_position']
-        position, pc=text_with_conf(enlarge(crop(92,185,-35,39)),7,'0123456789')
+        position, pc=text_with_conf(enlarge(crop(92,185,-35,39)),7,'0123456789') if anchors is None else ('',0)
         position=re.sub(r'\D','',position)
         position=int(position) if position.isdigit() and 1<=int(position)<=100 else None
         if targets is not None and position not in targets:continue
         name_crop=crop(350,808,-57,-5)
-        name, nc=text_with_conf(enlarge(name_crop),7)
-        if not name or nc<55:
+        check_name=anchors is None or matches[0].get('check_name',True)
+        name, nc=text_with_conf(enlarge(name_crop),7) if check_name else ('',0)
+        if check_name and (not name or nc<55):
             alternate,confidence=text_with_conf(enlarge(name_crop,3),13)
             if alternate and (not name or confidence>nc):name,nc=alternate,confidence
             name,nc=retry_name_crop(name_crop,name,nc)
@@ -116,9 +117,11 @@ def read_page(image, page, period, upper, targets=None, anchors=None):
         if not val:
             retry,confidence=text_with_conf(enlarge(crop(806,1035,-25,44),3),13,'0123456789,')
             val,vc=re.sub(r'\D','',retry),confidence
-        evidence=image[top:end,round(45*scale):round(1040*scale)]
-        ok, encoded=cv2.imencode('.webp',evidence,[cv2.IMWRITE_WEBP_QUALITY,75])
-        ok_avatar, encoded_avatar=cv2.imencode('.webp',avatar,[cv2.IMWRITE_WEBP_QUALITY,80])
+        ok=ok_avatar=False
+        if anchors is None:
+            evidence=image[top:end,round(45*scale):round(1040*scale)]
+            ok, encoded=cv2.imencode('.webp',evidence,[cv2.IMWRITE_WEBP_QUALITY,75])
+            ok_avatar, encoded_avatar=cv2.imencode('.webp',avatar,[cv2.IMWRITE_WEBP_QUALITY,80])
         rows.append({'name':name,'value':val,'name_conf':nc,'value_conf':vc,
                      'position_read':position,'position_conf':pc,'page':page,
                      'center':cy,'signature':signature,'matched_position':matched,
@@ -154,7 +157,8 @@ def review_flags(observations, names, scores, resolve, master_keys):
 def recheck_neighbors(observations, sources, reasons, resolve, progress, read_frame):
     groups = defaultdict(list)
     for position, row in observations.items():
-        if reasons[position] and row['page'] in sources:
+        if row['page'] in sources:
+            row['check_name']=bool(reasons.get(position))
             groups[sources[row['page']]].append(row)
     confirmed = defaultdict(set)
     captures = {}
@@ -184,28 +188,32 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
                     neighbors[reading['matched_position']].append(reading)
             for row in anchors:
                 position = row['internal_position']
-                if len(neighbors[position]) != 2:
-                    continue
                 views = [row,*neighbors[position]]
-                for field, confidence in (('name','name_conf'),('value','value_conf')):
-                    if field == 'name':
-                        keys = [name_key(resolve(view[field])) for view in views]
-                    else:
-                        keys = [int(view[field]) if view[field].isdigit() else None for view in views]
-                    votes = Counter(key for key in keys if key is not None and key != '')
-                    if not votes:
-                        continue
-                    winner, count = votes.most_common(1)[0]
-                    if count < 2:
-                        if len(votes) > 1:
-                            label = 'Player name' if field == 'name' else 'Points'
-                            row.setdefault('neighbor_conflicts',[]).append(
-                                f'{label} differs across adjacent frames')
-                        continue
-                    best = max((view for view,key in zip(views,keys) if key == winner),
-                               key=lambda view:view[confidence])
-                    row[field],row[confidence] = best[field],best[confidence]
-                    confirmed[position].add(field)
+                numbers = [view['value'] for view in views]
+                strong = (len(views) == 3 and all(value.isdecimal() for value in numbers)
+                          and len({int(value) for value in numbers}) == 1
+                          and all(view['value_conf'] >= 55 for view in views))
+                if strong:
+                    confirmed[position].add('value')
+                else:
+                    readings = ' / '.join(value if value.isdecimal() else 'unreadable' for value in numbers)
+                    row.setdefault('neighbor_conflicts',[]).append(
+                        f'{NUMBER_REVIEW_PREFIX} {len(views)}/3 frames read {readings}.')
+                if len(views) != 3 or not row['check_name']:
+                    continue
+                keys = [name_key(resolve(view['name'])) for view in views]
+                votes = Counter(key for key in keys if key)
+                if not votes:
+                    continue
+                winner, count = votes.most_common(1)[0]
+                if count < 2:
+                    if len(votes)>1:
+                        row.setdefault('neighbor_conflicts',[]).append('Player name differs across adjacent frames')
+                    continue
+                best = max((view for view,key in zip(views,keys) if key == winner),
+                           key=lambda view:view['name_conf'])
+                row['name'],row['name_conf'] = best['name'],best['name_conf']
+                confirmed[position].add('name')
     finally:
         for cap in captures.values():
             cap.release()
@@ -290,8 +298,7 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
         for position, fields in confirmed.items():
             if 'name' in fields:
                 variants.pop(position,None)
-            if 'value' in fields:
-                score_variants.pop(position,None)
+
     if not observations:raise ValueError('No complete VS score rows found.')
     day=next(iter(days)); earned=score_date_for_day(upload_date,day)
     if earned>upload_date:
@@ -299,6 +306,8 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
     reasons = review_flags(observations, variants, score_variants, resolve, master_keys)
     rows=[]
     for pos,row in sorted(observations.items()):
+        if len(score_variants.get(pos,set()))>1 or row['value_conf']<55:
+            reasons[pos].append(f'{NUMBER_REVIEW_PREFIX} captured scores disagree or the number is unclear.')
         if reasons[pos] and row['page'] in page_sources:
             reasons[pos].append('Adjacent frames did not resolve all review flags')
         rows.append({**{k:v for k,v in row.items() if k not in ('signature','center','matched_position')},

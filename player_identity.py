@@ -82,3 +82,10 @@ def record_scan_players(cursor, job_id, player_ids, previous):
     if updated != previous:
         cursor.execute('UPDATE media_scan_jobs SET updated_player_ids=%s WHERE id=%s',
                        (json.dumps(sorted(updated)), job_id))
+
+
+NUMBER_REVIEW_PREFIX = 'Number needs verification:'
+
+
+def number_needs_review(reasons):
+    return any(reason.startswith(NUMBER_REVIEW_PREFIX) for reason in reasons)

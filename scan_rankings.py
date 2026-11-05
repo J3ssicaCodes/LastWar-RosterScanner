@@ -153,7 +153,7 @@ def retry_name_crop(crop, name, confidence):
     return name, confidence
 
 
-def ocr_fields(im,cy):
+def ocr_fields(im,cy,*,read_name=True,read_position=True):
     h,w=im.shape[:2];s=w/1080.; yy=lambda x:int(round(x*s))
     def crop(x0,x1,y0,y1):return im[max(0,cy+yy(y0)):min(h,cy+yy(y1)),yy(x0):yy(x1)]
     # The actual R-level badge is ~x340-398, while the far left leaderboard
@@ -163,22 +163,24 @@ def ocr_fields(im,cy):
     name_crop=crop(410,804,-44,43)
     value_crop=crop(808,1065,-42,41)
     rank_crop=crop(75,158,-37,39)
-    name,name_conf=text_with_conf(enlarge(name_crop),7)
+    name,name_conf=text_with_conf(enlarge(name_crop),7) if read_name else ('',0)
     value,value_conf=text_with_conf(enlarge(value_crop),7,'0123456789')
     # Ranks read via nearest-neighbor threshold to isolate outlined white digits.
-    rgray=cv2.cvtColor(rank_crop,cv2.COLOR_BGR2GRAY)
-    rank_bw=enlarge(np.where(rgray<110,0,255).astype('uint8'),3,cv2.INTER_NEAREST)
-    pos,pos_conf=text_with_conf(rank_bw,7,'0123456789')
-    pos=int(pos) if pos.isdecimal() and 1<=int(pos)<=100 else None
+    pos,pos_conf=None,0
+    if read_position:
+        rgray=cv2.cvtColor(rank_crop,cv2.COLOR_BGR2GRAY)
+        rank_bw=enlarge(np.where(rgray<110,0,255).astype('uint8'),3,cv2.INTER_NEAREST)
+        text,pos_conf=text_with_conf(rank_bw,7,'0123456789')
+        pos=int(text) if text.isdecimal() and 1<=int(text)<=100 else None
     return dict(y=cy,name=name,name_conf=name_conf,value=value,value_conf=value_conf,
                 position_read=pos,position_conf=pos_conf,
                 name_crop=name_crop,value_crop=value_crop,player_crop=player,badge_crop=badge)
 
 
-def add_fallback_ocr(ob):
+def add_fallback_ocr(ob,*,read_name=True):
     """Second engine mode only when needed, retaining conflicting results."""
     n=ob['name'];v=ob['value']
-    if not n or ob['name_conf']<55 or len(n)<3 or re.search(r'[~|\\]',n):
+    if read_name and (not n or ob['name_conf']<55 or len(n)<3 or re.search(r'[~|\\]',n)):
         txt,conf=text_with_conf(enlarge(ob['name_crop'],3),13)
         ob['alternate_name']=txt;ob['alternate_name_conf']=conf
         if not n or (conf>ob['name_conf']+18 and len(txt)>=len(n)):ob['name']=txt;ob['name_conf']=conf

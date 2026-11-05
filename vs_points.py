@@ -8,7 +8,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from player_identity import (match_master, name_key, learn_name_correction, exact_player_index,
-                             corrected_name, load_name_corrections, scan_player_ids, record_scan_players)
+                             corrected_name, load_name_corrections, scan_player_ids, record_scan_players,
+                             number_needs_review, NUMBER_REVIEW_PREFIX)
 from vs_points_ocr import score_date_for_day
 
 
@@ -17,6 +18,7 @@ class VSRow(BaseModel):
     name: str = Field(min_length=2,max_length=80)
     points: int = Field(ge=0,le=9007199254740991)
     include: bool = True
+    number_checked: bool = False
 
 
 class VSApproval(BaseModel):
@@ -66,7 +68,7 @@ def stage_vs_result(connect_db, job_id, result):
                 saved_ids = set()
                 for row, raw, name, player, valid in candidates:
                     points = row['points']
-                    if player and valid and len(scores[player['id']]) == 1:
+                    if player and valid and len(scores[player['id']]) == 1 and not number_needs_review(row['review_reasons']):
                         if player['id'] not in saved_ids:
                             upsert_vs_score(cur,result['score_date'],player['id'],player['player_name'],points,job_id)
                             saved_ids.add(player['id'])
@@ -76,7 +78,7 @@ def stage_vs_result(connect_db, job_id, result):
                     if not player: reasons.append('Match name to Player List or verify new player')
                     if not valid: reasons.append('Check points')
                     if player and len(scores[player['id']]) > 1:
-                        reasons.append('Conflicting points for the same player')
+                        reasons.append(f'{NUMBER_REVIEW_PREFIX} conflicting points for the same player.')
                     cur.execute('''INSERT INTO vs_scan_rows
                         (job_id,score_date,upload_date,weekday,player_name,points,review_reasons,evidence_base64,ocr_name)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
@@ -200,10 +202,10 @@ def install_vs_points(app, connect_db):
             try:
                 with conn.cursor() as cur:
                     marks=','.join(['%s']*len(ids))
-                    cur.execute(f'SELECT id,upload_date,COALESCE(ocr_name,player_name) AS original_name FROM vs_scan_rows WHERE job_id=%s AND id IN ({marks}) FOR UPDATE', (body.job_id,*ids))
+                    cur.execute(f'SELECT id,upload_date,COALESCE(ocr_name,player_name) AS original_name,review_reasons FROM vs_scan_rows WHERE job_id=%s AND id IN ({marks}) FOR UPDATE', (body.job_id,*ids))
                     staged=cur.fetchall()
                     if len(staged)!=len(ids):raise HTTPException(409,detail='Review changed. Refresh and retry.')
-                    original_names={source['id']:source['original_name'] for source in staged}
+                    staged_by_id={source['id']:source for source in staged}
                     for source in staged:
                         monday=score_date_for_day(source['upload_date'],0)
                         saturday=score_date_for_day(source['upload_date'],5)
@@ -216,6 +218,9 @@ def install_vs_points(app, connect_db):
                     seen=set()
                     saved_ids=set()
                     for row in selected:
+                        source=staged_by_id[row.id]
+                        if number_needs_review(json.loads(source['review_reasons'] or '[]')) and (body.auto_match or not row.number_checked):
+                            raise HTTPException(422,detail='Compare the score with the capture and mark it checked before saving.')
                         player=exact.get(name_key(row.name)) if body.auto_match else match_master({'name':row.name},master)
                         if body.auto_match:
                             if not player:
@@ -227,8 +232,8 @@ def install_vs_points(app, connect_db):
                         key=name_key(name)
                         if key in seen:raise HTTPException(409,detail='Two reviewed rows match the same player. Keep one score.')
                         seen.add(key)
-                        if name_key(original_names[row.id]) != name_key(row.name):
-                            learn_name_correction(cur,original_names[row.id],name)
+                        if name_key(source['original_name']) != name_key(row.name):
+                            learn_name_correction(cur,source['original_name'],name)
                         upsert_vs_score(cur,body.score_date,player['id'] if player else None,name,row.points,body.job_id)
                     record_scan_players(cur,body.job_id,saved_ids,updated)
                     cur.execute(f'DELETE FROM vs_scan_rows WHERE id IN ({marks})',tuple(ids))

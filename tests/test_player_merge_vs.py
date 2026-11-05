@@ -126,7 +126,7 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         from vs_points_ocr import recheck_neighbors
         original={'internal_position':4,'page':1,'name':'Ladv Jess','value':'123',
                   'name_conf':85,'value_conf':85}
-        frames={39:{'name':'Lady Jess','value':'124'}, 41:{'name':'Lady Jess','value':'125'}}
+        frames={39:{'name':'Lady Jess','value':'124'}, 41:{'name':'Lady Jess','value':'124'}}
         capture=Mock()
         cursor=0
 
@@ -158,7 +158,22 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         self.assertEqual(confirmed[4],{'name'})
         self.assertEqual(original['name'],'Lady Jess')
         self.assertEqual(original['value'],'123')
-        self.assertIn('Points differs across adjacent frames',original['neighbor_conflicts'])
+        self.assertIn('Number needs verification: 3/3 frames read 123 / 124 / 124.',original['neighbor_conflicts'])
+
+    def test_clean_video_rows_still_need_three_readable_numbers(self):
+        from vs_points_ocr import recheck_neighbors
+        for neighboring, expected in ([['100','100'],True], [['100',''],False]):
+            with self.subTest(neighboring=neighboring):
+                row={'internal_position':1,'page':1,'name':'Lady Jess','value':'100',
+                     'name_conf':90,'value_conf':90}
+                capture=Mock()
+                capture.read.side_effect=[(True,value) for value in neighboring]
+                def read_frame(value, anchors):
+                    return [{'matched_position':1,'value':value,'value_conf':90}]
+                with patch('vs_points_ocr.cv2.VideoCapture',return_value=capture):
+                    confirmed=recheck_neighbors({1:row},{1:('sample.mp4',40)},{1:[]},str,Mock(),read_frame)
+                self.assertEqual('value' in confirmed[1],expected)
+                self.assertEqual(bool(row.get('neighbor_conflicts')),not expected)
 
     def test_weekly_scores_keep_dates_and_learn_reviewed_names(self):
         from player_identity import corrected_name, load_name_corrections
@@ -210,6 +225,24 @@ class VSDateAndPersistenceTests(unittest.TestCase):
             ]})
         self.assertEqual(result,{'saved':0,'pending':2})
         self.assertEqual(db.db.execute('SELECT count(*) FROM vs_points').fetchone()[0],0)
+
+    def test_flagged_number_requires_explicit_verification(self):
+        db=SQLDatabase();web=Mock();install_vs_points(web,db)
+        router=web.include_router.call_args.args[0]
+        approve=next(r.endpoint for r in router.routes if r.path=='/api/vs-points/approve')
+        db.db.execute("INSERT INTO media_scan_jobs (id,status) VALUES ('job','scanning')")
+        db.db.execute("INSERT INTO `player list` (player_name,normalized_name,player_rank) VALUES ('Lady Jess','ladyjess','R4')")
+        result=stage_vs_result(db,'job',{'score_date':'2026-11-04','upload_date':'2026-11-05',
+            'weekday':'Wed','rows':[{'name':'Lady Jess','points':123,
+                'review_reasons':['Number needs verification: 3/3 frames read 123 / 124 / 124.']}]})
+        self.assertEqual(result,{'saved':0,'pending':1})
+        row={'id':1,'name':'Lady Jess','points':124}
+        for auto in (True,False):
+            with self.assertRaises(HTTPException) as failure:
+                approve(VSApproval(job_id='job',score_date=date(2026,11,4),auto_match=auto,rows=[row]))
+            self.assertEqual(failure.exception.status_code,422)
+        approve(VSApproval(job_id='job',score_date=date(2026,11,4),rows=[{**row,'number_checked':True}]))
+        self.assertEqual(db.db.execute('SELECT points FROM vs_points').fetchone()[0],124)
 
     def test_blur_save_records_player_and_blocks_repeat_for_same_scan(self):
         db=SQLDatabase();web=Mock();install_vs_points(web,db)

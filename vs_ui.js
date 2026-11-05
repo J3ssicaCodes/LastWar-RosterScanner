@@ -70,36 +70,73 @@
     refreshFocusedSuggestions();
     const snapshot=JSON.stringify(data.rows||[]);
     if(snapshot===pendingSnapshot)return;
+    const drafts=new Map([...$('vsReviewJobs').querySelectorAll('[data-vs-row]')].map(row=>[
+      Number(row.dataset.vsRow),[...row.querySelectorAll('input')].map(input=>[
+        input.getAttributeNames().find(name=>name.startsWith('data-vs-')),
+        input.type==='checkbox'?input.checked:input.value
+      ])
+    ]));
+    const dates=new Map([...$('vsReviewJobs').querySelectorAll('[data-vs-job]')].map(group=>[
+      group.dataset.vsJob,group.querySelector('[data-vs-date]').value
+    ]));
     pendingSnapshot=snapshot;
     pending=data.rows||[];
     $('vsPending').hidden=!pending.length;
     const groups=new Map();for(const row of pending){if(!groups.has(row.job_id))groups.set(row.job_id,[]);groups.get(row.job_id).push(row);}
     $('vsReviewJobs').innerHTML=[...groups].map(([job,rows])=>{
       const first=rows[0],[min,max]=weekBounds(first.upload_date);
-      return '<section class="panel" style="padding:16px;margin:14px 0" data-vs-job="'+esc(job)+'"><h4>'+esc(first.weekday)+' selected · '+rows.length+' scores</h4><label>Points earned on <input data-vs-date type="date" value="'+esc(first.score_date)+'" min="'+min+'" max="'+max+'"></label><p>Uploaded '+esc(first.upload_date)+' · Correct a name to match an available Player List entry, then leave the field to save the score.</p><div class="pl-table-wrap"><table class="pl-table"><thead><tr><th><label><input type="checkbox" data-vs-select-all checked aria-label="Select all scores in this batch"> Use</label></th><th>Player</th><th>Points</th><th>Captured row</th></tr></thead><tbody>'+rows.map(r=>
-        '<tr data-vs-row="'+r.id+'"><td><input type="checkbox" data-vs-use checked aria-label="Include score"></td><td><input data-vs-name list="vsPlayerNames" maxlength="80" aria-label="Player name" value="'+esc(r.name)+'">'+'<small class="media-flag" data-review-warning '+(r.review_reasons?.length?'':'hidden')+'>'+esc((r.review_reasons||[]).join(' · '))+'</small>'+'</td><td><input data-vs-points type="number" min="0" step="1" aria-label="VS points" value="'+(r.points??'')+'"></td><td>'+(r.evidence_base64?'<details><summary>View row</summary><img style="max-width:550px;width:min(70vw,550px)" src="data:image/webp;base64,'+r.evidence_base64+'" alt="Captured score row"></details>':'')+'</td></tr>').join('')+'</tbody></table></div><div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px"><button class="btn primary" data-vs-approve type="button">Save checked scores</button><button class="btn" data-vs-dismiss type="button">Dismiss checked</button></div></section>';
+      return '<section class="panel" style="padding:16px;margin:14px 0" data-vs-job="'+esc(job)+'"><h4>'+esc(first.weekday)+' · '+rows.length+' scores to review</h4>'+
+        '<label>Score date <input data-vs-date type="date" value="'+esc(dates.get(job)||first.score_date)+'" min="'+min+'" max="'+max+'"></label>'+
+        '<div class="review-toolbar"><label><input type="checkbox" data-vs-select-all aria-label="Select all scores in this batch"> Select all</label>'+
+        '<span data-vs-selected></span><button class="btn" data-vs-dismiss type="button">Dismiss selected</button><button class="btn primary" data-vs-approve type="button">Save selected</button></div><p data-vs-feedback role="status" hidden></p>'+
+        '<div class="review-grid">'+rows.map(r=>
+          '<article class="review-card" data-vs-row="'+r.id+'"><div class="review-card-head"><label><input type="checkbox" data-vs-use aria-label="Select score for '+esc(r.name)+'"> Select</label></div>'+
+          '<div class="review-fields"><label class="review-name">Player name<input data-vs-name list="vsPlayerNames" maxlength="80" value="'+esc(r.name)+'"></label>'+
+          '<label>VS points<input data-vs-points type="number" min="0" step="1" value="'+(r.points??'')+'"></label></div>'+
+          '<small data-review-warning '+(r.review_reasons?.length?'':'hidden')+'>'+esc(window.reviewIssues.displayWarnings(r.review_reasons||[]))+'</small>'+
+          (r.evidence_base64?'<details><summary>View captured row</summary><img loading="lazy" src="data:image/webp;base64,'+r.evidence_base64+'" alt="Captured score row"></details>':'')+
+          (window.reviewIssues.numberNeedsReview(r)?'<label class="review-verify"><input type="checkbox" data-vs-number-checked> I checked the number</label>':'')+
+          '<p data-vs-row-feedback role="status" hidden></p><div class="review-card-actions"><button class="btn primary" type="button" data-vs-save-row>Save row</button></div></article>'
+        ).join('')+'</div></section>';
     }).join('');
+    for(const row of $('vsReviewJobs').querySelectorAll('[data-vs-row]')){
+      for(const [attr,value] of drafts.get(Number(row.dataset.vsRow))||[]){
+        if(!attr)continue;
+        const input=row.querySelector('['+attr+']');
+        if(!input)continue;
+        if(input.type==='checkbox')input.checked=value;
+        else input.value=value;
+      }
+    }
+    for(const group of $('vsReviewJobs').querySelectorAll('[data-vs-job]'))updateVSSelection(group);
     try{const players=await api('/api/player-list');if(request===pendingRequest){reviewNames.roster(players.players);refreshFocusedSuggestions();}}catch{}
   }
-  $('vsReviewJobs').addEventListener('change',event=>{
-    if(!event.target.matches('[data-vs-select-all],[data-vs-use]'))return;
-    const group=event.target.closest('[data-vs-job]');
+  function updateVSSelection(group,target){
     const all=group.querySelector('[data-vs-select-all]');
     const rows=[...group.querySelectorAll('[data-vs-use]')];
-    if(event.target===all)rows.forEach(row=>{row.checked=all.checked;});
+    if(target===all)rows.forEach(row=>{row.checked=all.checked;});
     const checked=rows.filter(row=>row.checked).length;
-    all.checked=checked===rows.length;
+    all.checked=rows.length>0&&checked===rows.length;
     all.indeterminate=checked>0&&checked<rows.length;
+    group.querySelector('[data-vs-selected]').textContent=checked+' selected';
+  }
+  $('vsReviewJobs').addEventListener('change',event=>{
+    if(event.target.matches('[data-vs-select-all],[data-vs-use]'))updateVSSelection(event.target.closest('[data-vs-job]'),event.target);
+  });
+  $('vsReviewJobs').addEventListener('input',event=>{
+    if(!event.target.matches('[data-vs-points]'))return;
+    const confirmation=event.target.closest('.review-card')?.querySelector('[data-vs-number-checked]');
+    if(confirmation)confirmation.checked=false;
   });
   function validateVSGroup(group){
     const rows=[...group.querySelectorAll('[data-vs-row]')];
     const names=reviewNames.names();
-    rows.forEach((row,i)=>{
+    rows.forEach(row=>{
       const original=pending.find(p=>p.id===Number(row.dataset.vsRow));
       const values={name:row.querySelector('[data-vs-name]').value.trim(),points:row.querySelector('[data-vs-points]').value};
-      const issues=window.reviewIssues(original,values,names,'vs',rows[i-1]?.querySelector('[data-vs-points]').value,rows[i+1]?.querySelector('[data-vs-points]').value);
+      const issues=window.reviewIssues(original,values,names,'vs');
       const warning=row.querySelector('[data-review-warning]');
-      warning.textContent=issues.join(' · ');warning.hidden=!issues.length;
+      warning.textContent=window.reviewIssues.displayWarnings(issues);warning.hidden=!issues.length;
       row.dataset.reviewInvalid=issues.length?'true':'false';
     });
   }
@@ -108,13 +145,13 @@
     const row=event.target.closest('[data-vs-row]');
     if(!group||!row||!event.target.matches('[data-vs-name],[data-vs-points]'))return;
     validateVSGroup(group);
-    if(event.relatedTarget?.closest('[data-vs-approve],[data-vs-dismiss]'))return;
+    if(event.relatedTarget?.closest('[data-vs-approve],[data-vs-dismiss],[data-vs-save-row]'))return;
     autoTail=autoTail.then(()=>autoSaveVS(Number(row.dataset.vsRow)));
   });
   async function autoSaveVS(id){
     const row=$('vsReviewJobs').querySelector('[data-vs-row="'+id+'"]');
     const original=pending.find(item=>item.id===id);
-    if(!row||!original)return;
+    if(!row||!original||window.reviewIssues.numberNeedsReview(original))return;
     const group=row.closest('[data-vs-job]');
     if(group.querySelector('button:disabled'))return;
     const name=row.querySelector('[data-vs-name]').value.trim();
@@ -137,7 +174,7 @@
       if(currentGroup){
         const remaining=currentGroup.querySelectorAll('[data-vs-row]').length;
         if(!remaining)currentGroup.remove();
-        else currentGroup.querySelector('h4').textContent=original.weekday+' selected · '+remaining+' scores';
+        else{currentGroup.querySelector('h4').textContent=original.weekday+' · '+remaining+' scores to review';updateVSSelection(currentGroup);}
       }
       $('vsPending').hidden=!pending.length;
       refreshFocusedSuggestions();
@@ -146,10 +183,12 @@
     }catch(err){$('vsMessage').textContent=err.message;}
   }
   $('vsReviewJobs').addEventListener('click',async event=>{
-    const action=event.target.closest('[data-vs-approve],[data-vs-dismiss]');if(!action)return;
+    const action=event.target.closest('[data-vs-approve],[data-vs-dismiss],[data-vs-save-row]');if(!action)return;
     await autoTail;
     if(!action.isConnected||action.disabled)return;
     const group=action.closest('[data-vs-job]');const rows=[...group.querySelectorAll('[data-vs-row]')];
+    const feedback=action.closest('[data-vs-row]')?.querySelector('[data-vs-row-feedback]')||group.querySelector('[data-vs-feedback]');
+    const report=text=>{feedback.hidden=false;feedback.textContent=text;$('vsMessage').textContent=text;};
     action.disabled=true;
     try{
       if(action.hasAttribute('data-vs-dismiss')){
@@ -159,12 +198,18 @@
         await api('/api/vs-points/dismiss',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
       }else{
         validateVSGroup(group);
-        if(rows.some(row=>row.querySelector('[data-vs-use]').checked&&row.dataset.reviewInvalid==='true')){
-          throw Error('Correct the remaining warnings before saving the checked rows.');
-        }
-        const selected=rows.filter(r=>r.querySelector('[data-vs-use]').checked).map(r=>({id:Number(r.dataset.vsRow),name:r.querySelector('[data-vs-name]').value.trim(),points:r.querySelector('[data-vs-points]').value}));
+        const chosen=action.hasAttribute('data-vs-save-row')?[action.closest('[data-vs-row]')]:
+          rows.filter(row=>row.querySelector('[data-vs-use]').checked);
+        const selected=chosen.map(row=>({
+          id:Number(row.dataset.vsRow),name:row.querySelector('[data-vs-name]').value.trim(),
+          points:row.querySelector('[data-vs-points]').value,
+          number_checked:row.querySelector('[data-vs-number-checked]')?.checked||false
+        }));
         if(!selected.length)throw Error('Select at least one score.');
-        if(selected.some(r=>r.points===''||!Number.isSafeInteger(Number(r.points))||Number(r.points)<0||r.name.length<2))throw Error('Check names and enter whole-number points for every selected row.');
+        if(selected.some(r=>r.points===''||!Number.isSafeInteger(Number(r.points))||Number(r.points)<0||r.name.length<2))
+          throw Error('Check names and enter whole-number points for every selected row.');
+        const unverified=selected.find(row=>!row.number_checked&&window.reviewIssues.numberNeedsReview(pending.find(p=>p.id===row.id)));
+        if(unverified)throw Error('Compare '+unverified.name+'’s score with the capture and mark it checked.');
         const score_date=group.querySelector('[data-vs-date]').value;
         await api('/api/vs-points/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:group.dataset.vsJob,score_date,rows:selected.map(r=>({...r,points:Number(r.points)}))})});
         // Show the week that contains the scores just saved.
@@ -173,7 +218,7 @@
         $('vsMessage').textContent='Saved '+selected.length+' scores for '+score_date+'. Existing scores for those players on that date were updated.';
       }
       await refresh();window.refreshMediaUploads?.();
-    }catch(err){$('vsMessage').textContent=err.message;}
+    }catch(err){report(err.message);}
     finally{action.disabled=false;}
   });
   async function refresh(){try{await Promise.all([load(),loadPending()]);}catch(err){$('vsMessage').textContent='Could not refresh VS Points: '+err.message;}}
