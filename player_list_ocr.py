@@ -5,6 +5,7 @@ Search for Members bar are analyzed. Never inspect the decorative officer or
 leader area at the top. Uses spatial rank headers, OCR and overlap deduplication.
 """
 from __future__ import annotations
+import base64
 import math
 import os
 import re
@@ -193,7 +194,49 @@ def _read_power(text):
     return None
 
 
-def _read_card(image,button_top,rank):
+def _video_portrait(image, box, size=104):
+    """Compress a portrait crop into small WebP bytes for durable MySQL storage.
+
+    Only the video code calls this. Do not extract images from screenshots.
+    """
+    x0,y0,x1,y1=map(int,box)
+    h,w=image.shape[:2]
+    x0=max(0,x0);x1=min(w,x1);y0=max(0,y0);y1=min(h,y1)
+    if x1-x0<50 or y1-y0<50:return None
+    crop=image[y0:y1,x0:x1]
+    # Enforce a consistent, compact square thumbnail without distortion.
+    side=min(crop.shape[:2])
+    ox=(crop.shape[1]-side)//2;oy=(crop.shape[0]-side)//2
+    crop=crop[oy:oy+side,ox:ox+side]
+    crop=cv2.resize(crop,(size,size),interpolation=cv2.INTER_AREA)
+    ok,binary=cv2.imencode('.webp',crop,[cv2.IMWRITE_WEBP_QUALITY,73])
+    if not ok or len(binary)>32000:return None
+    return base64.b64encode(binary.tobytes()).decode('ascii')
+
+
+def extract_video_leader(frame):
+    """R5 portrait and display name from the member list header of a VIDEO.
+
+    The same R5 generally appears later in a separate profile screenshot,
+    which supplies rank/power/HQ and possibly an alliance tag. The image itself
+    must always originate from video, never that profile screenshot.
+    """
+    frame=_resize_frame(frame)
+    h,w=frame.shape[:2]
+    if w!=1080 or h<1400:return None
+    # R5 portrait sits above the Search for Members bar; ordinary rows below.
+    name=_normalize_name(_profile_text(frame,(436,425,705,493),threshold=None))
+    if not name or len(name)>32:return None
+    # Verify the R5 badge alongside the header; not a generic player card.
+    badge=_ocr_line(frame,(327,420,391,493),config='--psm 7 -c tessedit_char_whitelist=Rr12345',scale=3)
+    if not re.search(r'R\s*5',badge,re.I):return None
+    portrait=_video_portrait(frame,(466,255,624,423),size=116)
+    if not portrait:return None
+    return {'name':name,'rank':'R5','power_millions':None,
+            'hq_level':None,'source_type':'video_leader','avatar_base64':portrait}
+
+
+def _read_card(image,button_top,rank,capture_avatar=False):
     # Button's upper stripe is aligned roughly 15-35 pixels below player name,
     # and power/HQ is on the line 35-75px lower. All coordinates are at width=1080.
     y=int(button_top)
@@ -210,7 +253,10 @@ def _read_card(image,button_top,rank):
     hq=_ocr_line(image,(532,y+20,686,y+79),config='--psm 7 -c tessedit_char_whitelist=0123456789',scale=2)
     match=re.search(r'(?<!\d)([1-9]\d|1\d\d|[1-9])(?!\d)',hq)
     level=int(match.group(1)) if match and 10<=int(match.group(1))<=99 else None
-    return {'name':name,'rank':rank,'power_millions':power,'hq_level':level}
+    item={'name':name,'rank':rank,'power_millions':power,'hq_level':level}
+    if capture_avatar:
+        item['avatar_base64']=_video_portrait(image,(52,y-45,178,y+86))
+    return item
 
 
 def _fingerprint(image,y):
@@ -318,7 +364,7 @@ def extract_profile(frame):
     return None
 
 
-def extract_frame(frame,known_fingerprints=None):
+def extract_frame(frame,known_fingerprints=None,capture_avatar=False):
     frame=_resize_frame(frame);h,w=frame.shape[:2]
     if h<1400 or w<640:return []
     header=_detect_rank_headers(frame)
@@ -353,7 +399,7 @@ def extract_frame(frame,known_fingerprints=None):
         rank=visible_headers[-1]
         fp=_fingerprint(frame,button)
         if known_fingerprints is not None and _seen_fingerprint(known_fingerprints,fp):continue
-        item=_read_card(frame,button,rank)
+        item=_read_card(frame,button,rank,capture_avatar=capture_avatar)
         if item: results.append(item)
     return results
 
@@ -394,6 +440,15 @@ def reconcile_players(rows):
             if row['rank']!=prev['rank']:continue
             if name==old:
                 match_index=i;break
+            # The video displays the R5 name without its [alliance] tag;
+            # only merge this exact suffix when one side is the video leader.
+            if row['rank']=='R5' and ('video_leader' in (row.get('source_type'), prev.get('source_type'))):
+                short=lambda x:re.sub(r'^\[[^\]]{1,12}\]','',x).casefold()
+                a,b=short(row['name']),short(prev['name'])
+                # There is exactly one alliance leader (R5) in this header.
+                # Allow one OCR glyph difference for this uniquely anchored row.
+                if a==b or (min(len(a),len(b))>=4 and _edit_distance(a,b)<=1):
+                    match_index=i;break
             # A truncated initial/final character can be merged only when
             # the available power and HQ readings agree.
             same_power=(row['power_millions'] is not None and prev['power_millions'] is not None and abs(row['power_millions']-prev['power_millions'])<.15)
@@ -407,6 +462,8 @@ def reconcile_players(rows):
         if match_index is None:
             output.append(dict(row));continue
         prev=output[match_index]
+        if not prev.get('avatar_base64') and row.get('avatar_base64'):
+            prev['avatar_base64']=row['avatar_base64']
         # A clear profile is more authoritative than an OCR reading from a scrolling list.
         if row.get('source_type')=='profile' and prev.get('source_type')!='profile':
             prev.update({k:v for k,v in row.items() if v is not None})
@@ -466,8 +523,13 @@ def scan_upload(paths,progress:Callable[[int,int,str],None]):
                                  f'Frame {index} of {total}: unchanged, skipped')
                         continue
                     previous_video_thumb=thumb
+            from_video=frame_file.parent.name.startswith('frames_')
             profile=extract_profile(frame)
-            rows=[profile] if profile else extract_frame(frame,fps_seen if total>3 else None)
+            rows=[profile] if profile else extract_frame(frame,fps_seen if total>3 else None,
+                                                      capture_avatar=from_video)
+            if from_video and index<=5:
+                leader=extract_video_leader(frame)
+                if leader:rows.insert(0,leader)
             for row in rows:
                 norm=_key(row['name'])
                 if not norm:continue
@@ -477,10 +539,12 @@ def scan_upload(paths,progress:Callable[[int,int,str],None]):
                 if not prev or _rank_power_score(row)>_rank_power_score(prev):
                     if prev and row.get('power_millions') is None:row['power_millions']=prev.get('power_millions')
                     if prev and row.get('hq_level') is None:row['hq_level']=prev.get('hq_level')
+                    if prev and not row.get('avatar_base64'):row['avatar_base64']=prev.get('avatar_base64')
                     observed[norm]=row
                 elif prev:
                     if prev.get('power_millions') is None:prev['power_millions']=row.get('power_millions')
                     if prev.get('hq_level') is None:prev['hq_level']=row.get('hq_level')
+                    if not prev.get('avatar_base64'):prev['avatar_base64']=row.get('avatar_base64')
             progress(24 + round(72*index/total),100,
                      f'Processed frame {index} of {total}; {len(observed)} names found')
     finally:
