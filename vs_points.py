@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from player_identity import (match_master, name_key, learn_name_correction, exact_player_index,
-                             corrected_name, load_name_corrections)
+                             corrected_name, load_name_corrections, scan_player_ids, record_scan_players)
 from vs_points_ocr import score_date_for_day
 
 
@@ -20,6 +20,7 @@ class VSRow(BaseModel):
 
 
 class VSApproval(BaseModel):
+    auto_match: bool = False
     job_id: str
     score_date: date
     rows: list[VSRow] = Field(min_length=1,max_length=200)
@@ -35,11 +36,19 @@ def upsert_vs_score(cursor, date, player_id, name, points, job_id):
         (date,player_id,name,name_key(name),points,job_id))
 
 
+def vs_scan_player_ids(cursor, job_id, lock=False):
+    updated=scan_player_ids(cursor,job_id,lock=lock)
+    # Older jobs recorded provenance on the score but had no scan ledger.
+    cursor.execute('SELECT player_id FROM vs_points WHERE source_job_id=%s AND player_id IS NOT NULL',(job_id,))
+    return updated | {row['player_id'] for row in cursor.fetchall()}
+
+
 def stage_vs_result(connect_db, job_id, result):
     saved = pending = 0
     with connect_db() as conn:
         try:
             with conn.cursor() as cur:
+                updated=scan_player_ids(cur,job_id,lock=True)
                 cur.execute('SELECT id,player_name FROM `player list`')
                 master = exact_player_index(cur.fetchall())
                 corrections = load_name_corrections(cur)
@@ -75,6 +84,7 @@ def stage_vs_result(connect_db, job_id, result):
                          player['player_name'] if player else name, points if valid else None,
                          json.dumps(reasons),row.get('evidence_base64')))
                     pending += 1
+                record_scan_players(cur,job_id,saved_ids,updated)
             conn.commit()
         except Exception:
             conn.rollback()
@@ -167,17 +177,19 @@ def install_vs_points(app, connect_db):
                 cur.execute('''SELECT id,job_id,score_date,upload_date,weekday,player_name AS name,
                     points,review_reasons,evidence_base64 FROM vs_scan_rows ORDER BY id LIMIT 2000''')
                 rows=cur.fetchall()
+                updated={job:sorted(vs_scan_player_ids(cur,job)) for job in {row['job_id'] for row in rows}}
         for row in rows:
             for key in ('score_date','upload_date'):row[key]=row[key].isoformat()
             row['review_reasons']=json.loads(row.get('review_reasons') or '[]')
-        return {'rows':rows}
+        return {'rows':rows,'updated_by_job':updated}
 
     @router.post('/approve')
     def approve_scores(body: VSApproval):
         selected=[r for r in body.rows if r.include]
         if not selected:raise HTTPException(400,detail='Select at least one score.')
         ids=[r.id for r in selected]
-        if len(set(ids))!=len(ids):raise HTTPException(400,detail='Duplicate review rows.')
+        if len(set(ids))!=len(ids) or (body.auto_match and len(ids)!=1):
+            raise HTTPException(400,detail='Select valid review rows.')
         if any(not any(c.isalpha() for c in row.name) for row in selected):
             raise HTTPException(400,detail='Each player name must contain letters.')
         with connect_db() as conn:
@@ -193,10 +205,20 @@ def install_vs_points(app, connect_db):
                         saturday=score_date_for_day(source['upload_date'],5)
                         if not monday<=body.score_date<=min(saturday,source['upload_date']):
                             raise HTTPException(400,detail='Choose an elapsed day, Monday through Saturday, in this upload’s game week.')
+                    updated=vs_scan_player_ids(cur,body.job_id,lock=True)
                     cur.execute('SELECT id,player_name,player_rank,normalized_name FROM `player list`')
-                    master=cur.fetchall();seen=set()
+                    master=cur.fetchall()
+                    exact=exact_player_index(master)
+                    seen=set()
+                    saved_ids=set()
                     for row in selected:
-                        player=match_master({'name':row.name},master)
+                        player=exact.get(name_key(row.name)) if body.auto_match else match_master({'name':row.name},master)
+                        if body.auto_match:
+                            if not player:
+                                raise HTTPException(409,detail='Choose an exact name from the Player List.')
+                            if player['id'] in updated:
+                                raise HTTPException(409,detail='That player was already updated by this scan.')
+                        if player:saved_ids.add(player['id'])
                         name=player['player_name'] if player else row.name.strip()
                         key=name_key(name)
                         if key in seen:raise HTTPException(409,detail='Two reviewed rows match the same player. Keep one score.')
@@ -204,6 +226,7 @@ def install_vs_points(app, connect_db):
                         if name_key(original_names[row.id]) != name_key(row.name):
                             learn_name_correction(cur,original_names[row.id],name)
                         upsert_vs_score(cur,body.score_date,player['id'] if player else None,name,row.points,body.job_id)
+                    record_scan_players(cur,body.job_id,saved_ids,updated)
                     cur.execute(f'DELETE FROM vs_scan_rows WHERE id IN ({marks})',tuple(ids))
                     cur.execute("""UPDATE media_scan_jobs SET status='approved',message='VS points saved',
                         updated_at=UTC_TIMESTAMP(6) WHERE id=%s

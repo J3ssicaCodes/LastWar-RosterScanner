@@ -51,6 +51,33 @@
     }
     return [...new Set(reasons)];
   }
+  issues.nameKey=key;
+  issues.scanNames=list=>{
+    let roster=[];
+    const used=new Map();
+    function mark(job,ids){
+      if(!used.has(job))used.set(job,new Set());
+      ids.forEach(id=>used.get(job).add(id));
+    }
+    const eligible=job=>roster.filter(player=>!used.get(job)?.has(player.id));
+    return {
+      roster(players){roster=players;},
+      names:()=>roster.map(player=>player.name),
+      update(byJob){for(const [job,ids] of Object.entries(byJob||{}))mark(job,ids);},
+      mark,
+      match(job,name){
+        const matches=roster.filter(player=>key(player.name)===key(name));
+        return matches.length===1&&!used.get(job)?.has(matches[0].id)?matches[0]:null;
+      },
+      show(job){
+        list.replaceChildren(...eligible(job).map(player=>{
+          const option=document.createElement('option');
+          option.value=player.name;
+          return option;
+        }));
+      },
+    };
+  };
   issues.mediaInputIssues=mediaInputIssues;
   globalThis.reviewIssues=issues;
   if(typeof module!=='undefined')module.exports=issues;

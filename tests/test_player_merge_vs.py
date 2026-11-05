@@ -32,7 +32,7 @@ class SQLDatabase:
             UNIQUE(score_date,normalized_name),UNIQUE(score_date,player_id));
             CREATE TABLE vs_scan_rows (id INTEGER PRIMARY KEY,job_id TEXT,upload_date TEXT,
             score_date TEXT,weekday TEXT,player_name TEXT,points INTEGER,review_reasons TEXT,evidence_base64 TEXT);
-            CREATE TABLE media_scan_jobs (id TEXT PRIMARY KEY,status TEXT,message TEXT,updated_at TEXT);
+            CREATE TABLE media_scan_jobs (id TEXT PRIMARY KEY,status TEXT,message TEXT,updated_at TEXT,updated_player_ids TEXT);
         ''')
     def __call__(self):return self
     def __enter__(self):return self
@@ -210,6 +210,28 @@ class VSDateAndPersistenceTests(unittest.TestCase):
             ]})
         self.assertEqual(result,{'saved':0,'pending':2})
         self.assertEqual(db.db.execute('SELECT count(*) FROM vs_points').fetchone()[0],0)
+
+    def test_blur_save_records_player_and_blocks_repeat_for_same_scan(self):
+        db=SQLDatabase();web=Mock();install_vs_points(web,db)
+        router=web.include_router.call_args.args[0]
+        approve=next(r.endpoint for r in router.routes if r.path=='/api/vs-points/approve')
+        pending=next(r.endpoint for r in router.routes if r.path=='/api/vs-points/pending')
+        db.db.execute("INSERT INTO media_scan_jobs (id,status) VALUES ('job','review')")
+        db.db.execute("INSERT INTO `player list` (player_name,normalized_name,player_rank) VALUES ('Lady Jess','ladyjess','R4')")
+        for idx in (1,2):
+            db.db.execute("INSERT INTO vs_scan_rows (id,job_id,upload_date,score_date,player_name) VALUES (?,'job','2026-11-05','2026-11-04','Ladv Jess')",(idx,))
+        first=VSApproval(job_id='job',score_date=date(2026,11,4),auto_match=True,
+                         rows=[{'id':1,'name':'Lady Jess','points':100}])
+        self.assertEqual(approve(first)['approved'],1)
+        self.assertEqual(pending()['updated_by_job'],{'job':[1]})
+        second=VSApproval(job_id='job',score_date=date(2026,11,4),auto_match=True,
+                          rows=[{'id':2,'name':'Lady Jess','points':999}])
+        with self.assertRaises(HTTPException) as failure:
+            approve(second)
+        self.assertEqual(failure.exception.status_code,409)
+        self.assertEqual(db.db.execute('SELECT points FROM vs_points').fetchone()[0],100)
+        self.assertEqual(db.db.execute('SELECT id FROM vs_scan_rows').fetchone()[0],2)
+        self.assertEqual(db.db.execute("SELECT player_name FROM player_name_dictionary WHERE ocr_key='ladvjess'").fetchone()[0],'Lady Jess')
 
     def test_rescan_updates_one_player_date_and_keeps_other_dates(self):
         db=SQLDatabase();web=Mock();install_vs_points(web,db)

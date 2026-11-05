@@ -19,6 +19,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from decimal import Decimal
@@ -534,9 +535,13 @@ class ImportData(BaseModel):
 
 @app.post('/api/player-list/import')
 def import_players(body: ImportData):
+    return merge_players(body)
+
+
+def merge_players(body: ImportData, connection=None):
     batch_id = str(uuid.uuid4())
     # Canonicalize against the shared master directory before combining categories.
-    with db_connect() as conn:
+    with (nullcontext(connection) if connection is not None else db_connect()) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id,player_name,player_rank,normalized_name FROM `player list`")
             master=cur.fetchall()
@@ -560,7 +565,7 @@ def import_players(body: ImportData):
         raise HTTPException(400, detail='No valid players were provided.')
     created = updated = removed = 0
     try:
-        with db_connect() as conn:
+        with (nullcontext(connection) if connection is not None else db_connect()) as conn:
             try:
                 # One transaction, including new/removed status changes.
                 with conn.cursor() as cur:
@@ -629,9 +634,9 @@ def import_players(body: ImportData):
                         id,is_full_capture,scanned_count,created_count,updated_count,possible_removed_count)
                         VALUES (%s,%s,%s,%s,%s,%s)""",
                         (batch_id,body.full_capture,len(unique),created,updated,removed))
-                conn.commit()
+                if connection is None:conn.commit()
             except Exception:
-                conn.rollback()
+                if connection is None:conn.rollback()
                 raise
     except HTTPException:
         raise
@@ -656,7 +661,7 @@ from vs_points import install_vs_points
 install_vs_points(app, db_connect)
 
 from media_upload import install_media_upload
-install_media_upload(app, db_connect, import_players, ImportData)
+install_media_upload(app, db_connect, merge_players, ImportData)
 
 @app.get('/vs_ui.js')
 def vs_ui_script():

@@ -22,8 +22,8 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from player_list_ocr import scan_upload, extract_profile
-from player_identity import (name_key, corrected_name,
-                             load_name_corrections, learn_name_correction, exact_player_index)
+from player_identity import (match_master, name_key, corrected_name,
+                             load_name_corrections, learn_name_correction, exact_player_index, scan_player_ids, record_scan_players)
 from vs_points_ocr import scan_vs_upload
 from vs_points import stage_vs_result
 from tested_rankings_adapter import scan_tested_rankings_upload
@@ -52,6 +52,7 @@ class ReviewEntry(BaseModel):
 
 
 class ApprovalRequest(BaseModel):
+    auto_match: bool = False
     rows: list[ReviewEntry] = Field(min_length=1, max_length=2000)
     # Accepted for older clients, but never used to flag absent players.
     full_capture: bool = False
@@ -96,6 +97,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                     started_at DATETIME(6) NULL,
                     finished_at DATETIME(6) NULL,
+                    updated_player_ids TEXT NULL,
                     KEY idx_media_jobs_created (created_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4''')
                 cur.execute('''CREATE TABLE IF NOT EXISTS `storm roster` (
@@ -165,10 +167,11 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 rank_column=cur.fetchone()
                 if rank_column and rank_column.get('Type','').lower()=='varchar(2)':
                     cur.execute('ALTER TABLE `roster upload` MODIFY COLUMN player_rank VARCHAR(8) NOT NULL')
-                for field in ('started_at','finished_at'):
+                for field,definition in (('started_at','DATETIME(6)'),('finished_at','DATETIME(6)'),
+                                         ('updated_player_ids','TEXT')):
                     cur.execute('SHOW COLUMNS FROM media_scan_jobs LIKE %s',(field,))
                     if not cur.fetchone():
-                        cur.execute(f'ALTER TABLE media_scan_jobs ADD COLUMN {field} DATETIME(6) NULL')
+                        cur.execute(f'ALTER TABLE media_scan_jobs ADD COLUMN {field} {definition} NULL')
                 # A service restart should never leave a scan appearing to run forever.
                 cur.execute("""UPDATE media_scan_jobs
                                SET status='interrupted', message='Scan was interrupted. Please upload again.',
@@ -295,10 +298,10 @@ def install_media_upload(app, connect_db, import_players, import_model):
             else:
                 from app import Member, ImportData, normalize_name
                 with connect_db() as conn, conn.cursor() as cur:
-                    cur.execute('SELECT player_name,player_rank FROM `player list`')
+                    cur.execute('SELECT id,player_name,player_rank FROM `player list`')
                     exact=exact_player_index(cur.fetchall())
                     corrections=load_name_corrections(cur)
-                merge=[];needs_review=[]
+                merge=[];needs_review=[]; merged_ids=set()
                 for row in records:
                     row={**row,'name':corrected_name(row.get('ocr_name',row.get('name')) or '',corrections,exact.keys())}
                     current=exact.get(name_key(row['name']))
@@ -318,14 +321,18 @@ def install_media_upload(app, connect_db, import_players, import_model):
                             merge.append(Member(name=current['player_name'],
                                 rank=row['rank'],
                                 **fields))
+                            merged_ids.add(current['id'])
                             continue
                     needs_review.append(row)
-                if merge:import_players(import_model(players=merge,full_capture=False))
                 records=needs_review
                 with connect_db() as conn:
                     try:
                         with conn.cursor() as cur:
                             from app import normalize_name
+                            if merge:
+                                updated_ids=scan_player_ids(cur,job_id,lock=True)
+                                import_players(import_model(players=merge,full_capture=False),connection=conn)
+                                record_scan_players(cur,job_id,merged_ids,updated_ids)
                             cur.execute("""SELECT normalized_name,player_name,player_rank,
                                 power_millions,power,kills,donations,hq_level,
                                 avatar_image IS NOT NULL AS has_avatar
@@ -364,7 +371,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                         unchanged += 1
                                         continue
                                     change_kind='review' if review else 'updated'
-                                cur.execute('SELECT id,player_name,player_rank FROM `roster upload` ORDER BY id')
+                                cur.execute('SELECT id,player_name,player_rank FROM `roster upload` WHERE job_id=%s ORDER BY id',(job_id,))
                                 previous=exact_player_index(cur.fetchall()).get(name_key(name))
                                 if previous and name:
                                     cur.execute("""UPDATE `roster upload` SET
@@ -591,12 +598,13 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     j.full_capture FROM `roster upload` r JOIN media_scan_jobs j ON j.id=r.job_id
                     ORDER BY r.id LIMIT 2000''')
                 rows=cur.fetchall()
+                updated={job:sorted(scan_player_ids(cur,job)) for job in {row['job_id'] for row in rows}}
         for row in rows:
             if row['power_millions'] is not None:row['power_millions']=float(row['power_millions'])
             row['review_required']=bool(row.get('review_required'))
             try:row['review_reasons']=json.loads(row.get('review_reasons') or '[]')
             except (ValueError,TypeError):row['review_reasons']=[]
-        return {'players':rows,'count':len(rows)}
+        return {'players':rows,'count':len(rows),'updated_by_job':updated}
 
     @router.post('/dismiss')
     def dismiss_review(body: DismissRows):
@@ -619,41 +627,59 @@ def install_media_upload(app, connect_db, import_players, import_model):
     @router.post('/approve')
     def approve_review(body: ApprovalRequest):
         from app import Member
-        ids = [item.id for item in body.rows]
-        if len(ids) != len(set(ids)):
-            raise HTTPException(400, detail='Duplicate review rows.')
+        selected = [item for item in body.rows if item.include]
+        ids = [item.id for item in selected]
+        if not ids or len(ids) != len(set(ids)) or (body.auto_match and len(ids)!=1):
+            raise HTTPException(400,detail='Select valid review rows.')
         with connect_db() as conn:
-            with conn.cursor() as cur:
-                marks=','.join(['%s']*len(ids))
-                cur.execute(f'''SELECT r.id,r.job_id,r.player_name,r.avatar_base64,j.full_capture FROM `roster upload` r
-                    JOIN media_scan_jobs j ON j.id=r.job_id WHERE r.id IN ({marks})''',tuple(ids))
-                matching={int(r['id']):r for r in cur.fetchall()}
-        if len(matching)!=len(ids):
-            raise HTTPException(409,detail='The pending list changed. Refresh before approving.')
-        approved=[]
-        for item in body.rows:
-            if not item.include:continue
-            info=matching[item.id]
-            approved.append(Member(name=item.name,rank=item.rank,power_millions=item.power_millions,
-                                   hq_level=item.hq_level,avatar_base64=info['avatar_base64'],
-                                   power=item.power,kills=item.kills,donations=item.donations))
-        # An absent player is not evidence of removal. Never mark missing.
-        if not approved:
-            raise HTTPException(400,detail='Select at least one valid reviewed player to approve.')
-        result = import_players(import_model(players=approved,full_capture=False))
-        approved_ids=[item.id for item in body.rows if item.include]
-        with connect_db() as conn:
-            with conn.cursor() as cur:
-                for item in body.rows:
-                    if item.include:
-                        learn_name_correction(cur, matching[item.id]['player_name'], item.name.strip())
-                marks=','.join(['%s']*len(approved_ids))
-                cur.execute(f'DELETE FROM `roster upload` WHERE id IN ({marks})',tuple(approved_ids))
-                cur.execute('''UPDATE media_scan_jobs j SET status='approved',
-                    message='Player List changes reviewed',updated_at=UTC_TIMESTAMP(6)
-                    WHERE j.destination='players' AND j.status='review'
-                      AND NOT EXISTS(SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id)''')
-            conn.commit()
-        return {'approved':len(approved),'remaining':len(ids)-len(approved),**result}
+            try:
+                with conn.cursor() as cur:
+                    marks=','.join(['%s']*len(ids))
+                    cur.execute(f'''SELECT id,job_id,player_name,avatar_base64,leaderboard_tab FROM `roster upload`
+                        WHERE id IN ({marks}) FOR UPDATE''',tuple(ids))
+                    matching={int(row['id']):row for row in cur.fetchall()}
+                    if len(matching)!=len(ids):
+                        raise HTTPException(409,detail='The pending list changed. Refresh before approving.')
+                    jobs={row['job_id'] for row in matching.values()}
+                    updated={job:scan_player_ids(cur,job,lock=True) for job in sorted(jobs)}
+                    cur.execute('SELECT id,player_name,player_rank FROM `player list`')
+                    roster=cur.fetchall()
+                    exact=exact_player_index(roster)
+                    approved=[]
+                    keys_by_job={job:set() for job in jobs}
+                    for item in selected:
+                        info=matching[item.id]
+                        player=exact.get(name_key(item.name)) if body.auto_match else match_master({'name':item.name},roster)
+                        if body.auto_match:
+                            if not player:
+                                raise HTTPException(409,detail='Choose an exact name from the Player List.')
+                            if player['id'] in updated[info['job_id']]:
+                                raise HTTPException(409,detail='That player was already updated by this scan.')
+                            tab=info['leaderboard_tab']
+                            if tab and getattr(item,tab,None) is None:
+                                raise HTTPException(422,detail=f'Enter the {tab} value before saving.')
+                        name=player['player_name'] if player else item.name.strip()
+                        rank=player['player_rank'] if body.auto_match and item.rank=='Unknown' else item.rank
+                        approved.append(Member(name=name,rank=rank,power_millions=item.power_millions,
+                                               hq_level=item.hq_level,avatar_base64=info['avatar_base64'],
+                                               power=item.power,kills=item.kills,donations=item.donations))
+                        keys_by_job[info['job_id']].add(name_key(name))
+                        learn_name_correction(cur,info['player_name'],name)
+                    result=import_players(import_model(players=approved,full_capture=False),connection=conn)
+                    cur.execute('SELECT id,player_name FROM `player list` WHERE last_import_id=%s',(result['import_id'],))
+                    saved=exact_player_index(cur.fetchall())
+                    for job,keys in keys_by_job.items():
+                        record_scan_players(cur,job,[saved[key]['id'] for key in keys if saved.get(key)],updated[job])
+                    cur.execute(f'DELETE FROM `roster upload` WHERE id IN ({marks})',tuple(ids))
+                    job_marks=','.join(['%s']*len(jobs))
+                    cur.execute(f'''UPDATE media_scan_jobs j SET status='approved',
+                        message='Player List changes reviewed',updated_at=UTC_TIMESTAMP(6)
+                        WHERE j.id IN ({job_marks}) AND j.status='review'
+                          AND NOT EXISTS(SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id)''',tuple(sorted(jobs)))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return {'approved':len(approved),'remaining':0,**result}
 
     app.include_router(router)
