@@ -228,6 +228,7 @@ def extract_video_pages(video_path,progress=None,settings=None,audit=None):
     first_layout=None;prev=None;stable_start=None;stable_last=None;stops=[]
     stride=int(cfg['video_stride'])
     frame_number=-1
+    layout_attempts=0
     try:
         while True:
             frame_number+=1
@@ -237,8 +238,16 @@ def extract_video_pages(video_path,progress=None,settings=None,audit=None):
             ok,frame=cap.read()
             if not ok:break
             if first_layout is None:
+                # Do not run costly full-page OCR on every third frame if the
+                # opening scene does not show a leaderboard yet.
+                if frame_number and frame_number%max(stride,int(fps*2)//stride*stride):
+                    continue
+                layout_attempts+=1
                 first_layout=detect_leaderboard_layout(frame)
-                if first_layout is None:continue
+                if first_layout is None:
+                    if layout_attempts>=8:
+                        raise ValueError('Could not identify leaderboard tabs and header in the first video section.')
+                    continue
             thumb=_motion_thumb(frame,first_layout)
             if thumb is None:continue
             if prev is not None:
@@ -283,7 +292,10 @@ def extract_video_pages(video_path,progress=None,settings=None,audit=None):
             _,frame_index,image=max(candidates,key=lambda x:x[0])
             thumb=_motion_thumb(image,first_layout)
             if thumb is None:continue
-            near=next((p for p,t in enumerate(thumbs) if _motion_difference(thumb,t)<cfg['duplicate_threshold']),None)
+            current_tab,_=detect_selected_tab(image,first_layout)
+            near=next((p for p,t in enumerate(thumbs) if
+                       pages[p].get('selected_tab')==current_tab and
+                       _motion_difference(thumb,t)<cfg['duplicate_threshold']),None)
             digest=image_digest(image)
             record={'source':Path(video_path).name,'frame':frame_index,
                     'timestamp':round(frame_index/fps,3),'duration':round((end-start)/fps,3),
@@ -293,7 +305,7 @@ def extract_video_pages(video_path,progress=None,settings=None,audit=None):
             thumbs.append(thumb)
             pages.append({'image':image,'source':record['source'],'frame':frame_index,
                           'timestamp':record['timestamp'],'hash':digest,'dwell':record['duration'],
-                          'video':True,'interval':(start,end),'fps':fps,'source_video':str(video_path)})
+                          'video':True,'interval':(start,end),'fps':fps,'source_video':str(video_path),'selected_tab':current_tab})
             if progress:progress(34+int(9*(i+1)/len(stops)),100,
                                  f'Selected {len(pages)} distinct pause images')
         if not pages:raise ValueError('No distinct leaderboard pages found.')
@@ -603,8 +615,10 @@ def _extract_page_observations(pages,progress,audit,settings=None):
                 obs['review_required']=True
                 obs['review_reasons'].append('Row pitch calibrated from resolution prior; verify complete row boundary')
             page_observations.append(obs)
-        # Use >=2 consistent observed positions to correct an internal OCR digit
-        # misread; every corrected value still belongs to a complete observed row.
+        # In a single paused page, adjacent complete leaderboard rows must
+        # have consecutive positions.  Strong anchors can expose a mistaken
+        # OCR digit (e.g. position 3 read as 33).  Only infer the *internal*
+        # position of an actual fully observed row when >=2 anchors agree.
         offsets=[obs['leaderboard_position']-idx for idx,obs in enumerate(page_observations)
                  if obs.get('leaderboard_position') is not None]
         if offsets:
@@ -642,17 +656,31 @@ def recover_missing_rows(source,missing_positions,pages,observations,progress=No
         if not cap.isOpened():continue
         try:
             for left,right in zip(group,group[1:]):
-                possible={t:{pos for tab,pos in missing_positions if tab==t} for t in TAB_NAMES}
+                # Only search gaps bracketed by this actual neighboring page
+                # pair, never every gap in every unrelated transition.
+                def page_positions(page):
+                    label=(page['source']+'@'+f"{page['timestamp']:.2f}s")
+                    return {tab:sorted({int(obs['leaderboard_position']) for obs in observations
+                            if obs.get('source_image')==label and obs.get('tab')==tab
+                            and obs.get('leaderboard_position') is not None}) for tab in TAB_NAMES}
+                lhs=page_positions(left);rhs=page_positions(right)
+                possible={t:set() for t in TAB_NAMES}
+                for tab,pos in missing_positions:
+                    a,b=lhs.get(tab,[]),rhs.get(tab,[])
+                    if a and b and ((max(a)<pos<min(b)) or (max(b)<pos<min(a))):
+                        possible[tab].add(pos)
+                if not any(possible.values()):continue
                 left_frame=left['frame'];right_frame=right['frame']
                 if right_frame-left_frame<8:continue
-                max_samples=min(18,max(0,(right_frame-left_frame)//3))
+                max_samples=min(10,max(0,(right_frame-left_frame)//4))
                 if max_samples<=0:continue
+                fixed_layout=detect_leaderboard_layout(left['image'])
+                if fixed_layout is None:continue
                 for frame_id in np.linspace(left_frame+2,right_frame-2,max_samples,dtype=int):
                     cap.set(cv2.CAP_PROP_POS_FRAMES,int(frame_id))
                     ok,img=cap.read()
                     if not ok:continue
-                    layout=detect_leaderboard_layout(img)
-                    if not layout:continue
+                    layout=fixed_layout
                     tab,_=detect_selected_tab(img,layout)
                     targets=possible.get(tab,set()) if tab else set()
                     if not targets:continue
@@ -735,5 +763,7 @@ def scan_leaderboard_upload(paths,progress:Callable|None=None,expected_count=Non
     result['diagnostics']=diagnostics
     result['frames_examined']=len(pages)
     result['warnings']=validity['warnings']
+    # Keep rows with unreadable names in the review queue if a real complete
+    # row and valid observed position exist; the reviewer must supply the name.
     result['players']=[p for p in result['players'] if p.get('name') or p.get('internal_position') is not None]
     return result
