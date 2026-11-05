@@ -6,6 +6,8 @@ never returned to the browser or written to the frontend source.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import csv
 import io
 import os
@@ -17,7 +19,7 @@ import time
 import unicodedata
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from urllib.parse import unquote, urlsplit
 from pathlib import Path
@@ -26,7 +28,7 @@ from typing import Any
 import pymysql
 from pymysql.cursors import DictCursor
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 from player_list_ocr import scan_upload
@@ -105,6 +107,9 @@ def initialize_db():
                     player_rank VARCHAR(2) NOT NULL,
                     power_millions DECIMAL(12,1) NULL,
                     hq_level SMALLINT UNSIGNED NULL,
+                    birthday DATE NULL,
+                    avatar_image MEDIUMBLOB NULL,
+                    avatar_updated_at DATETIME(6) NULL,
                     is_new BOOLEAN NOT NULL DEFAULT TRUE,
                     possibly_removed BOOLEAN NOT NULL DEFAULT FALSE,
                     first_seen_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -124,6 +129,15 @@ def initialize_db():
                     updated_count INT UNSIGNED NOT NULL,
                     possible_removed_count INT UNSIGNED NOT NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci""")
+                # Existing installations need additional columns, not a new table.
+                for field, definition in (
+                    ('birthday', 'DATE NULL'),
+                    ('avatar_image', 'MEDIUMBLOB NULL'),
+                    ('avatar_updated_at', 'DATETIME(6) NULL'),
+                ):
+                    cur.execute('SHOW COLUMNS FROM `player list` LIKE %s',(field,))
+                    if not cur.fetchone():
+                        cur.execute(f'ALTER TABLE `player list` ADD COLUMN `{field}` {definition}')
                 cur.execute('SHOW TABLES LIKE %s', ('player list',))
                 if cur.fetchone() is None:
                     raise RuntimeError('Player List table not visible after creation.')
@@ -172,7 +186,8 @@ def list_players():
         with db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("""SELECT id, player_name AS name, player_rank AS `rank`,
-                    power_millions, hq_level, is_new, possibly_removed,
+                    power_millions, hq_level, birthday, is_new, possibly_removed,
+                    avatar_image IS NOT NULL AS has_avatar, avatar_updated_at,
                     first_seen_at, last_seen_at, updated_at
                     FROM `player list`
                     ORDER BY player_rank DESC, power_millions IS NULL,
@@ -184,9 +199,54 @@ def list_players():
                 row['power_millions'] = float(row['power_millions'])
             row['is_new'] = bool(row['is_new'])
             row['possibly_removed'] = bool(row['possibly_removed'])
+            row['has_avatar'] = bool(row['has_avatar'])
+            row['birthday'] = row['birthday'].isoformat() if row['birthday'] else None
+            row['avatar_url'] = f"/api/player-list/avatar/{row['id']}" if row['has_avatar'] else None
         return {'players': rows, 'total': len(rows)}
     except Exception as exc:
         raise HTTPException(503, detail='Database unavailable. Check Render MySQL connection settings.') from exc
+
+
+@app.get('/api/player-list/avatar/{player_id}')
+def player_avatar(player_id:int):
+    if player_id<1:raise HTTPException(404,detail='Portrait not found.')
+    try:
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute('SELECT avatar_image FROM `player list` WHERE id=%s',(player_id,))
+                row=cur.fetchone()
+        if not row or not row['avatar_image']:
+            raise HTTPException(404,detail='Portrait not found.')
+        return Response(bytes(row['avatar_image']),media_type='image/webp',
+                        headers={'Cache-Control':'public, max-age=3600','X-Content-Type-Options':'nosniff'})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503,detail='Portrait temporarily unavailable.') from exc
+
+
+class BirthdayUpdate(BaseModel):
+    birthday: date | None = None
+
+
+@app.patch('/api/player-list/{player_id}/birthday')
+def update_birthday(player_id:int, body:BirthdayUpdate):
+    # Manual birthday edits never affect rank, power, HQ or import statuses.
+    if player_id<1:raise HTTPException(404,detail='Player not found.')
+    try:
+        with db_connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute('UPDATE `player list` SET birthday=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s',
+                            (body.birthday,player_id))
+                if cur.rowcount==0:
+                    conn.rollback()
+                    raise HTTPException(404,detail='Player not found.')
+            conn.commit()
+        return {'id':player_id,'birthday':body.birthday.isoformat() if body.birthday else None}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503,detail='Could not save birthday.') from exc
 
 
 @app.get('/api/player-list/export.csv')
@@ -195,10 +255,10 @@ def export_csv():
     data=list_players()['players']
     buf=io.StringIO()
     writer=csv.writer(buf)
-    writer.writerow(['Rank','Player Name','Power (M)','HQ Level','Status','Last Seen'])
+    writer.writerow(['Rank','Player Name','Power (M)','HQ Level','Birthday','Status','Last Seen'])
     for p in data:
         status='Possibly removed' if p['possibly_removed'] else 'New player' if p['is_new'] else 'Active'
-        writer.writerow([p['rank'],p['name'],p['power_millions'] if p['power_millions'] is not None else '',p['hq_level'] or '',status,p['last_seen_at'].isoformat()])
+        writer.writerow([p['rank'],p['name'],p['power_millions'] if p['power_millions'] is not None else '',p['hq_level'] or '',p.get('birthday') or '',status,p['last_seen_at'].isoformat()])
     buf.seek(0)
     return StreamingResponse(iter([buf.getvalue()]),media_type='text/csv',headers={'Content-Disposition':'attachment; filename="lastwar_player_list.csv"'})
 
@@ -276,6 +336,7 @@ class Member(BaseModel):
     rank: str = Field(pattern=r'^R[1-5]$')
     power_millions: float | None = Field(default=None,ge=0,le=1000000)
     hq_level: int | None = Field(default=None,ge=1,le=99)
+    avatar_base64: str | None = Field(default=None,max_length=47000)
 
     @field_validator('name')
     @classmethod
@@ -305,6 +366,14 @@ def import_players(body: ImportData):
                 with conn.cursor() as cur:
                     cur.execute('UPDATE `player list` SET is_new=FALSE WHERE is_new=TRUE')
                     for key, member in unique.items():
+                        portrait=None
+                        if member.avatar_base64:
+                            try:
+                                portrait=base64.b64decode(member.avatar_base64,validate=True)
+                            except (ValueError,binascii.Error) as exc:
+                                raise HTTPException(400,detail='Invalid portrait image.') from exc
+                            if len(portrait)>32000 or len(portrait)<50 or not portrait.startswith(b'RIFF') or portrait[8:12]!=b'WEBP':
+                                raise HTTPException(400,detail='Invalid portrait format or size.')
                         cur.execute('SELECT id FROM `player list` WHERE normalized_name=%s FOR UPDATE', (key,))
                         existing = cur.fetchone()
                         if existing:
@@ -312,19 +381,21 @@ def import_players(body: ImportData):
                                 player_name=%s, player_rank=%s,
                                 power_millions=COALESCE(%s,power_millions),
                                 hq_level=COALESCE(%s,hq_level),
+                                avatar_image=COALESCE(%s,avatar_image),
+                                avatar_updated_at=IF(%s IS NOT NULL,UTC_TIMESTAMP(6),avatar_updated_at),
                                 is_new=FALSE, possibly_removed=FALSE,
                                 last_seen_at=UTC_TIMESTAMP(6),updated_at=UTC_TIMESTAMP(6),last_import_id=%s
                                 WHERE id=%s""",
                                 (member.name, member.rank, member.power_millions,
-                                 member.hq_level, batch_id, existing['id']))
+                                 member.hq_level, portrait, portrait, batch_id, existing['id']))
                             updated += 1
                         else:
                             cur.execute("""INSERT INTO `player list` (
                                 player_name,normalized_name,player_rank,power_millions,hq_level,
-                                is_new,possibly_removed,last_import_id)
-                                VALUES (%s,%s,%s,%s,%s,TRUE,FALSE,%s)""",
+                                avatar_image,avatar_updated_at,is_new,possibly_removed,last_import_id)
+                                VALUES (%s,%s,%s,%s,%s,%s,IF(%s IS NOT NULL,UTC_TIMESTAMP(6),NULL),TRUE,FALSE,%s)""",
                                 (member.name,key,member.rank,member.power_millions,
-                                 member.hq_level,batch_id))
+                                 member.hq_level,portrait,portrait,batch_id))
                             created += 1
                     if body.full_capture:
                         cur.execute("""UPDATE `player list` SET possibly_removed=TRUE,
@@ -340,6 +411,8 @@ def import_players(body: ImportData):
             except Exception:
                 conn.rollback()
                 raise
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(503, detail='Could not sync Player List. Check the MySQL connection and Render logs.') from exc
     return {'import_id':batch_id,'scanned_count':len(unique),'new_count':created,
