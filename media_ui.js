@@ -428,6 +428,11 @@
         const j=waiting[0];
         announce('⌛ '+(j.destination==='storm'?'Storm Roster':'Player List')+
           ' waiting to scan · '+queuedCount+' scan job'+(queuedCount===1?'':'s')+' waiting');
+      }else if(!newAlerts.length){
+        const reviews=jobs.filter(j=>j.status==='review').length;
+        announce(reviews
+          ? 'No scans running · No jobs waiting · '+reviews+' scan result'+(reviews===1?'':'s')+' awaiting review'
+          : 'No scans running · No jobs waiting');
       }
     }catch(e){
       console.warn('Media jobs temporarily unavailable:',e.message);
