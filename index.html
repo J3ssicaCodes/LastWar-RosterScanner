@@ -2271,6 +2271,8 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     }catch(err){msg('Could not sync: '+err.message,true);}
     finally{state.busy=false;$('plSyncBtn').disabled=false;}
   }
+
+  const collapsedRanks=new Set((()=>{try{return JSON.parse(localStorage.getItem('lastwar.playerList.collapsedRanks.v1')||'[]');}catch{return [];}})());
   function renderDirectory(){
     const rows=state.players,query=$('plSearch').value.trim().toLocaleLowerCase(),filter=$('plFilter').value;
     $('plTotal').textContent=rows.length;
@@ -2278,15 +2280,23 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     $('plMissing').textContent=rows.filter(p=>p.possibly_removed).length;
     $('plActive').textContent=rows.filter(p=>!p.is_new&&!p.possibly_removed).length;
     const selected=rows.filter(p=>p.name.toLocaleLowerCase().includes(query)&&(filter==='all'||(filter==='removed'&&p.possibly_removed)||(filter==='new'&&p.is_new&&!p.possibly_removed)||(filter==='active'&&!p.is_new&&!p.possibly_removed)));
-    $('plDirectoryBody').innerHTML=selected.map(p=>{
+    const renderPlayer=p=>{
       const [status,cls]=p.possibly_removed?['Possibly removed','removed']:p.is_new?['New player','new']:['Active','active'];
-      const last=p.last_seen_at?new Date(p.last_seen_at).toLocaleDateString():'';
       const birthday=p.birthday?new Date(p.birthday+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—';
       const avatar=p.has_avatar?`<img class="pl-avatar" loading="lazy" src="${escape(p.avatar_url)}?v=${encodeURIComponent(p.avatar_updated_at||'1')}" alt="${escape(p.name)} video portrait">`:'<span class="pl-avatar-empty" title="No video portrait yet">♡</span>';
-      return `<tr><td>${avatar}</td><td>${escape(p.rank)}</td><td class="pl-player-name">${escape(p.name)}</td><td>${p.power_millions==null?'—':escape(Number(p.power_millions).toFixed(1)+'M')}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
-        <td><div class="pl-birthday-wrap"><span class="pl-birthday-date" title="${escape(p.birthday||'Birthday not set')}">${escape(birthday)}</span><button type="button" class="pl-calendar-btn" data-player-birthday="${p.id}" aria-label="Edit ${escape(p.name)} birthday" title="Set birthday">📅</button><input class="pl-birthday-input" data-birthday-input="${p.id}" type="date" value="${escape(p.birthday||'')}" aria-label="Birthday for ${escape(p.name)}" hidden></div></td>
-        <td><span class="pl-status ${cls}">${status}</span></td><td>${escape(last)}</td></tr>`;
-    }).join('')||'<tr><td colspan="8" class="pl-empty">No players to display.</td></tr>';
+      return `<tr><td>${avatar}</td><td class="pl-player-name">${escape(p.name)}</td><td>${p.power_millions==null?'—':escape(Number(p.power_millions).toFixed(1)+'M')}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
+       <td><div class="pl-birthday-wrap"><span class="pl-birthday-date" title="${escape(p.birthday||'Birthday not set')}">${escape(birthday)}</span><button type="button" class="pl-calendar-btn" data-player-birthday="${p.id}" aria-label="Edit ${escape(p.name)} birthday" title="Set birthday">📅</button><input class="pl-birthday-input" data-birthday-input="${p.id}" type="date" value="${escape(p.birthday||'')}" aria-label="Birthday for ${escape(p.name)}" hidden></div></td>
+       <td><span class="pl-status ${cls}">${status}</span></td></tr>`;
+    };
+    let html='';
+    for(const rank of ['R5','R4','R3','R2','R1']){
+      const group=selected.filter(p=>p.rank===rank);
+      if(!group.length)continue;
+      const collapsed=collapsedRanks.has(rank);
+      html+=`<tr class="pl-rank-heading"><th colspan="6"><button type="button" data-rank-toggle="${rank}" aria-expanded="${!collapsed}"><span><strong>${rank}</strong> · ${group.length} players</span><small>${collapsed?'▸ Expand':'▾ Collapse'}</small></button></th></tr>`;
+      if(!collapsed)html+=group.map(renderPlayer).join('');
+    }
+    $('plDirectoryBody').innerHTML=html||'<tr><td colspan="6" class="pl-empty">No players to display.</td></tr>';
   }
   async function loadDirectory(){
     try{
@@ -2294,7 +2304,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       state.players=result.players||[];
       renderDirectory();
     }catch(err){
-      $('plDirectoryBody').innerHTML='<tr><td colspan="8" class="pl-empty">Player database unavailable. Check Render connection settings.</td></tr>';
+      $('plDirectoryBody').innerHTML='<tr><td colspan="6" class="pl-empty">Player database unavailable. Check Render connection settings.</td></tr>';
     }
   }
   $('plDrop').addEventListener('click',()=>{$('plFiles').click();});
@@ -2331,9 +2341,18 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       previous.birthday=result.birthday;msg('Birthday saved for '+previous.name+'.');renderDirectory();
     }catch(err){field.disabled=false;field.value=previous.birthday||'';msg('Could not save birthday: '+err.message,true);}
   });
+  $('plDirectoryBody').addEventListener('click',event=>{
+    const btn=event.target.closest('[data-rank-toggle]');if(!btn)return;
+    const rank=btn.dataset.rankToggle;
+    if(collapsedRanks.has(rank))collapsedRanks.delete(rank);else collapsedRanks.add(rank);
+    try{localStorage.setItem('lastwar.playerList.collapsedRanks.v1',JSON.stringify([...collapsedRanks]));}catch{}
+    renderDirectory();
+  });
   $('plSearch').addEventListener('input',renderDirectory);
   $('plFilter').addEventListener('change',renderDirectory);
-  status();loadDirectory();resumeScan();
+  window.playerListRefresh=loadDirectory;
+  try{localStorage.removeItem('lastwar.playerList.pendingScan.v1');}catch{}
+  status();loadDirectory();
 })();
 
 </script>
