@@ -69,7 +69,7 @@
 
   const dialog=document.createElement('dialog');
   dialog.id='mediaDialog';dialog.setAttribute('aria-labelledby','mediaTitle');
-  dialog.innerHTML=`<div class="media-titlebar"><div><div class="eyebrow">Alliance Tools</div><h2 id="mediaTitle">Media Upload</h2><p>Scan on Render, even after you lock your screen.</p></div><button type="button" class="btn" id="mediaClose" aria-label="Close media uploader">✕ Close</button></div>
+  dialog.innerHTML=`<div class="media-titlebar"><div><div class="eyebrow">Alliance Tools</div><h2 id="mediaTitle">Media Upload</h2><p>Choose where to import your media.</p></div><button type="button" class="btn" id="mediaClose" aria-label="Close media uploader">✕ Close</button></div>
   <div class="media-destinations" role="group" aria-label="Choose media destination">
     <button type="button" class="media-destination" data-dest="storm" aria-pressed="true">▦ Storm Roster</button>
     <button type="button" class="media-destination" data-dest="players" aria-pressed="false">♙ Player List</button>
@@ -79,7 +79,7 @@
   <div id="mediaFileNames" class="media-files">No files selected</div>
   <div class="media-progress" id="mediaProgress" hidden><progress id="mediaBar" max="100" value="0"></progress><small id="mediaProgressText">Uploading…</small></div>
   <div id="mediaMessage" class="media-banner" role="status" aria-live="polite" hidden></div>
-  <div class="media-actions"><small style="color:var(--muted)">Uploaded media is deleted when scanning completes.</small><button class="btn primary" id="mediaSubmit" disabled>Upload and scan</button></div>`;
+  <div class="media-actions"><small style="color:var(--muted)">Review scanned results before applying changes.</small><button class="btn primary" id="mediaSubmit" disabled>Upload and scan</button></div>`;
   document.body.append(dialog);
   const banner=document.createElement('button');
   banner.type='button';banner.id='mediaNotification';
@@ -93,12 +93,12 @@
   queueDialog.id='mediaQueueDialog';queueDialog.setAttribute('aria-labelledby','mediaQueueTitle');
   queueDialog.innerHTML=`<div class="media-titlebar">
     <div><div class="eyebrow">Media Upload</div><h2 id="mediaQueueTitle">Scan Queue</h2>
-      <p>Live status from the Render scanning service.</p></div>
+      <p>Current progress, waiting uploads and recent results.</p></div>
     <button type="button" class="btn" id="mediaQueueClose" aria-label="Close scan queue">✕ Close</button>
   </div>
   <p class="media-queue-summary" id="mediaQueueSummary" role="status" aria-live="polite">Loading scans…</p>
   <div id="mediaQueueEntries"><p class="media-queue-empty">Checking the queue…</p></div>
-  <div class="media-queue-footer"><button type="button" class="btn" id="mediaQueueRefresh">↻ Refresh status</button></div>`;
+  <div class="media-queue-footer"><button type="button" class="btn" id="mediaClearHistory">Clear old results</button><button type="button" class="btn" id="mediaQueueRefresh">↻ Refresh status</button></div>`;
   document.body.append(queueDialog);
   $('mediaQueueClose').onclick=()=>queueDialog.close();
   banner.onclick=()=>{
@@ -107,6 +107,24 @@
     refreshJobs();
   };
   $('mediaQueueRefresh').onclick=()=>refreshJobs();
+  $('mediaClearHistory').onclick=async()=>{
+    if(!confirm('Clear completed, approved, failed and interrupted scan history? Active scans and pending player reviews will be kept.'))return;
+    $('mediaClearHistory').disabled=true;
+    try{
+      const result=await getJson('/api/media/jobs/history',{method:'DELETE'});
+      announce('Cleared '+result.cleared+' old scan result'+(result.cleared===1?'':'s')+'.');
+      await refreshJobs();
+    }catch(err){$('mediaQueueSummary').textContent='Could not clear scan history: '+err.message;}
+    finally{$('mediaClearHistory').disabled=false;}
+  };
+  // All existing native modal dialogs close when their backdrop is tapped.
+  document.addEventListener('click',event=>{
+    const target=event.target;
+    if(!(target instanceof HTMLDialogElement)||!target.open)return;
+    const bounds=target.getBoundingClientRect();
+    if(event.clientX<bounds.left||event.clientX>bounds.right||
+       event.clientY<bounds.top||event.clientY>bounds.bottom)target.close();
+  });
 
   const playerView=$('playerListView');
   const pendingPanel=document.createElement('section');
@@ -159,7 +177,7 @@
   function setProgress(n,text){$('mediaProgress').hidden=false;$('mediaBar').value=n;$('mediaProgressText').textContent=text;}
   $('mediaSubmit').onclick=async()=>{
     if(!files.length||busy)return;
-    busy=true;$('mediaSubmit').disabled=true;message('');setProgress(1,'Uploading media to Render…');
+    busy=true;$('mediaSubmit').disabled=true;message('');setProgress(1,'Uploading media…');
     try{
       const form=new FormData();files.forEach(f=>form.append('files',f,f.name));
       const job=await new Promise((resolve,reject)=>{
@@ -177,7 +195,7 @@
       files=[];fileInput.value='';$('mediaFileNames').textContent='No files selected';
       $('mediaProgress').hidden=true;
       message('');
-      announce('✓ '+(destination==='storm'?'Storm Roster':'Player List')+' upload accepted. Scanning continues on Render.');
+      announce('✓ '+(destination==='storm'?'Storm Roster':'Player List')+' upload accepted. Scan queued. You can continue using the app.');
       if(dialog.open)dialog.close();
       await refreshJobs();
     }catch(e){message(e.message,true);}
@@ -338,9 +356,20 @@
         }
       }
       try{localStorage.setItem(NOTIFICATIONS,JSON.stringify([...notified].slice(-100)));}catch{}
-      if(jobs.some(j=>j.status==='scanning'||j.status==='queued')){
-        const j=jobs.find(j=>j.status==='scanning'||j.status==='queued');
-        if(!newAlerts.length)announce('⌛ '+(j.destination==='storm'?'Storm Roster':'Player List')+' scan '+j.progress+'%: '+j.message);
+      const active=jobs.filter(j=>j.status==='scanning')
+        .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+      const waiting=jobs.filter(j=>j.status==='queued')
+        .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+      const queuedCount=waiting.length;
+      const queuedText=queuedCount?(' · '+queuedCount+' scan job'+(queuedCount===1?'':'s')+' waiting'):' · No jobs waiting';
+      if(active.length){
+        const j=active[0];
+        announce('⌛ '+(j.destination==='storm'?'Storm Roster':'Player List')+
+          ' · '+(Number(j.progress)||0)+'% · '+(j.message||'Scanning…')+queuedText);
+      }else if(waiting.length){
+        const j=waiting[0];
+        announce('⌛ '+(j.destination==='storm'?'Storm Roster':'Player List')+
+          ' waiting to scan · '+queuedCount+' scan job'+(queuedCount===1?'':'s')+' waiting');
       }
     }catch(e){
       console.warn('Media jobs temporarily unavailable:',e.message);
