@@ -1,0 +1,233 @@
+"""Connect the supplied tested ranking scanner to Alliance Tools Media Upload.
+
+The submitted scan_rankings.py and extract_ranking_pages.py own the OCR, page
+alignment, row geometry, badge matching and transition recovery. This adapter
+only prepares temporary page manifests and converts their CSV into API records.
+
+Never use the sample-specific audit_overrides.json for other players.
+"""
+from __future__ import annotations
+
+import base64
+import csv
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+from typing import Callable
+
+import cv2
+import numpy as np
+
+from extract_ranking_pages import detect, extract
+from scan_rankings import tabs
+
+VIDEO_EXTENSIONS = {'.mp4', '.mov', '.m4v', '.webm'}
+TAB_FIELD = {'Power': 'power', 'Kills': 'kills', 'Donation': 'donations'}
+
+
+def _record_from_csv(entry: dict, directory: Path, page_info: dict, tab: str):
+    basename = str(entry.get('avatar') or '')
+    match = re.fullmatch(r'avatars/avatar_(\d{3})\.png', basename)
+    if not match:
+        return None
+    position = int(match.group(1))
+    if not 1 <= position <= 100:
+        return None
+    avatar_file = directory / basename
+    avatar_b64 = base64.b64encode(avatar_file.read_bytes()).decode() if avatar_file.exists() else None
+    proof = directory / 'row_crops' / f'row_{position:03d}.png'
+    proof_b64 = None
+    if proof.exists():
+        image = cv2.imread(str(proof))
+        if image is not None and image.size:
+            ok, buffer = cv2.imencode('.webp', image, [cv2.IMWRITE_WEBP_QUALITY, 76])
+            if ok and len(buffer) < 180000:
+                proof_b64 = base64.b64encode(buffer.tobytes()).decode()
+    issues = [v.strip() for v in (entry.get('review') or '').split(';') if v.strip()]
+    rank = entry.get('rank') or 'Unknown'
+    name = (entry.get('name') or '').strip()
+    field = TAB_FIELD[tab]
+    raw_stat = str(entry.get(field) or '').replace(',', '').strip()
+    statistic = int(raw_stat) if raw_stat.isdecimal() else None
+    if rank not in ('R1', 'R2', 'R3', 'R4', 'R5'):
+        rank = 'Unknown'
+        issues.append('Rank badge not confidently recognized')
+    if not name:
+        issues.append('Name unreadable')
+    if statistic is None:
+        issues.append('Statistic unreadable')
+    try:
+        name_score = float(entry.get('confidence_name') or 0)
+        number_score = float(entry.get('confidence_stat') or 0)
+    except (ValueError, TypeError):
+        name_score = number_score = 0
+    if name_score < 55 or number_score < 60:
+        issues.append('OCR confidence below recommended threshold')
+    page_number = int(entry.get('page') or 0)
+    meta = page_info.get(page_number, {})
+    src = meta.get('original_filename') or meta.get('source') or 'ranking upload'
+    stamp = meta.get('seconds')
+    source = src + (f'@{float(stamp):.2f}s' if stamp is not None else '')
+    output = {
+        'avatar_base64': avatar_b64,
+        'rank': rank,
+        'name': name,
+        'power': statistic if field == 'power' else None,
+        'kills': statistic if field == 'kills' else None,
+        'donations': statistic if field == 'donations' else None,
+        'tab': field,
+        'review_required': bool(issues),
+        'review_reasons': list(dict.fromkeys(issues)),
+        'internal_position': position,
+        'source_type': 'leaderboard',
+        'source_image': source,
+        'evidence_base64': proof_b64,
+        'audit': {
+            'scanner': 'user-supplied-ranking-scanner-v3',
+            'internal_position': position,
+            'source_page': page_number,
+            'name_confidence': name_score,
+            'stat_confidence': number_score,
+            'observed_pages': entry.get('observed_pages'),
+        },
+    }
+    return output
+
+
+def _page_group(path: Path, staging: Path, idx: int):
+    """Keep screenshots and full-resolution video pauses in the same page format."""
+    suffix = path.suffix.lower()
+    if suffix in VIDEO_EXTENSIONS:
+        info = detect(path)
+        manifest = extract(path, staging, *info)
+        pages = []
+        for item in manifest['kept']:
+            full = staging / item['image']
+            image = cv2.imread(str(full))
+            if image is None:
+                continue
+            selected, coverage = tabs(image)
+            # Original video has an orange tab. If orange barely appears, do
+            # not silently label the wrong statistic category.
+            scores = sorted(coverage.values(), reverse=True)
+            if scores[0] < .02 or (scores[1] > .01 and scores[0] < 1.25*scores[1]):
+                raise ValueError('Selected Power/Kills/Donation tab is not clear; check recording.')
+            pages.append({**item, 'original_filename': path.name,
+                          'video_path': str(path), 'image_path': full,
+                          'selected_tab': selected, 'input_kind': 'video',
+                          'total_video_frames': manifest['total_video_frames'],
+                          'fps': manifest['fps']})
+        return pages, manifest['total_video_frames']
+    image = cv2.imread(str(path))
+    if image is None:
+        raise ValueError('Cannot decode screenshot: ' + path.name)
+    selected, coverage = tabs(image)
+    scores = sorted(coverage.values(), reverse=True)
+    if scores[0] < .02 or (scores[1] > .01 and scores[0] < 1.25*scores[1]):
+        raise ValueError('Orange ranking tab was not detected in screenshot: ' + path.name)
+    # The page is used unchanged. Only a separate copy is created for the
+    # original scanner's expected temporary manifest structure.
+    target = staging / 'pages' / f'page_{idx:03d}.png'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(target), image)
+    return [{ 'page': idx, 'frame': None, 'seconds': None,
+              'image_path': target, 'original_filename': path.name,
+              'video_path': None, 'selected_tab': selected,
+              'input_kind': 'image', 'fps': None }], 0
+
+
+def scan_tested_rankings_upload(paths: list[Path], progress: Callable):
+    """Run original tested scan code on video pauses and uploaded screenshots.
+
+    Each tab is scanned separately so Power position 1 and Kills position 1
+    cannot be incorrectly treated as the same player. The approval pipeline
+    handles corroborated identities after this function returns.
+    """
+    if not paths:
+        raise ValueError('No media supplied.')
+    records = []
+    diagnostics = {'scanner':'tested-user-supplied-v3', 'distinct_pages':0,
+                   'source_frames':0, 'tabs':[], 'missing_positions':{},
+                   'review_count':0, 'recovered_rows':0, 'complete_rows':0}
+    warnings = []
+    audit = []
+    root = Path(paths[0]).parent
+    with tempfile.TemporaryDirectory(prefix='rankings_verified_', dir=str(root)) as tmp:
+        workspace = Path(tmp)
+        groups = defaultdict(list)
+        for idx, source in enumerate(paths,1):
+            progress(2+round(23*(idx-1)/len(paths)), 100,
+                     f'Finding stationary pages in {source.name}…')
+            folder = workspace / ('input_' + str(idx))
+            pages, frame_count = _page_group(Path(source),folder,idx)
+            diagnostics['source_frames'] += frame_count
+            for page in pages:
+                groups[(page['selected_tab'],page['input_kind'],page.get('video_path'))].append(page)
+        if not groups:
+            raise ValueError('No stable ranking pages could be found.')
+        diagnostics['distinct_pages'] = sum(len(pages) for pages in groups.values())
+        for group_idx,((tab,kind,video_path),pages) in enumerate(groups.items(),1):
+            folder = workspace / f'group_{group_idx:03d}'
+            (folder/'pages').mkdir(parents=True,exist_ok=True)
+            kept=[]; metadata={}
+            for idx,page in enumerate(pages,1):
+                name=f'page_{idx:03d}.png'
+                # Original pages are high-quality PNG; avoid recompression.
+                shutil.copyfile(page['image_path'], folder/'pages'/name)
+                item={'page':idx,'frame':page.get('frame') if kind=='video' else 0,
+                      'seconds':page.get('seconds'),'duration':page.get('duration',0),
+                      'image':'pages/'+name}
+                kept.append(item)
+                metadata[idx]=page
+            manifest={'total_video_frames':diagnostics['source_frames'],
+                      'fps':pages[0].get('fps') or 30, 'kept':kept}
+            (folder/'manifest.json').write_text(json.dumps(manifest))
+            progress(28+round(59*(group_idx-1)/len(groups)),100,
+                     f'Reading {tab} complete rows, group {group_idx}/{len(groups)}…')
+            # --keep-pages feeds the submitted source unchanged real screenshots.
+            # Sample-specific manual overrides are deliberately NEVER supplied.
+            command=[sys.executable,str(Path(__file__).with_name('scan_rankings.py')),
+                     str(video_path or paths[0]),'--output',str(folder),'--keep-pages']
+            result=subprocess.run(command,capture_output=True,text=True,timeout=900)
+            if result.returncode:
+                message=(result.stderr or result.stdout or '').strip()[-650:]
+                raise ValueError('Tested ranking scanner could not process the '+tab+
+                                 ' pages: '+message)
+            if not (folder/'rankings.csv').exists():
+                raise ValueError('Ranking OCR produced no results.')
+            report=json.loads((folder/'audit.json').read_text())
+            with (folder/'rankings.csv').open(newline='',encoding='utf-8-sig') as f:
+                for entry in csv.DictReader(f):
+                    record=_record_from_csv(entry,folder,metadata,tab)
+                    if record:
+                        records.append(record)
+            audit.append({'source_group':group_idx,'tab':tab,'kind':kind,
+                          'pages':len(kept),'scanner_report':report})
+            diagnostics['tabs'].append(TAB_FIELD[tab])
+            diagnostics['complete_rows'] += report.get('raw_row_observations',0)
+            diagnostics['recovered_rows'] += len(report.get('recovered_missing_rows') or [])
+            missing = report.get('missing_positions') or []
+            diagnostics['missing_positions'].setdefault(TAB_FIELD[tab],[]).extend(missing)
+            if missing:
+                warnings.append(f'{tab}: missing positions still require review: '+
+                                ', '.join(str(x) for x in missing[:15]))
+        # Deduplicate exact same tab/position/name observations in a screenshot
+        # plus video upload, but never merge different names or unknown positions.
+        unique={}
+        for row in records:
+            key=(row['tab'],row['internal_position'],row['name'].casefold())
+            prev=unique.get(key)
+            if prev is None or (prev['review_required'] and not row['review_required']):
+                unique[key]=row
+        records=list(unique.values())
+        diagnostics['tabs']=sorted(set(diagnostics['tabs']))
+        diagnostics['distinct_entries']=len(records)
+        diagnostics['review_count']=sum(bool(p['review_required']) for p in records)
+        progress(97,100,'Checking leaderboard coverage and review flags…')
+    return {'players':records,'frames_examined':diagnostics['distinct_pages'],
+            'warnings':warnings,'audit':audit,'diagnostics':diagnostics}
