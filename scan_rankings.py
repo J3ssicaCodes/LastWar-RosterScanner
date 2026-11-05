@@ -493,11 +493,12 @@ def main():
             if pos in unicode_positions:
                 r['review']=(r['review']+';verify_decorative_unicode').strip(';')
     # Preserve fields with natural, selected-column names and no leaderboard position.
-    columns=['avatar','rank','name','power','kills','donations','tab','page','review']
+    columns=['avatar','rank','name','power','kills','donations','tab','page','review',
+             'confidence_name','confidence_stat','observed_pages']
     with (out/'rankings.csv').open('w',newline='',encoding='utf-8-sig') as f:
         wr=csv.DictWriter(f,fieldnames=columns);wr.writeheader();wr.writerows({k:r.get(k,'') for k in columns} for r in final)
     with (out/'review_needed.csv').open('w',newline='',encoding='utf-8-sig') as f:
-        wr=csv.DictWriter(f,fieldnames=columns+['position_internal','observed_pages']);wr.writeheader();wr.writerows({k:r.get(k,'') for k in wr.fieldnames} for r in final if r['review'])
+        wr=csv.DictWriter(f,fieldnames=columns+['position_internal']);wr.writeheader();wr.writerows({k:r.get(k,'') for k in wr.fieldnames} for r in final if r['review'])
     rawfields=['page','ordinal','position_internal','position_read','name','name_conf','value','value_conf','rank','rank_match_score','review_reason']
     with (out/'rows_raw.csv').open('w',newline='',encoding='utf-8-sig') as f:
         wr=csv.DictWriter(f,fieldnames=rawfields);wr.writeheader();wr.writerows({k:r.get(k,'') for k in rawfields} for r in rows)

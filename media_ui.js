@@ -317,7 +317,7 @@
     });
     if(!rows.length)return;
     const invalid=rows.filter(r=>r.include && (
-      !r.name || r.name.length<2 || !/[\\p{L}]/u.test(r.name) ||
+      !r.name || r.name.length<2 || !/\p{L}/u.test(r.name) ||
       !/^R[1-5]$/.test(r.rank) ||
       ['power','kills','donations'].some(field=>
          r[field]!==null&&(!Number.isSafeInteger(r[field])||r[field]<0)) ||
