@@ -39,7 +39,7 @@ The backend automatically creates a MySQL table named `"player list"` (and an im
 
 Player List does not require an upload key. Any visitor who can reach the website can upload screenshots or a video, and can synchronize scanned or reviewed players to the shared database. This keeps the user workflow simple, but also means edits are public. If you need to restrict changes in the future, implement a simple sign-in or invite system rather than a shared upload key.
 
-After a video or screenshot batch is OCR scanned, review the extracted entries and select **Sync**. Existing names are updated; new names are marked **New player**. When an import is explicitly marked as the complete roster, players not seen in that import are marked **Possibly removed** without being deleted. Incomplete screenshots should not be marked as complete.
+After a Player List scan finishes, only new, changed or uncertain records are placed in the review queue. The uploader never asks whether a recording is complete and never marks absent players as removed. The reviewer approves only selected changes, while unchanged official records and birthdays remain untouched.
 
 Browser OCR and imported video OCR are different systems, so this new backend does not alter the original Roster Scanner. 
 
@@ -79,10 +79,10 @@ the member search bar and should not be counted as scrolling member cards.
 
 Profile entries are merged with players detected in the scrolling list using
 exact normalized player names. All new uploads through the common Media Upload button require review and approval before changing the official Player List.
-Profile-only uploads never flag other players as removed. Recordings can be
-combined with extra profile screenshots, and the complete-list setting must
-be confirmed before flagging missing members. Only the Player List tab and
-its backend import pipeline use the shared database.
+Profile screenshots and video recordings can be combined. The app does not
+mark anyone removed based on missing entries, regardless of capture size or
+recording completeness. Only the Player List tab and its import pipeline use
+the shared database.
 
 ## MySQL database setup
 
@@ -116,11 +116,12 @@ database configuration:
   Pending changes are displayed in an editable review panel above the Player List
   directory, and this panel is hidden when no records are pending.
 
-Approving Player List changes writes the accepted records to the official `player list`
-table and removes the reviewed entries from `roster upload`. Unchecked detections
-are dismissed. A full capture flag can only mark players possibly removed after
-review; incomplete captures do not affect other members. No Player List upload now
-writes directly to the official table during scanning.
+Approving Player List changes writes accepted records to the official `player list`
+table and removes those entries from `roster upload`. Unchecked detections remain
+pending until explicitly dismissed. Identical records are skipped during staging;
+uncertain OCR results are shown for review even when no difference is verified.
+If nothing changed, the scan completes successfully without a pending review list.
+No upload marks absent players as removed or writes to the official table without approval.
 
 Player List is grouped under collapsible R5 through R1 rank headings rather than
 repeating the rank in every row. Last Seen is not shown or exported in the Player
