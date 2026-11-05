@@ -123,6 +123,10 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     cur.execute('SHOW COLUMNS FROM `roster upload` LIKE %s',(field,))
                     if not cur.fetchone():
                         cur.execute(f'ALTER TABLE `roster upload` ADD COLUMN `{field}` {definition}')
+                cur.execute('SHOW COLUMNS FROM `roster upload` LIKE %s',('player_rank',))
+                rank_column=cur.fetchone()
+                if rank_column and rank_column.get('Type','').lower()=='varchar(2)':
+                    cur.execute('ALTER TABLE `roster upload` MODIFY COLUMN player_rank VARCHAR(8) NOT NULL')
                 # A service restart should never leave a scan appearing to run forever.
                 cur.execute("""UPDATE media_scan_jobs
                                SET status='interrupted', message='Server restarted during OCR. Please upload again.',
