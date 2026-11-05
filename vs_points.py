@@ -1,5 +1,6 @@
 """Persistent VS daily scores and review, keyed by player and earned date."""
 from datetime import date
+import base64
 import csv
 import io
 import json
@@ -27,8 +28,11 @@ def stage_vs_result(connect_db, job_id, result):
     with connect_db() as conn:
         try:
             with conn.cursor() as cur:
-                cur.execute('SELECT id,player_name,player_rank,normalized_name FROM `player list`')
+                cur.execute('SELECT id,player_name,player_rank,normalized_name,avatar_image FROM `player list`')
                 master=cur.fetchall()
+                for player in master:
+                    portrait=player.pop('avatar_image',None)
+                    player['avatar_base64']=base64.b64encode(portrait).decode() if portrait else None
                 for row in result['rows']:
                     player=match_master(row,master)
                     name=player['player_name'] if player else row['name']

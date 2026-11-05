@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 from fastapi import HTTPException
 import app
-from vs_points import install_vs_points, VSApproval
+from vs_points import install_vs_points, VSApproval, stage_vs_result
 from vs_points_ocr import score_date_for_day
 from player_identity import match_master
 
@@ -27,7 +27,8 @@ class SQLDatabase:
             CREATE TABLE vs_points (id INTEGER PRIMARY KEY,score_date TEXT,player_id INTEGER,
             player_name TEXT,normalized_name TEXT,points INTEGER,source_job_id TEXT,updated_at TEXT,
             UNIQUE(score_date,normalized_name),UNIQUE(score_date,player_id));
-            CREATE TABLE vs_scan_rows (id INTEGER PRIMARY KEY,job_id TEXT,upload_date TEXT);
+            CREATE TABLE vs_scan_rows (id INTEGER PRIMARY KEY,job_id TEXT,upload_date TEXT,
+            score_date TEXT,weekday TEXT,player_name TEXT,points INTEGER,review_reasons TEXT,evidence_base64 TEXT);
             CREATE TABLE media_scan_jobs (id TEXT PRIMARY KEY,status TEXT,message TEXT,updated_at TEXT);
         ''')
     def __call__(self):return self
@@ -58,6 +59,7 @@ class Cursor:
         for row in self.cursor_.fetchall():
             row=dict(row)
             if 'upload_date' in row:row['upload_date']=date.fromisoformat(row['upload_date'])
+            if row.get('birthday'):row['birthday']=date.fromisoformat(row['birthday'])
             rows.append(row)
         return rows
     @property
@@ -91,6 +93,16 @@ class PlayerMergeTests(unittest.TestCase):
         self.assertEqual(rows[0]['kills'],200)
     def test_ambiguous_names_are_not_automatically_matched(self):
         self.assertIsNone(match_master({'name':'A B C'},[{'name':'A-BC'},{'name':'AB.C'}]))
+    def test_birthday_save_repeat_and_clear_without_changing_stats(self):
+        app.import_players(app.ImportData(players=[app.Member(name='Jess',rank='R4',power=123)]))
+        player_id=self.db.db.execute('SELECT id FROM `player list`').fetchone()[0]
+        for _ in range(2):
+            self.assertEqual(app.update_birthday(player_id,app.BirthdayUpdate(birthday='02-29'))['birthday'],'02-29')
+        self.assertEqual(app.list_players()['players'][0]['birthday'],'02-29')
+        app.update_birthday(player_id,app.BirthdayUpdate(birthday=None))
+        row=self.db.db.execute('SELECT birthday,power FROM `player list`').fetchone()
+        self.assertEqual(tuple(row),(None,123))
+
     def test_birthday_has_no_year_and_supports_leap_day(self):
         self.assertEqual(app.BirthdayUpdate(birthday='02-29').birthday,'02-29')
         self.assertEqual(app.BirthdayUpdate(birthday='1999-05-07').birthday,'05-07')
@@ -105,16 +117,25 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         self.assertEqual(score_date_for_day(date(2026,11,9),0),date(2026,11,9))
         self.assertEqual(score_date_for_day(date(2027,1,1),0),date(2026,12,28))
         with self.assertRaises(ValueError):score_date_for_day(date(2026,11,8),6)
+    def test_scanned_scores_stage_canonical_name_and_local_upload_date(self):
+        db=SQLDatabase()
+        db.db.execute("INSERT INTO `player list` (player_name,normalized_name,player_rank) VALUES ('Lady Jess','ladyjess','R4')")
+        count=stage_vs_result(db,'job',{'score_date':'2026-11-04','upload_date':'2026-11-05',
+            'weekday':'Wed','rows':[{'name':'LadyJess','points':13624900,'review_reasons':[]}]})
+        self.assertEqual(count,1)
+        row=db.db.execute('SELECT player_name,score_date,upload_date,points FROM vs_scan_rows').fetchone()
+        self.assertEqual(tuple(row),('Lady Jess','2026-11-04','2026-11-05',13624900))
+
     def test_rescan_updates_one_player_date_and_keeps_other_dates(self):
         db=SQLDatabase();web=Mock();install_vs_points(web,db)
         router=web.include_router.call_args.args[0]
         approve=next(r.endpoint for r in router.routes if r.path=='/api/vs-points/approve')
         for idx,(when,points) in enumerate([('2026-11-04',100),('2026-11-04',200),('2026-11-04',50),('2026-11-03',300)],1):
-            db.db.execute('INSERT INTO vs_scan_rows VALUES (?,?,?)',(idx,'job','2026-11-05'))
+            db.db.execute('INSERT INTO vs_scan_rows (id,job_id,upload_date) VALUES (?,?,?)',(idx,'job','2026-11-05'))
             approve(VSApproval(job_id='job',score_date=when,rows=[{'id':idx,'name':'Lady Jess','points':points}]))
         rows=db.db.execute('SELECT score_date,points FROM vs_points ORDER BY score_date').fetchall()
         self.assertEqual([tuple(r) for r in rows],[('2026-11-03',300),('2026-11-04',50)])
-        db.db.execute('INSERT INTO vs_scan_rows VALUES (5,?,?)',('job','2026-11-05'))
+        db.db.execute('INSERT INTO vs_scan_rows (id,job_id,upload_date) VALUES (5,?,?)',('job','2026-11-05'))
         with self.assertRaises(HTTPException):
             approve(VSApproval(job_id='job',score_date='2026-10-28',rows=[{'id':5,'name':'Lady Jess','points':10}]))
         with self.assertRaises(HTTPException):
