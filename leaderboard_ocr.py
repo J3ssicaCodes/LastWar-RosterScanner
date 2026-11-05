@@ -148,7 +148,7 @@ def detect_leaderboard_layout(image):
         if word in ('power','powers'):tabs['power'].append((x,y))
         elif word in ('kills','kill'):tabs['kills'].append((x,y))
         elif word in ('donation','donations','donate'):tabs['donations'].append((x,y))
-        elif word in ('ranking','commander','rankings','commanders'):
+        elif word in ('ranking','commander','rankings','commanders','rank','player','players'):
             head.append(y)
     labels=[(key,*p[0]) for key,p in tabs.items() if p and p[0][1]<.65]
     # Require at least two real tab captions plus a table header; otherwise
@@ -162,7 +162,14 @@ def detect_leaderboard_layout(image):
     # A row header contains text, so begin after its lower border. Keep margin.
     header_bottom=min(.79,header+.025)
     pinned=_green_pin_boundary(image)
-    bottom=float(pinned-.006) if pinned is not None else .965
+    # Some game themes use a gray or purple fixed-current-player bar rather
+    # than a green one. Never let the pinned footer enter the scroll ROI just
+    # because the color detector did not recognize it. Reserve slightly more
+    # than one row pitch at the bottom (189px at a 1080px screenshot), while
+    # still honoring a visually found pinned boundary when one is available.
+    fixed_row_top=1.0-(w*DEFAULTS['row_pitch_per_width']*1.08)/h
+    bottom=min(float(pinned-.006) if pinned is not None else .965,
+               max(.01,float(fixed_row_top)))
     if bottom-header_bottom<max(.18,2*DEFAULTS['row_pitch_per_width']*w/h):return None
     tab_y=max(.02,band_y-.031)
     tab_h=.065
@@ -466,7 +473,7 @@ def recognize_player_row(row_image, layout, tab, source=None, geometry=None, cac
     # No Unicode simplification; strip surrounding OCR whitespace only.
     name=name.strip()
     reasons=[];alts=[]
-    if not name or name_conf<DEFAULTS['name_confidence'] or len(name)>80 or name.endswith('…'):
+    if not name or name_conf<DEFAULTS['name_confidence'] or len(name)>80 or name.endswith(('…','...')):
         alts=_name_retry(_crop(row_image,CROPS['name'],(.18,.78)))
         winner=max([{'text':name,'confidence':name_conf,'mode':'psm7'},*alts],key=lambda x:x['confidence'])
         if not name and winner['text']:name=winner['text']
