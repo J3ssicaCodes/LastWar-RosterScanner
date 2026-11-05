@@ -191,6 +191,18 @@
               power:n(val('power').value),kills:n(val('kills').value),donations:n(val('donations').value)};
     });
     if(!rows.length)return;
+    const invalid=rows.filter(r=>r.include && (
+      !r.name || r.name.length<2 || !/[\\p{L}]/u.test(r.name) ||
+      !/^R[1-5]$/.test(r.rank) ||
+      ['power','kills','donations'].some(field=>
+         r[field]!==null&&(!Number.isSafeInteger(r[field])||r[field]<0)) ||
+      (r.hq_level!==null&&(!Number.isInteger(r.hq_level)||r.hq_level<1||r.hq_level>99))
+    ));
+    if(invalid.length){
+      announce('Review required: correct missing player names, ranks and invalid statistics, or uncheck those rows before approving.');
+      return;
+    }
+    if(!rows.some(r=>r.include)){announce('Check at least one reviewed player to approve.');return;}
     $('mediaApprove').disabled=true;
     try{
       const result=await getJson('/api/media/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows,full_capture:$('mediaApproveComplete').checked})});
