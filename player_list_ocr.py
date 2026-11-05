@@ -250,9 +250,14 @@ def _read_card(image,button_top,rank,capture_avatar=False):
     if power is None:
         fallback=_ocr_line(image,(310,y+27,490,y+79),config='--psm 7 -c tessedit_char_whitelist=0123456789.,:MBK',scale=3)
         power=_read_power('Power:'+fallback)
-    hq=_ocr_line(image,(532,y+20,686,y+79),config='--psm 7 -c tessedit_char_whitelist=0123456789',scale=2)
-    match=re.search(r'(?<!\d)([1-9]\d|1\d\d|[1-9])(?!\d)',hq)
-    level=int(match.group(1)) if match and 10<=int(match.group(1))<=99 else None
+    level=None
+    hq_inline=re.search(r'\b[Ll][Vv][.\s:]*(\d{1,2})\b',line)
+    if hq_inline and 10<=int(hq_inline.group(1))<=99:
+        level=int(hq_inline.group(1))
+    if level is None:
+        hq=_ocr_line(image,(532,y+20,686,y+79),config='--psm 7 -c tessedit_char_whitelist=0123456789',scale=2)
+        match=re.search(r'(?<!\d)([1-9]\d|1\d\d|[1-9])(?!\d)',hq)
+        level=int(match.group(1)) if match and 10<=int(match.group(1))<=99 else None
     item={'name':name,'rank':rank,'power_millions':power,'hq_level':level}
     if capture_avatar:
         item['avatar_base64']=_video_portrait(image,(52,y-45,178,y+86))
@@ -275,6 +280,31 @@ def _seen_fingerprint(fingerprints,print_arr):
     fingerprints.append(print_arr)
     return False
 
+
+
+def _video_has_unseen_cards(image, known_fingerprints):
+    """Cheap video pass: do not launch Tesseract when all visible cards were read."""
+    if not known_fingerprints:
+        return True
+    image = _resize_frame(image)
+    candidates = _detect_button_y(image)
+    for y0,y1 in _card_candidate_y(image):
+        if y1-y0 < 65:
+            continue
+        estimate = y0+54
+        if not any(abs(existing-estimate)<83 for existing in candidates):
+            candidates.append(estimate)
+    if not candidates:
+        return True  # Avoid skipping unusual layouts with no identifiable buttons.
+    checked = 0
+    for y in candidates:
+        fp = _fingerprint(image,y)
+        if fp is None:
+            return True
+        checked += 1
+        if not any(np.count_nonzero(old != fp) <= 40 for old in known_fingerprints):
+            return True
+    return checked == 0
 
 def _profile_text(image, box, threshold=210, psm=7):
     """Read high contrast white game lettering, ignoring the blue or gray panel."""
@@ -487,16 +517,16 @@ def scan_upload(paths,progress:Callable[[int,int,str],None]):
                 if seconds>420: raise ValueError('Video is too long. Limit recordings to seven minutes.')
                 # Keep enough frames to cover scrolling while staying practical
                 # on Render's free CPU. Static frames are skipped before OCR.
-                fps=min(2.4,max(0.6,75/seconds))
-                count_limit=100
-                folder=Path(tempfile.mkdtemp(prefix='frames_'))
+                fps=min(1.7,88 / seconds)
+                count_limit=96
+                folder=Path(tempfile.mkdtemp(prefix='frames_',dir=str(Path(path).parent)))
                 command=['ffmpeg','-hide_banner','-nostdin','-loglevel','error','-i',str(path),'-vf',f'fps={fps:.3f},scale=1080:-2','-frames:v',str(count_limit),'-q:v','4',str(folder/'frame_%04d.jpg')]
                 progress(3, 100, 'Extracting video frames…')
                 _decode_video(command, seconds, progress)
                 images=sorted(folder.glob('frame_*.jpg'))
                 all_frames.extend(images);filenames.extend([Path(path).name]*len(images))
                 if len(images)==count_limit:
-                    warnings.append('The recording reached the 100 frame safety limit. Check for players not captured near the end.')
+                    warnings.append('The recording reached the frame safety limit. Check for players not captured near the end.')
             except (ValueError,subprocess.CalledProcessError,subprocess.TimeoutExpired) as exc:
                 raise ValueError('Could not decode the video: '+str(exc)[:150]) from exc
         else:
@@ -524,7 +554,11 @@ def scan_upload(paths,progress:Callable[[int,int,str],None]):
                         continue
                     previous_video_thumb=thumb
             from_video=frame_file.parent.name.startswith('frames_')
-            profile=extract_profile(frame)
+            if from_video and index>5 and fps_seen and not _video_has_unseen_cards(frame,fps_seen):
+                progress(24 + round(72*index/total),100,
+                         f'Frame {index} of {total}: already recognized, skipped')
+                continue
+            profile=None if from_video else extract_profile(frame)
             rows=[profile] if profile else extract_frame(frame,fps_seen if total>3 else None,
                                                       capture_avatar=from_video)
             if from_video and index<=5:
