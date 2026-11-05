@@ -351,6 +351,21 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
     </dialog>
     <p id="adminClearMessage" role="status" aria-live="polite"></p>
   </section>
+  <section class="panel pl-section" aria-labelledby="adminDictionaryTitle">
+    <h3 id="adminDictionaryTitle">Player name dictionary</h3>
+    <p>Saved corrections apply to future imports, including VS. OCR spellings are shown without spaces or capitalization.</p>
+    <form id="adminDictionaryForm" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+      <label>OCR spelling <input name="original" required maxlength="255"></label>
+      <label>Correct player name <input name="corrected" required maxlength="80"></label>
+      <button type="submit" class="btn primary">Save correction</button>
+      <button type="reset" class="btn" hidden>Cancel edit</button>
+    </form>
+    <p id="adminDictionaryMessage" role="status" aria-live="polite"></p>
+    <div class="pl-table-wrap"><table class="pl-table">
+      <thead><tr><th scope="col">OCR spelling</th><th scope="col">Correct player name</th><th scope="col">Actions</th></tr></thead>
+      <tbody id="adminDictionaryRows"></tbody>
+    </table></div>
+  </section>
 </section>
 <footer class="app-footer"><strong>This app was created by Lady Jess</strong></footer>
 </main>

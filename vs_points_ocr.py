@@ -302,7 +302,7 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
         if reasons[pos] and row['page'] in page_sources:
             reasons[pos].append('Adjacent frames did not resolve all review flags')
         rows.append({**{k:v for k,v in row.items() if k not in ('signature','center','matched_position')},
-                     'name':resolve(row['name']),
+                     'name':resolve(row['name']),'ocr_name':row['name'],
                      'points':int(row['value']) if row['value'].isdigit() else None,
                      'review_reasons':reasons[pos],'score_date':earned.isoformat()})
     return {'rows':rows,'weekday':DAYS[day],'score_date':earned.isoformat(),

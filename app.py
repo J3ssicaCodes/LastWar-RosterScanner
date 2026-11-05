@@ -324,6 +324,53 @@ def player_name_dictionary():
             for key in corrections if key not in master_keys}
 
 
+class DictionaryEntry(BaseModel):
+    original: str = Field(min_length=1,max_length=255)
+    corrected: str = Field(min_length=1,max_length=80)
+
+
+@app.get('/api/admin/name-dictionary')
+def admin_name_dictionary():
+    with db_connect() as conn, conn.cursor() as cur:
+        corrections=load_name_corrections(cur)
+    return {'entries':[{'original':key,'corrected':corrections[key]} for key in sorted(corrections)]}
+
+
+@app.put('/api/admin/name-dictionary')
+def save_dictionary_entry(entry: DictionaryEntry):
+    key=name_key(entry.original)
+    target=entry.corrected.strip()
+    if not key or len(key)>255 or not target or key==name_key(target):
+        raise HTTPException(422,'Enter two different names.')
+    with db_connect() as conn, conn.cursor() as cur:
+        cur.execute('SELECT player_name FROM `player list`')
+        roster={name_key(row['player_name']) for row in cur.fetchall()}
+        if key in roster:
+            raise HTTPException(409,'This OCR name already belongs to a player. Rename the player from their profile if needed.')
+        corrections=load_name_corrections(cur)
+        cursor_key=name_key(target)
+        visited={key}
+        while cursor_key in corrections and cursor_key not in roster:
+            if cursor_key in visited:
+                raise HTTPException(409,'That correction would create a dictionary loop.')
+            visited.add(cursor_key)
+            cursor_key=name_key(corrections[cursor_key])
+        if cursor_key in visited:
+            raise HTTPException(409,'That correction would create a dictionary loop.')
+        learn_name_correction(cur,key,target)
+        conn.commit()
+    return {'original':key,'corrected':target}
+
+
+@app.delete('/api/admin/name-dictionary')
+def delete_dictionary_entry(original: str):
+    key=name_key(original)
+    with db_connect() as conn, conn.cursor() as cur:
+        cur.execute('DELETE FROM player_name_dictionary WHERE ocr_key=%s',(key,))
+        conn.commit()
+    return {'original':key}
+
+
 def _run_scan(job_id, paths, tempdir):
     try:
         _update_job(job_id,status='scanning',message='Reading cached media on Render. Safe to lock your screen.',progress=2)

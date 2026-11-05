@@ -1,13 +1,14 @@
 """Persistent VS daily scores and review, keyed by player and earned date."""
 from datetime import date, timedelta
-import base64
+from collections import defaultdict
 import csv
 import io
 import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from player_identity import match_master, name_key, learn_name_correction
+from player_identity import (match_master, name_key, learn_name_correction, exact_player_index,
+                             corrected_name, load_name_corrections)
 from vs_points_ocr import score_date_for_day
 
 
@@ -24,29 +25,61 @@ class VSApproval(BaseModel):
     rows: list[VSRow] = Field(min_length=1,max_length=200)
 
 
+def upsert_vs_score(cursor, date, player_id, name, points, job_id):
+    cursor.execute('''INSERT INTO vs_points
+        (score_date,player_id,player_name,normalized_name,points,source_job_id)
+        VALUES (%s,%s,%s,%s,%s,%s)
+        ON DUPLICATE KEY UPDATE player_name=VALUES(player_name),
+        player_id=VALUES(player_id),normalized_name=VALUES(normalized_name),
+        points=VALUES(points),source_job_id=VALUES(source_job_id),updated_at=UTC_TIMESTAMP(6)''',
+        (date,player_id,name,name_key(name),points,job_id))
+
+
 def stage_vs_result(connect_db, job_id, result):
+    saved = pending = 0
     with connect_db() as conn:
         try:
             with conn.cursor() as cur:
-                cur.execute('SELECT id,player_name,player_rank,normalized_name,avatar_image FROM `player list`')
-                master=cur.fetchall()
-                for player in master:
-                    portrait=player.pop('avatar_image',None)
-                    player['avatar_base64']=base64.b64encode(portrait).decode() if portrait else None
+                cur.execute('SELECT id,player_name FROM `player list`')
+                master = exact_player_index(cur.fetchall())
+                corrections = load_name_corrections(cur)
+                candidates = []
+                scores = defaultdict(set)
                 for row in result['rows']:
-                    player=match_master(row,master)
-                    name=player['player_name'] if player else row['name']
-                    reasons=list(row['review_reasons'])
-                    if not player:reasons.append('Match name to Player List or verify new player')
+                    raw = row.get('ocr_name', row['name'])
+                    name = corrected_name(raw, corrections, master.keys())
+                    player = master.get(name_key(name))
+                    points = row['points']
+                    valid = type(points) is int and 0 <= points <= 9007199254740991
+                    if player and valid:
+                        scores[player['id']].add(points)
+                    candidates.append((row, name, player, valid))
+                saved_ids = set()
+                for row, name, player, valid in candidates:
+                    points = row['points']
+                    if player and valid and len(scores[player['id']]) == 1:
+                        if player['id'] not in saved_ids:
+                            upsert_vs_score(cur,result['score_date'],player['id'],player['player_name'],points,job_id)
+                            saved_ids.add(player['id'])
+                            saved += 1
+                        continue
+                    reasons = list(row['review_reasons'])
+                    if not player: reasons.append('Match name to Player List or verify new player')
+                    if not valid: reasons.append('Check points')
+                    if player and len(scores[player['id']]) > 1:
+                        reasons.append('Conflicting points for the same player')
                     cur.execute('''INSERT INTO vs_scan_rows
                         (job_id,score_date,upload_date,weekday,player_name,points,review_reasons,evidence_base64)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s)''',
-                        (job_id,result['score_date'],result['upload_date'],result['weekday'],name,
-                         row['points'],json.dumps(reasons),row.get('evidence_base64')))
+                        (job_id,result['score_date'],result['upload_date'],result['weekday'],
+                         player['player_name'] if player else name, points if valid else None,
+                         json.dumps(reasons),row.get('evidence_base64')))
+                    pending += 1
             conn.commit()
         except Exception:
-            conn.rollback();raise
-    return len(result['rows'])
+            conn.rollback()
+            raise
+    return {'saved':saved,'pending':pending}
 
 
 def install_vs_points(app, connect_db):
@@ -170,13 +203,7 @@ def install_vs_points(app, connect_db):
                         seen.add(key)
                         if name_key(original_names[row.id]) != name_key(row.name):
                             learn_name_correction(cur,original_names[row.id],name)
-                        cur.execute('''INSERT INTO vs_points
-                            (score_date,player_id,player_name,normalized_name,points,source_job_id)
-                            VALUES (%s,%s,%s,%s,%s,%s)
-                            ON DUPLICATE KEY UPDATE player_name=VALUES(player_name),
-                            player_id=VALUES(player_id),normalized_name=VALUES(normalized_name),
-                            points=VALUES(points),source_job_id=VALUES(source_job_id),updated_at=UTC_TIMESTAMP(6)''',
-                            (body.score_date,player['id'] if player else None,name,key,row.points,body.job_id))
+                        upsert_vs_score(cur,body.score_date,player['id'] if player else None,name,row.points,body.job_id)
                     cur.execute(f'DELETE FROM vs_scan_rows WHERE id IN ({marks})',tuple(ids))
                     cur.execute("""UPDATE media_scan_jobs SET status='approved',message='VS points saved',
                         updated_at=UTC_TIMESTAMP(6) WHERE id=%s

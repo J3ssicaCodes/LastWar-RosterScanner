@@ -86,13 +86,15 @@ class MediaScanTests(unittest.TestCase):
     def test_known_player_kills_merges_into_master_automatically(self):
         self.db.players=[{'id':1,'player_name':'Test Player','player_rank':'R4',
                           'normalized_name':'testplayer','avatar_image':None}]
-        self.scanner.return_value={'players':[{'name':'TestPlayer','rank':'R4','kills':987654}],
+        self.scanner.return_value={'players':[{'name':'TestPlayer','rank':'Unknown','kills':987654,'tab':'kills','review_required':True}],
                                    'diagnostics':{},'audit':[]}
         worker,job,dest,paths,directory=self.queued_worker()
         worker(job,dest,paths,directory)
         self.importer.assert_called_once()
         member=self.importer.call_args.args[0].players[0]
-        self.assertEqual((member.name,member.kills,member.power),('Test Player',987654,None))
+        self.assertEqual((member.name,member.rank,member.kills,member.power),('Test Player','R4',987654,None))
+        self.assertTrue(any('started_at=COALESCE' in q for q,args in self.db.statements))
+        self.assertTrue(any('finished_at=COALESCE' in q for q,args in self.db.statements))
         self.assertFalse(any('INSERT INTO `roster upload`' in query for query,args in self.db.statements))
         self.assertFalse(directory.exists())
 

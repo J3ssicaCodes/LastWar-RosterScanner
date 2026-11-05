@@ -183,14 +183,33 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         self.assertEqual(score_date_for_day(date(2026,11,9),0),date(2026,11,9))
         self.assertEqual(score_date_for_day(date(2027,1,1),0),date(2026,12,28))
         with self.assertRaises(ValueError):score_date_for_day(date(2026,11,8),6)
-    def test_scanned_scores_stage_canonical_name_and_local_upload_date(self):
+    def test_scanned_scores_auto_save_exact_matches_and_dictionary_aliases(self):
+        db=SQLDatabase()
+        db.db.execute("INSERT INTO `player list` (player_name,normalized_name,player_rank) VALUES ('Lady Jess','ladyjess','R4'),('Other Player','otherplayer','R3')")
+        db.db.execute("INSERT INTO player_name_dictionary VALUES ('ladvjess','Lady Jess')")
+        result=stage_vs_result(db,'job',{'score_date':'2026-11-04','upload_date':'2026-11-05',
+            'weekday':'Wed','rows':[
+                {'name':'Ladv Jess','points':13624900,'review_reasons':['Check player name']},
+                {'name':'OtherPlayer','points':0,'review_reasons':[]},
+                {'name':'Someone New','points':100,'review_reasons':[]},
+                {'name':'Lady Jess','points':None,'review_reasons':[]},
+            ]})
+        self.assertEqual(result,{'saved':2,'pending':2})
+        rows=db.db.execute('SELECT player_name,score_date,points FROM vs_points ORDER BY id')
+        self.assertEqual([tuple(r) for r in rows],[('Lady Jess','2026-11-04',13624900),('Other Player','2026-11-04',0)])
+        rows=db.db.execute('SELECT player_name,upload_date,points FROM vs_scan_rows ORDER BY id')
+        self.assertEqual([tuple(r) for r in rows],[('Someone New','2026-11-05',100),('Lady Jess','2026-11-05',None)])
+
+    def test_conflicting_exact_scores_stay_in_review(self):
         db=SQLDatabase()
         db.db.execute("INSERT INTO `player list` (player_name,normalized_name,player_rank) VALUES ('Lady Jess','ladyjess','R4')")
-        count=stage_vs_result(db,'job',{'score_date':'2026-11-04','upload_date':'2026-11-05',
-            'weekday':'Wed','rows':[{'name':'LadyJess','points':13624900,'review_reasons':[]}]})
-        self.assertEqual(count,1)
-        row=db.db.execute('SELECT player_name,score_date,upload_date,points FROM vs_scan_rows').fetchone()
-        self.assertEqual(tuple(row),('Lady Jess','2026-11-04','2026-11-05',13624900))
+        result=stage_vs_result(db,'job',{'score_date':'2026-11-04','upload_date':'2026-11-05',
+            'weekday':'Wed','rows':[
+                {'name':'Lady Jess','points':100,'review_reasons':[]},
+                {'name':'Lady Jess','points':200,'review_reasons':[]},
+            ]})
+        self.assertEqual(result,{'saved':0,'pending':2})
+        self.assertEqual(db.db.execute('SELECT count(*) FROM vs_points').fetchone()[0],0)
 
     def test_rescan_updates_one_player_date_and_keeps_other_dates(self):
         db=SQLDatabase();web=Mock();install_vs_points(web,db)

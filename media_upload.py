@@ -7,7 +7,6 @@ No browser credential or third party media service is required.
 from __future__ import annotations
 
 import json
-import base64
 from datetime import date
 import os
 import shutil
@@ -23,8 +22,8 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from player_list_ocr import scan_upload, extract_profile
-from player_identity import (match_master, name_key, corrected_name,
-                             load_name_corrections, learn_name_correction)
+from player_identity import (name_key, corrected_name,
+                             load_name_corrections, learn_name_correction, exact_player_index)
 from vs_points_ocr import scan_vs_upload
 from vs_points import stage_vs_result
 from tested_rankings_adapter import scan_tested_rankings_upload
@@ -95,6 +94,8 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     full_capture BOOLEAN NOT NULL DEFAULT FALSE,
                     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    started_at DATETIME(6) NULL,
+                    finished_at DATETIME(6) NULL,
                     KEY idx_media_jobs_created (created_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4''')
                 cur.execute('''CREATE TABLE IF NOT EXISTS `storm roster` (
@@ -164,9 +165,14 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 rank_column=cur.fetchone()
                 if rank_column and rank_column.get('Type','').lower()=='varchar(2)':
                     cur.execute('ALTER TABLE `roster upload` MODIFY COLUMN player_rank VARCHAR(8) NOT NULL')
+                for field in ('started_at','finished_at'):
+                    cur.execute('SHOW COLUMNS FROM media_scan_jobs LIKE %s',(field,))
+                    if not cur.fetchone():
+                        cur.execute(f'ALTER TABLE media_scan_jobs ADD COLUMN {field} DATETIME(6) NULL')
                 # A service restart should never leave a scan appearing to run forever.
                 cur.execute("""UPDATE media_scan_jobs
                                SET status='interrupted', message='Scan was interrupted. Please upload again.',
+                                   finished_at=IF(started_at IS NULL,NULL,COALESCE(finished_at,updated_at)),
                                    updated_at=UTC_TIMESTAMP(6)
                                WHERE status IN ('queued','scanning')""")
             conn.commit()
@@ -184,6 +190,10 @@ def install_media_upload(app, connect_db, import_players, import_model):
         fields = []
         values: list[Any] = []
         if status is not None: fields.append('status=%s'); values.append(status)
+        if status == 'scanning':
+            fields.append('started_at=COALESCE(started_at,UTC_TIMESTAMP(6))')
+        if status in ('ready','review','error'):
+            fields.append('finished_at=COALESCE(finished_at,UTC_TIMESTAMP(6))')
         if progress is not None: fields.append('progress=%s'); values.append(max(0, min(100, progress)))
         if message is not None: fields.append('message=%s'); values.append(message[:350])
         if count is not None: fields.append('result_count=%s'); values.append(count)
@@ -218,9 +228,10 @@ def install_media_upload(app, connect_db, import_players, import_model):
             if destination == 'vs':
                 if upload_date is None:raise ValueError('Upload date is missing. Select the file again.')
                 result=scan_vs_upload(paths,report,upload_date,corrections,master_keys)
-                count=stage_vs_result(connect_db,job_id,result)
-                set_job(job_id,status='review',progress=100,count=count,
-                        message=f"{result['weekday']} · {result['score_date']} · {count} VS scores ready to review")
+                counts=stage_vs_result(connect_db,job_id,result)
+                saved,pending=counts['saved'],counts['pending']
+                set_job(job_id,status='review' if pending else 'ready',progress=100,count=saved+pending,
+                        message=f"{result['weekday']} · {result['score_date']} · {saved} VS scores saved · {pending} to review")
                 finished_successfully=True
                 return
             if destination == 'storm':
@@ -239,13 +250,6 @@ def install_media_upload(app, connect_db, import_players, import_model):
                         profiles.append(path)
                     else:
                         leaderboard_files.append(path)
-                with connect_db() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute('SELECT id,player_name,player_rank,normalized_name,avatar_image FROM `player list`')
-                        master=cur.fetchall()
-                for player in master:
-                    portrait=player.pop('avatar_image',None)
-                    player['avatar_base64']=base64.b64encode(portrait).decode() if portrait else None
                 if leaderboard_files:
                     result = scan_tested_rankings_upload(leaderboard_files, report, corrections, master_keys)
                 else:
@@ -290,15 +294,30 @@ def install_media_upload(app, connect_db, import_players, import_model):
                         message=f'Storm Roster ready: {len(dedup)} players. Scanner updated.')
             else:
                 from app import Member, ImportData, normalize_name
+                with connect_db() as conn, conn.cursor() as cur:
+                    cur.execute('SELECT player_name,player_rank FROM `player list`')
+                    exact=exact_player_index(cur.fetchall())
+                    corrections=load_name_corrections(cur)
                 merge=[];needs_review=[]
                 for row in records:
-                    row={**row,'name':corrected_name(row.get('name') or '',corrections,master_keys)}
-                    current=match_master(row,master)
+                    row={**row,'name':corrected_name(row.get('ocr_name',row.get('name')) or '',corrections,exact.keys())}
+                    current=exact.get(name_key(row['name']))
+                    stat=row.get('tab')
+                    valid_stat=not stat or (type(row.get(stat)) is int and 0 <= row[stat] <= 18446744073709551615)
+                    if stat and not valid_stat:
+                        row[stat]=None
+                        row['review_required']=True
+                        row['review_reasons']=[*(row.get('review_reasons') or []),f'Check {stat}']
                     if current:
-                        row={**row,'name':current['player_name']}
-                        if not row.get('review_required') and row.get('rank') in ('R1','R2','R3','R4','R5'):
-                            merge.append(Member(**{field:row.get(field) for field in
-                                ('name','rank','power_millions','power','kills','donations','hq_level','avatar_base64')}))
+                        row['name']=current['player_name']
+                        if stat:
+                            row['rank']=current['player_rank']
+                        if valid_stat and (stat or (not row.get('review_required') and row.get('rank') in ('R1','R2','R3','R4','R5'))):
+                            fields={field:row.get(field) for field in
+                                    ('power_millions','power','kills','donations','hq_level','avatar_base64')}
+                            merge.append(Member(name=current['player_name'],
+                                rank=row['rank'],
+                                **fields))
                             continue
                     needs_review.append(row)
                 if merge:import_players(import_model(players=merge,full_capture=False))
@@ -346,7 +365,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                         continue
                                     change_kind='review' if review else 'updated'
                                 cur.execute('SELECT id,player_name,player_rank FROM `roster upload` ORDER BY id')
-                                previous=match_master(row,cur.fetchall())
+                                previous=exact_player_index(cur.fetchall()).get(name_key(name))
                                 if previous and name:
                                     cur.execute("""UPDATE `roster upload` SET
                                         power=COALESCE(%s,power),kills=COALESCE(%s,kills),
@@ -390,10 +409,10 @@ def install_media_upload(app, connect_db, import_players, import_model):
                         conn.rollback()
                         raise
                 if inserted:
-                    set_job(job_id,status='review',progress=100,count=inserted,
+                    set_job(job_id,status='review',progress=100,count=len(merge)+inserted,
                             message=f'{len(merge)} master records merged; {inserted} new or uncertain entries waiting for approval.')
                 else:
-                    set_job(job_id,status='ready',progress=100,count=0,
+                    set_job(job_id,status='ready',progress=100,count=len(merge),
                             message=f'Scan finished. {len(merge)} master records merged; new or uncertain detections remain in review.')
             finished_successfully=True
         except Exception as exc:
@@ -511,11 +530,11 @@ def install_media_upload(app, connect_db, import_players, import_model):
         with connect_db() as conn:
             with conn.cursor() as cur:
                 cur.execute('''SELECT id,destination,status,progress,message,result_count,
-                    full_capture,created_at,updated_at FROM media_scan_jobs
+                    full_capture,created_at,updated_at,started_at,finished_at FROM media_scan_jobs
                     ORDER BY created_at DESC LIMIT 35''')
                 rows=cur.fetchall()
         for row in rows:
-            for field in ('created_at','updated_at'):
+            for field in ('created_at','updated_at','started_at','finished_at'):
                 if row.get(field): row[field]=row[field].isoformat()+'Z'
         return {'jobs': rows}
 

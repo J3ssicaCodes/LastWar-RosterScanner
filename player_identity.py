@@ -11,6 +11,16 @@ def compact_key(name):
     return ''.join(c for c in name_key(name) if c.isalnum())
 
 
+def exact_player_index(players):
+    """Index canonical names and leave ambiguous normalized keys unresolved."""
+    by_name = {}
+    for player in players:
+        key = name_key(player.get('player_name', player.get('name')))
+        if key:
+            by_name[key] = player if key not in by_name else None
+    return by_name
+
+
 def match_master(row, players):
     key=name_key(row.get('name'))
     exact=[p for p in players if name_key(p.get('player_name',p.get('name')))==key]

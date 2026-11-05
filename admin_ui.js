@@ -112,4 +112,88 @@
   document.getElementById('adminTab').addEventListener('click',loadTables);
   if(document.getElementById('adminTab').getAttribute('aria-selected')==='true')loadTables();
   refresh();
+
+  const dictionaryForm=document.getElementById('adminDictionaryForm');
+  const dictionaryRows=document.getElementById('adminDictionaryRows');
+  const dictionaryMessage=document.getElementById('adminDictionaryMessage');
+  const dictionaryPath='/api/admin/name-dictionary';
+  const originalInput=dictionaryForm.elements.original;
+  const correctedInput=dictionaryForm.elements.corrected;
+  const cancelEdit=dictionaryForm.querySelector('[type="reset"]');
+  const saveCorrection=dictionaryForm.querySelector('[type="submit"]');
+  let dictionaryBusy=false;
+  async function dictionaryRequest(url,options){
+    const response=await fetch(url,{cache:'no-store',...options});
+    const result=await response.json();
+    if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'Could not update the dictionary.');
+    return result;
+  }
+  async function loadDictionary(){
+    try{
+      const {entries}=await dictionaryRequest(dictionaryPath);
+      dictionaryRows.replaceChildren();
+      if(!entries.length){
+        const cell=dictionaryRows.insertRow().insertCell();
+        cell.colSpan=3;
+        cell.textContent='No saved corrections yet.';
+      }
+      for(const entry of entries){
+        const row=dictionaryRows.insertRow();
+        row.insertCell().textContent=entry.original;
+        row.insertCell().textContent=entry.corrected;
+        const actions=row.insertCell();
+        for(const label of ['Edit','Remove']){
+          const button=document.createElement('button');
+          button.type='button';
+          button.className='btn';
+          button.textContent=label;
+          button.setAttribute('aria-label',label+' correction for '+entry.original);
+          actions.append(button,' ');
+          button.addEventListener('click',async()=>{
+            if(dictionaryBusy)return;
+            if(label==='Edit'){
+              originalInput.value=entry.original;
+              originalInput.readOnly=true;
+              correctedInput.value=entry.corrected;
+              cancelEdit.hidden=false;
+              correctedInput.focus();
+              return;
+            }
+            if(!confirm('Remove the correction for '+entry.original+'?'))return;
+            dictionaryBusy=true;
+            saveCorrection.disabled=true;
+            try{
+              await dictionaryRequest(dictionaryPath+'?'+new URLSearchParams({original:entry.original}),{method:'DELETE'});
+              if(originalInput.value===entry.original)dictionaryForm.reset();
+              await loadDictionary();
+              dictionaryMessage.textContent='Correction removed.';
+            }catch(error){dictionaryMessage.textContent=error.message;}
+            finally{dictionaryBusy=false;saveCorrection.disabled=false;}
+          });
+        }
+      }
+    }catch(error){dictionaryMessage.textContent=error.message;}
+  }
+  dictionaryForm.addEventListener('reset',()=>{
+    originalInput.readOnly=false;
+    cancelEdit.hidden=true;
+  });
+  dictionaryForm.addEventListener('submit',async event=>{
+    event.preventDefault();
+    if(dictionaryBusy)return;
+    dictionaryBusy=true;
+    saveCorrection.disabled=true;
+    try{
+      await dictionaryRequest(dictionaryPath,{
+        method:'PUT',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({original:originalInput.value,corrected:correctedInput.value}),
+      });
+      dictionaryForm.reset();
+      await loadDictionary();
+      dictionaryMessage.textContent='Correction saved.';
+    }catch(error){dictionaryMessage.textContent=error.message;}
+    finally{dictionaryBusy=false;saveCorrection.disabled=false;}
+  });
+  document.getElementById('adminTab').addEventListener('click',loadDictionary);
+  if(document.getElementById('adminTab').getAttribute('aria-selected')==='true')loadDictionary();
 })();

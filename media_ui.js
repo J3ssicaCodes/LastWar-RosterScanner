@@ -447,6 +447,15 @@
     }catch(e){announce('Could not dismiss entries: '+e.message);}
     finally{savingReview=false;for(const id of ['mediaApprove','mediaApproveClean','mediaDismiss'])$(id).disabled=false;}
   };
+  function processingTime(start,end=Date.now()){
+    const seconds=Math.max(0,Math.floor((end-start)/1000));
+    return Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');
+  }
+  function tickScanTimers(){
+    for(const timer of $('mediaQueueEntries').querySelectorAll('[data-scan-start]')){
+      timer.textContent='Processing '+processingTime(Number(timer.dataset.scanStart));
+    }
+  }
   function renderScanQueue(jobs){
     const active=jobs.filter(job=>job.status==='scanning')
       .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
@@ -462,13 +471,20 @@
       const pct=Math.min(100,Math.max(0,Number(job.progress)||0));
       const date=new Date(job.created_at);
       const time=Number.isNaN(date.getTime())?'':date.toLocaleString();
+      const started=Date.parse(job.started_at);
+      const finished=Date.parse(job.finished_at);
+      let timer='';
+      if(Number.isFinite(started)){
+        if(job.status==='scanning')timer='<small data-scan-start="'+started+'">Processing '+processingTime(started)+'</small>';
+        else if(Number.isFinite(finished))timer='<small>Processing time '+processingTime(started,finished)+'</small>';
+      }
       const statusText=statuses[job.status]||job.status;
       const position=queueIndex!=null?' · Queue position '+(queueIndex+1):'';
       const count=Number(job.result_count)||0;
       const countText=['ready','review','approved'].includes(job.status)?' · '+count+' results':'';
       return '<li class="media-queue-entry"><div class="media-queue-line"><strong>'+
         escape(label(job))+'</strong><span class="media-queue-state">'+escape(statusText+position+countText)+
-        '</span></div><small>'+escape(time)+'</small>'+
+        '</span></div><small>'+escape(time)+'</small>'+timer+
         (['queued','scanning'].includes(job.status)?'<progress max="100" value="'+pct+
         '" aria-label="'+escape(label(job)+' scanning progress')+'"></progress><small>'+pct+'% completed</small>':'')+
         '<div class="media-queue-message">'+escape(job.message||'No further details yet.')+'</div></li>';
@@ -542,6 +558,7 @@
   window.addEventListener('focus',()=>refreshJobs());
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)window.refreshMediaUploads();});
   setInterval(refreshJobs,8000);
+  setInterval(()=>{if(queueDialog.open)tickScanTimers();},1000);
   window.loadServerStormRoster?.();
   window.refreshMediaUploads();
   window.addEventListener('player-profile-updated',async()=>{
