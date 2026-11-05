@@ -27,7 +27,7 @@ def sign(im,top,bottom):
     region=cv2.cvtColor(im[top:bottom,65:1020],cv2.COLOR_BGR2GRAY)
     return cv2.resize(region,(112,184),interpolation=cv2.INTER_AREA)
 
-def detect(path, min_pause=.38,threshold=2.5,stride=3,min_frames=15):
+def detect(path, min_pause=.38,threshold=2.5,stride=3,min_frames=15,progress=None):
     cap=cv2.VideoCapture(str(path));fps=cap.get(cv2.CAP_PROP_FPS);n=int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     ok,first=cap.read(); assert ok
     top,hits=detect_table_header(first)
@@ -40,6 +40,10 @@ def detect(path, min_pause=.38,threshold=2.5,stride=3,min_frames=15):
         ok,frame=cap.read()
         if not ok:break
         if i%stride==0: signatures.append((i,sign(frame,top,bottom)))
+        # Server jobs report frame analysis progress during long recordings,
+        # instead of appearing stalled at the preparation stage.
+        if progress and n>0 and i%max(90,n//25)==0:
+            progress(2+round(23*i/n),100,f'Finding stable video pages: {i}/{n} frames')
         i+=1
     cap.release()
     runs=[];a=0;anchor=signatures[0][1]
@@ -69,6 +73,8 @@ def extract(path,outdir,fps,n,top,bottom,runs,duplicate_threshold=2.2):
     cap.release()
     manifest=dict(video=str(path),fps=fps,total_video_frames=n,table_header_end_y=top,dwell_roi_bottom_y=bottom,threshold=2.5,min_pause=.38,kept=kept,duplicates=duplicates)
     (out/'manifest.json').write_text(json.dumps(manifest,indent=2))
+    if not kept:
+        raise ValueError('No distinct stationary leaderboard pages detected in the video.')
     with (out/'manifest.csv').open('w',newline='') as f:
         w=csv.DictWriter(f,fieldnames=kept[0].keys());w.writeheader();w.writerows(kept)
     print('saved',len(kept),'distinct pages; removed',len(duplicates),'duplicate dwell pages',flush=True)
