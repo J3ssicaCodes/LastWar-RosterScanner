@@ -6,12 +6,15 @@ from unittest.mock import Mock, patch
 
 from fastapi import UploadFile
 import media_upload as media
+from app import ImportData
 
 
 class Database:
     def __init__(self):
         self.statements = []
         self.fail_staging = False
+        self.players = []
+        self.query = ''
 
     def __call__(self):
         return self
@@ -28,6 +31,7 @@ class Database:
     def execute(self, query, args=()):
         # Exercise DB-API parameter binding, including the review-row INSERT.
         query % tuple(args)
+        self.query = query
         if self.fail_staging and 'INSERT INTO `roster upload`' in query:
             raise RuntimeError('staging unavailable')
         self.statements.append((query, args))
@@ -36,7 +40,7 @@ class Database:
         return {'n': 1}
 
     def fetchall(self):
-        return []
+        return [dict(p) for p in self.players] if 'FROM `player list`' in self.query else []
 
     def commit(self):
         self.statements.append(('COMMIT', ()))
@@ -49,7 +53,8 @@ class MediaScanTests(unittest.TestCase):
     def setUp(self):
         self.db = Database()
         self.app = Mock()
-        media.install_media_upload(self.app, self.db, Mock(), Mock())
+        self.importer = Mock()
+        media.install_media_upload(self.app, self.db, self.importer, ImportData)
         router = self.app.include_router.call_args.args[0]
         self.upload = next(r.endpoint for r in router.routes if r.path == '/api/media/upload')
         self.pool = Mock()
@@ -76,6 +81,19 @@ class MediaScanTests(unittest.TestCase):
         self.assertEqual(len(staged), 1)
         self.assertEqual(staged[0][1:3], ('Test Player', 'R4'))
         self.assertTrue(any('status=%s' in q and args[0] == 'review' for q, args in self.db.statements))
+        self.assertFalse(directory.exists())
+
+    def test_known_player_kills_merges_into_master_automatically(self):
+        self.db.players=[{'id':1,'player_name':'Test Player','player_rank':'R4',
+                          'normalized_name':'testplayer','avatar_image':None}]
+        self.scanner.return_value={'players':[{'name':'TestPlayer','rank':'R4','kills':987654}],
+                                   'diagnostics':{},'audit':[]}
+        worker,job,dest,paths,directory=self.queued_worker()
+        worker(job,dest,paths,directory)
+        self.importer.assert_called_once()
+        member=self.importer.call_args.args[0].players[0]
+        self.assertEqual((member.name,member.kills,member.power),('Test Player',987654,None))
+        self.assertFalse(any('INSERT INTO `roster upload`' in query for query,args in self.db.statements))
         self.assertFalse(directory.exists())
 
     def test_failed_scan_keeps_drive_original(self):

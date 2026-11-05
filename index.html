@@ -176,6 +176,13 @@ html[data-theme="light"] .event-map-place-label,html[data-theme="light"] .event-
 html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#514b69}
 @media(max-width:680px){.header-preferences{width:100%;margin-left:0}.preference-control{flex:1 1 auto}.preference-control select{flex:1;max-width:none}.theme-toggle{flex:0 0 auto}.top{align-items:flex-start}}
 
+#birthdayForm input,#birthdayForm select{color:var(--text);background:var(--panel2);border:1px solid var(--stroke);border-radius:7px;padding:9px;font:inherit}
+#vsPointsView p{color:var(--muted)}
+#vsPointsView input,#vsPointsView select{color:var(--text);background:var(--panel2);border:1px solid var(--stroke);border-radius:7px;padding:8px;font:inherit}
+#vsPointsView #vsRows{font-variant-numeric:tabular-nums}
+#vsPointsView .pl-table-wrap:has(#vsRows) .pl-table{min-width:0}
+#vsReviewJobs input[data-vs-name]{min-width:180px;width:100%}
+#vsReviewJobs input[data-vs-points]{min-width:130px;width:100%}
 /* Workspace navigation. Keep the complete roster scanner mounted while inactive. */
 .workspace-tabs{display:flex;align-items:stretch;gap:8px;overflow-x:auto;margin:6px 0 20px;border-bottom:1px solid var(--stroke);padding:0 2px 2px;scrollbar-width:thin}
 .workspace-tab{display:inline-flex;align-items:center;gap:10px;padding:14px 20px;min-width:max-content;background:transparent;border:1px solid transparent;border-bottom:3px solid transparent;border-radius:12px 12px 0 0;color:var(--muted);font:inherit;font-size:14px;font-weight:800;cursor:pointer;transition:background .15s ease,color .15s ease,border-color .15s ease}
@@ -240,6 +247,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
 <nav class="workspace-tabs" role="tablist" aria-label="Alliance workspace sections">
   <button type="button" class="workspace-tab" id="rosterScannerTab" role="tab" aria-controls="rosterScannerView" aria-selected="true" tabindex="0" data-workspace-tab="scanner"><span class="workspace-tab-icon" aria-hidden="true">▦</span><span>Roster Scanner</span></button>
   <button type="button" class="workspace-tab" id="playerListTab" role="tab" aria-controls="playerListView" aria-selected="false" tabindex="-1" data-workspace-tab="players"><span class="workspace-tab-icon" aria-hidden="true">♙</span><span>Player List</span></button>
+  <button type="button" class="workspace-tab" id="vsPointsTab" role="tab" aria-controls="vsPointsView" aria-selected="false" tabindex="-1" data-workspace-tab="vs"><span class="workspace-tab-icon" aria-hidden="true">▤</span><span>VS Points</span></button>
 </nav>
 <section id="rosterScannerView" class="workspace-view" role="tabpanel" aria-labelledby="rosterScannerTab" tabindex="0">
 <section class="event-selector panel" aria-labelledby="eventSelectorTitle">
@@ -308,10 +316,19 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
     <div class="pl-summary"><div><small>Total</small><strong id="plTotal">0</strong></div><div><small>New</small><strong id="plNew">0</strong></div><div><small>Possibly removed</small><strong id="plMissing">0</strong></div><div><small>Active</small><strong id="plActive">0</strong></div></div>
     <div class="pl-filters"><input id="plSearch" type="search" placeholder="Search player names…" aria-label="Search player names"><select id="plFilter" aria-label="Filter players by status"><option value="all">All players</option><option value="new">New players</option><option value="removed">Possibly removed</option><option value="active">Active</option></select></div>
     <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Photo</th><th scope="col">Player name</th><th scope="col">Power</th><th scope="col">Kills</th><th scope="col">Donations</th><th scope="col">HQ</th><th scope="col">Birthday</th><th scope="col">Status</th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="8" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
-    <p class="pl-hint">Players are matched by their names, ignoring capitalization and spaces. An incomplete capture should not mark other players as missing. Missing players are flagged, never deleted.</p>
+    <p class="pl-hint">Players are matched by their names, ignoring capitalization and spaces. Power, Kills and Donations uploads update this master record. Stats absent from an upload and birthdays are preserved.</p>
   </section>
 </section>
 
+<section id="vsPointsView" class="workspace-view" role="tabpanel" aria-labelledby="vsPointsTab" tabindex="0" hidden>
+  <section class="panel pl-section"><div class="pl-title-row"><div><div class="eyebrow">Alliance competition</div><h2>VS Points</h2><p>Daily scores, one record per player and date. Upload a Daily Rank recording using Media Upload.</p></div><button class="btn" id="vsRefresh" type="button">↻ Refresh</button></div>
+  <p id="vsMessage" role="status" aria-live="polite"></p>
+  <div id="vsPending" hidden><h3>Review scanned points</h3><p>Verify the highlighted day and earned date. Dates use the uploader’s local calendar week ending Sunday. Sunday uploads belong to the week that just ended.</p><div id="vsReviewJobs"></div></div>
+  <div class="pl-filters"><label>Date <select id="vsDate" aria-label="Score date"><option value="">No saved dates</option></select></label><input id="vsSearch" type="search" placeholder="Search player names…" aria-label="Search VS players"><a class="btn" id="vsExport" href="/api/vs-points/export.csv">↓ Export CSV</a></div>
+  <p id="vsSummary"></p><div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Date</th><th>Player</th><th>VS points</th></tr></thead><tbody id="vsRows"><tr><td colspan="3">No scores saved yet.</td></tr></tbody></table></div>
+  <datalist id="vsPlayerNames"></datalist>
+  </section>
+</section>
 <footer class="app-footer"><strong>This app was created by Lady Jess</strong></footer>
 </main>
 <dialog id="eventManagerDialog" class="event-manager-dialog" aria-labelledby="eventManagerTitle">
@@ -2019,7 +2036,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 (() => {
   const storageKey='lastwar.workspaceTab.v1';
   const tabs=[...document.querySelectorAll('[data-workspace-tab]')];
-  const views={scanner:document.getElementById('rosterScannerView'),players:document.getElementById('playerListView')};
+  const views={scanner:document.getElementById('rosterScannerView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView')};
   function selectTab(tabId,focus=false){
     if(!Object.hasOwn(views,tabId))tabId='scanner';
     for(const tab of tabs){
@@ -2282,10 +2299,10 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     const selected=rows.filter(p=>p.name.toLocaleLowerCase().includes(query)&&(filter==='all'||(filter==='removed'&&p.possibly_removed)||(filter==='new'&&p.is_new&&!p.possibly_removed)||(filter==='active'&&!p.is_new&&!p.possibly_removed)));
     const renderPlayer=p=>{
       const [status,cls]=p.possibly_removed?['Possibly removed','removed']:p.is_new?['New player','new']:['Active','active'];
-      const birthday=p.birthday?new Date(p.birthday+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—';
+      const birthday=p.birthday?new Date('2000-'+p.birthday+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—';
       const avatar=p.has_avatar?`<img class="pl-avatar" loading="lazy" src="${escape(p.avatar_url)}?v=${encodeURIComponent(p.avatar_updated_at||'1')}" alt="${escape(p.name)} video portrait">`:'<span class="pl-avatar-empty" title="No video portrait yet">♡</span>';
       return `<tr><td>${avatar}</td><td class="pl-player-name">${escape(p.name)}</td><td>${p.power!=null?escape(Number(p.power).toLocaleString()):p.power_millions!=null?escape(Number(p.power_millions).toFixed(1)+'M'):'—'}</td><td>${p.kills!=null?escape(Number(p.kills).toLocaleString()):'—'}</td><td>${p.donations!=null?escape(Number(p.donations).toLocaleString()):'—'}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
-       <td><div class="pl-birthday-wrap"><span class="pl-birthday-date" title="${escape(p.birthday||'Birthday not set')}">${escape(birthday)}</span><button type="button" class="pl-calendar-btn" data-player-birthday="${p.id}" aria-label="Edit ${escape(p.name)} birthday" title="Set birthday">📅</button><input class="pl-birthday-input" data-birthday-input="${p.id}" type="date" value="${escape(p.birthday||'')}" aria-label="Birthday for ${escape(p.name)}" hidden></div></td>
+       <td><div class="pl-birthday-wrap"><span class="pl-birthday-date" title="${escape(p.birthday||'Birthday not set')}">${escape(birthday)}</span><button type="button" class="pl-calendar-btn" data-player-birthday="${p.id}" aria-label="Edit ${escape(p.name)} birthday" title="Set birthday">📅</button></div></td>
        <td><span class="pl-status ${cls}">${status}</span></td></tr>`;
     };
     let html='';
@@ -2320,26 +2337,29 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
   $('plAddRow').addEventListener('click',()=>{state.candidates.push({name:'',rank:'R3',power_millions:null,hq_level:null,included:true});renderReview();});
   $('plSyncBtn').addEventListener('click',sync);
   $('plRefresh').addEventListener('click',()=>{status();loadDirectory();});
-  // Birthday is a manual database field. Never infer it from uploaded media.
+  // A birthday is a month and day; no birth year is requested.
+  const birthdayDialog=document.createElement('dialog');
+  birthdayDialog.style.cssText='max-width:94vw;border:1px solid var(--stroke);border-radius:14px;padding:24px;background:var(--panel);color:var(--text)';
+  birthdayDialog.innerHTML=`<form id="birthdayForm"><h3 id="birthdayTitle">Birthday</h3><label>Month <select id="birthdayMonth" required aria-label="Birthday month">${Array.from({length:12},(_,i)=>`<option value="${String(i+1).padStart(2,'0')}">${new Date(2000,i,1).toLocaleDateString(undefined,{month:'long'})}</option>`).join('')}</select></label> <label>Day <input id="birthdayDay" type="number" min="1" max="31" required aria-label="Birthday day" style="width:75px"></label><p id="birthdayError" role="status"></p><div style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" type="submit">Save birthday</button><button class="btn" type="button" id="birthdayClear">Clear</button><button class="btn" type="button" id="birthdayCancel">Cancel</button></div></form>`;
+  document.body.append(birthdayDialog);
+  let birthdayPlayer=null;
+  $('birthdayCancel').onclick=()=>birthdayDialog.close();
+  async function saveBirthday(value){
+    try{
+      const result=await checkedJson(await fetch('/api/player-list/'+birthdayPlayer.id+'/birthday',{
+        method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({birthday:value})}));
+      birthdayPlayer.birthday=result.birthday;renderDirectory();birthdayDialog.close();
+    }catch(err){$('birthdayError').textContent=err.message;}
+  }
+  $('birthdayClear').onclick=()=>saveBirthday(null);
+  $('birthdayForm').onsubmit=event=>{event.preventDefault();saveBirthday($('birthdayMonth').value+'-'+String($('birthdayDay').value).padStart(2,'0'));};
   $('plDirectoryBody').addEventListener('click',event=>{
     const button=event.target.closest('[data-player-birthday]');if(!button)return;
-    const field=button.parentElement.querySelector('[data-birthday-input]');
-    field.hidden=false;field.focus();
-    if(typeof field.showPicker==='function')try{field.showPicker();}catch{}
-  });
-  $('plDirectoryBody').addEventListener('change',async event=>{
-    const field=event.target.closest('[data-birthday-input]');if(!field)return;
-    const id=Number(field.dataset.birthdayInput);
-    const previous=state.players.find(p=>p.id===id);
-    if(!previous)return;
-    field.disabled=true;
-    try{
-      const r=await fetch('/api/player-list/'+id+'/birthday',{
-        method:'PATCH',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({birthday:field.value||null})});
-      const result=await checkedJson(r);
-      previous.birthday=result.birthday;msg('Birthday saved for '+previous.name+'.');renderDirectory();
-    }catch(err){field.disabled=false;field.value=previous.birthday||'';msg('Could not save birthday: '+err.message,true);}
+    birthdayPlayer=state.players.find(p=>p.id===Number(button.dataset.playerBirthday));
+    if(!birthdayPlayer)return;
+    const [month,day]=(birthdayPlayer.birthday||'01-01').split('-');
+    $('birthdayTitle').textContent=birthdayPlayer.name+' · Birthday';
+    $('birthdayMonth').value=month;$('birthdayDay').value=Number(day);$('birthdayError').textContent='';birthdayDialog.showModal();
   });
   $('plDirectoryBody').addEventListener('click',event=>{
     const btn=event.target.closest('[data-rank-toggle]');if(!btn)return;
@@ -2358,5 +2378,6 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 </script>
 <script defer src="/google_drive_picker.js"></script>
 <script defer src="/media_ui.js"></script>
+<script defer src="/vs_ui.js"></script>
 </body>
 </html>

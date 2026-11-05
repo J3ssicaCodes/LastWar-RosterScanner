@@ -204,3 +204,35 @@ pages and timeouts on individual Tesseract calls. A server restart can still
 interrupt an active in-memory worker; the persisted job status will indicate
 it should be retried. Exact full-roster accuracy requires testing against
 the corresponding real leaderboard recording and verifying the review rows.
+
+## Master player records, birthdays and VS Points
+
+Birthdays are entered as month/day, returned as `MM-DD`, and support February 29.
+The existing DATE column remains compatible; newly entered birthdays use a neutral
+leap year internally. Existing birthdays are preserved.
+
+Power, Kills and Donations are independent fields on the master Player List.
+Confident observations of known players merge automatically without clearing
+stats omitted from an upload. Exact names and unambiguous punctuation variants
+match the canonical directory; uncertain/new identities stay in review.
+Pending category uploads also combine their available statistics.
+
+VS Points accepts screenshots or one scrolling Daily Rank video through Media
+Upload, including Drive when configured. The first paused page's highlighted
+weekday selects the earned date: find the Sunday on or after the uploader's
+local calendar date, then go back to that weekday. Sunday uploads therefore
+retain Saturday and earlier days in the week that just ended. Upload context
+is captured before queuing, so the service timezone and queue delay cannot
+change the assigned date. The earned date is visible/editable during review,
+restricted to Monday–Saturday in that upload week. Previous weeks and Sundays
+cannot be approved.
+
+`vs_points` stores date, canonical name, points, optional master player ID and
+source job metadata. Unique keys on date/name and date/player ID enforce one
+score per player per date; re-approval updates that score. `vs_scan_rows` holds
+review candidates and captured-row evidence until approval or dismissal.
+The scanner rejects clipped rows and the fixed green self-row, recovers internal
+gaps from transitions, and recognizes visible single zero glyphs explicitly.
+It never turns unreadable/blank stat cells into zero.
+
+Run regressions with `python -m unittest discover -s tests -v`.

@@ -5,6 +5,8 @@
   const $=id=>document.getElementById(id);
   const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   let destination='storm',files=[],busy=false,pending=[],notified=new Set(),driveSelection=null;
+  const destinationLabel=value=>value==='storm'?'Storm Roster':value==='vs'?'VS Points':'Player List';
+  const localDate=()=>{const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');};
   const NOTIFICATIONS='lastwar.media.notified.v1';
   try{notified=new Set(JSON.parse(localStorage.getItem(NOTIFICATIONS)||'[]'));}catch{}
   const css=document.createElement('style');
@@ -76,7 +78,7 @@
   <div class="media-destinations" role="group" aria-label="Choose media destination">
     <button type="button" class="media-destination" data-dest="storm" aria-pressed="true">▦ Storm Roster</button>
     <button type="button" class="media-destination" data-dest="players" aria-pressed="false">♙ Player List</button>
-    <button type="button" class="media-destination" disabled title="Coming later" aria-disabled="true">▤ VS Scores<br><small>Coming soon</small></button>
+    <button type="button" class="media-destination" data-dest="vs" aria-pressed="false">▤ VS Points</button>
   </div>
   <div class="media-select" role="button" tabindex="0" id="mediaSelect"><span style="font-size:32px" aria-hidden="true">⇧</span><strong id="mediaSelectTitle">Choose Storm Roster screenshots</strong><small id="mediaSelectHint">PNG, JPG or WebP images only.</small><input type="file" id="mediaFileInput" accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,.m4v" multiple hidden></div>
   <div class="media-source-options"><button type="button" id="mediaDriveButton" class="btn">Select from Google Drive</button></div>
@@ -84,7 +86,7 @@
   <label class="media-drive-trash" id="mediaDriveTrashWrap" hidden><input type="checkbox" id="mediaDriveTrash"> Move the original Google Drive file to Trash after the scan finishes successfully</label>
   <div class="media-progress" id="mediaProgress" hidden><progress id="mediaBar" max="100" value="0"></progress><small id="mediaProgressText">Uploading…</small></div>
   <div id="mediaMessage" class="media-banner" role="status" aria-live="polite" hidden></div>
-  <div class="media-actions"><small style="color:var(--muted)">Review scanned results before applying changes.</small><button class="btn primary" id="mediaSubmit" disabled>Upload and scan</button></div>`;
+  <div class="media-actions"><small style="color:var(--muted)">Known players merge automatically. Review new players and VS scores before saving.</small><button class="btn primary" id="mediaSubmit" disabled>Upload and scan</button></div>`;
   document.body.append(dialog);
   const banner=document.createElement('button');
   banner.type='button';banner.id='mediaNotification';
@@ -113,7 +115,7 @@
   };
   $('mediaQueueRefresh').onclick=()=>refreshJobs();
   $('mediaClearHistory').onclick=async()=>{
-    if(!confirm('Clear completed, approved, failed and interrupted scan history? Active scans and pending player reviews will be kept.'))return;
+    if(!confirm('Clear completed, approved, failed and interrupted scan history? Active scans and pending player or VS reviews will be kept.'))return;
     $('mediaClearHistory').disabled=true;
     try{
       const result=await getJson('/api/media/jobs/history',{method:'DELETE'});
@@ -134,13 +136,14 @@
   const playerView=$('playerListView');
   const pendingPanel=document.createElement('section');
   pendingPanel.id='mediaPendingPanel';pendingPanel.className='panel pl-section media-review';pendingPanel.hidden=true;
-  pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Awaiting your approval</div><h2>Player changes to review</h2><p>New uploads are staged here, not saved to the official Player List until approved.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
+  pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Awaiting your approval</div><h2>Player changes to review</h2><p>Recognized players merge into the master list. Review new or uncertain detections here; Power, Kills and Donations are kept together.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
     <div class="media-review-actions"><button class="btn" type="button" id="mediaDismiss">Dismiss unchecked</button><button class="btn primary" type="button" id="mediaApprove">Approve checked changes</button></div>
     <p id="mediaDiagnostics" hidden></p>
     <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Use</th><th>Change</th><th>Photo</th><th>Rank</th><th>Player</th><th>Power</th><th>Kills</th><th>Donations</th><th>Power (M) / Profile</th><th>HQ Lv.</th></tr></thead><tbody id="mediaPendingRows"></tbody></table></div>
     <p class="pl-hint">Check the entries to approve. Unchecked entries remain pending until you explicitly dismiss them. Correct uncertain names and numbers before approval.</p>`;
   const directory=playerView?.querySelector('[aria-labelledby="plDirectoryTitle"]');
   directory?.before(pendingPanel);
+  const masterNames=document.createElement('datalist');masterNames.id='playerMasterNames';document.body.append(masterNames);
 
   function announce(text){
     banner.hidden=false;
@@ -157,8 +160,9 @@
       message('Storm Roster only accepts screenshots. Please select an image.',true);
     }
     $('mediaSubmit').disabled=busy||(!driveSelection&&!files.length);
-    $('mediaSelectTitle').textContent=isStorm?'Choose Storm Roster screenshots':'Choose leaderboard screenshots or an MP4 recording';
+    $('mediaSelectTitle').textContent=isStorm?'Choose Storm Roster screenshots':destination==='vs'?'Choose VS Daily Rank screenshots or a recording':'Choose leaderboard screenshots or an MP4 recording';
     $('mediaSelectHint').textContent=isStorm?'PNG, JPG or WebP images only. MP4 is not allowed for Storm Roster.':'PNG, JPG, WebP, MP4, MOV or WebM. Record the Power or Kills leaderboard while scrolling; pause on each page.';
+    if(destination==='vs')$('mediaSelectHint').textContent='Include the selected weekday at the top of Daily Rank. The earned date is detected within your local upload week, ending Sunday, and can be reviewed before saving.';
     fileInput.accept=isStorm?'image/png,image/jpeg,image/webp':"image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,.m4v";
     if(isStorm&&files.some(f=>/\.(mp4|mov|m4v|webm)$/i.test(f.name))){
       files=[];fileInput.value='';$('mediaFileNames').textContent='No files selected';
@@ -232,12 +236,12 @@
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({destination,file_id:driveSelection.file_id,
             access_token:driveSelection.access_token,
-            move_to_trash:$('mediaDriveTrash').checked})});
+            move_to_trash:$('mediaDriveTrash').checked,upload_date:localDate()})});
       }else{
       const form=new FormData();files.forEach(f=>form.append('files',f,f.name));
       job=await new Promise((resolve,reject)=>{
         const xhr=new XMLHttpRequest();
-        const url='/api/media/upload?destination='+encodeURIComponent(destination);
+        const url='/api/media/upload?destination='+encodeURIComponent(destination)+'&upload_date='+localDate();
         xhr.open('POST',url);xhr.timeout=600000;
         xhr.upload.onprogress=e=>{if(e.lengthComputable)setProgress(Math.min(99,Math.round(e.loaded/e.total*100)),'Uploading: '+Math.round(e.loaded/e.total*100)+'%');};
         xhr.onload=()=>{let payload={};try{payload=JSON.parse(xhr.responseText);}catch{}if(xhr.status<200||xhr.status>=300)reject(Error(payload.detail||'Upload failed: '+xhr.status));else resolve(payload);};
@@ -253,7 +257,7 @@
       $('mediaFileNames').textContent='No files selected';
       $('mediaProgress').hidden=true;
       message('');
-      announce('✓ '+(destination==='storm'?'Storm Roster':'Player List')+' upload accepted. Scan queued. You can continue using the app.');
+      announce('✓ '+destinationLabel(destination)+' upload accepted. Scan queued. You can continue using the app.');
       if(dialog.open)dialog.close();
       await refreshJobs();
     }catch(e){message(e.message,true);}
@@ -264,6 +268,7 @@
   async function refreshPending(){
     try{
       const result=await getJson('/api/media/pending');pending=result.players||[];
+      try{const master=await getJson('/api/player-list');masterNames.innerHTML=master.players.map(p=>'<option value="'+escape(p.name)+'">').join('');}catch{}
       pendingPanel.hidden=!pending.length;
       $('mediaPendingCount').textContent=pending.length+' waiting';
                   $('mediaPendingRows').innerHTML=pending.map(p=>{
@@ -278,7 +283,7 @@
         return '<tr data-pending-id="'+p.id+'"><td><input type="checkbox" data-field="include" checked aria-label="Include '+escape(p.name||'unrecognized player')+'"></td>'+
           '<td><span class="pl-status '+(type==='New'?'new':type==='Updated'?'active':'removed')+'">'+type+'</span></td>'+
           '<td>'+avatar+'</td><td><select data-field="rank">'+['Unknown','R5','R4','R3','R2','R1'].map(rank=>'<option value="'+rank+'" '+(p.rank===rank?'selected':'')+'>'+rank+'</option>').join('')+'</select></td>'+
-          '<td><input data-field="name" value="'+escape(p.name||'')+'" maxlength="80" aria-label="Player name">'+
+          '<td><input data-field="name" list="playerMasterNames" value="'+escape(p.name||'')+'" maxlength="80" aria-label="Player name">'+
           (p.tab?'<small class="pl-source-label">'+escape(p.tab.toUpperCase())+'</small>':'')+
           (p.source_image?'<small class="pl-source-label" title="Original file and timestamp">'+escape(p.source_image)+'</small>':'')+
           (flag?'<small class="media-flag">'+escape(flag)+'</small>':'')+evidence+'</td>'+
@@ -358,7 +363,7 @@
     const history=jobs.filter(job=>!['queued','scanning'].includes(job.status))
       .sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
     $('mediaQueueSummary').textContent=active.length+' scanning · '+waiting.length+' waiting · '+history.length+' recent results';
-    const label=job=>job.destination==='storm'?'Storm Roster':job.destination==='players'?'Player List':'Other upload';
+    const label=job=>destinationLabel(job.destination);
     const statuses={scanning:'Scanning',queued:'Waiting',review:'Awaiting player review',
       ready:'Completed',approved:'Approved',error:'Failed',interrupted:'Interrupted'};
     function item(job,queueIndex){
@@ -400,16 +405,18 @@
       if(newAlerts.length){
         for(const job of newAlerts){
           if(job.status==='error'||job.status==='interrupted'){
-            announce('⚠ '+(job.destination==='storm'?'Storm Roster':'Player List')+
+            announce('⚠ '+destinationLabel(job.destination)+
               ' scan did not finish: '+(job.message||'Server processing was interrupted. Please retry.'));
           }else if(job.destination==='storm'){
             await window.loadServerStormRoster?.();
             announce('✓ Storm Roster scanned! '+job.result_count+' players loaded into Roster Scanner.');
+          }else if(job.destination==='vs'){
+            await window.vsPointsRefresh?.();
+            announce('✓ '+(job.message||'VS points are ready to review in VS Points.'));
           }else{
+            await window.playerListRefresh?.();
             await refreshPending();
-            announce(job.result_count?
-              '✓ Player List scan finished. '+job.result_count+' new, changed, or uncertain entries are ready for approval.' :
-              '✓ Player List scan finished. No player changes were found.');
+            announce('✓ '+(job.message||'Player List scan finished.'));
           }
         }
       }
@@ -422,11 +429,11 @@
       const queuedText=queuedCount?(' · '+queuedCount+' scan job'+(queuedCount===1?'':'s')+' waiting'):' · No jobs waiting';
       if(active.length){
         const j=active[0];
-        announce('⌛ '+(j.destination==='storm'?'Storm Roster':'Player List')+
+        announce('⌛ '+destinationLabel(j.destination)+
           ' · '+(Number(j.progress)||0)+'% · '+(j.message||'Scanning…')+queuedText);
       }else if(waiting.length){
         const j=waiting[0];
-        announce('⌛ '+(j.destination==='storm'?'Storm Roster':'Player List')+
+        announce('⌛ '+destinationLabel(j.destination)+
           ' waiting to scan · '+queuedCount+' scan job'+(queuedCount===1?'':'s')+' waiting');
       }else if(!newAlerts.length){
         const reviews=jobs.filter(j=>j.status==='review').length;

@@ -32,6 +32,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
+from player_identity import match_master
 from player_list_ocr import scan_upload
 
 BASE = Path(__file__).parent
@@ -210,7 +211,7 @@ def list_players():
             row['is_new'] = bool(row['is_new'])
             row['possibly_removed'] = bool(row['possibly_removed'])
             row['has_avatar'] = bool(row['has_avatar'])
-            row['birthday'] = row['birthday'].isoformat() if row['birthday'] else None
+            row['birthday'] = row['birthday'].strftime('%m-%d') if row['birthday'] else None
             row['avatar_url'] = f"/api/player-list/avatar/{row['id']}" if row['has_avatar'] else None
         return {'players': rows, 'total': len(rows)}
     except Exception as exc:
@@ -236,7 +237,21 @@ def player_avatar(player_id:int):
 
 
 class BirthdayUpdate(BaseModel):
-    birthday: date | None = None
+    birthday: str | None = None
+
+    @field_validator('birthday')
+    @classmethod
+    def month_day(cls, value):
+        if not value:return None
+        # Accept old clients as well, but discard their year.
+        if not re.fullmatch(r'(?:\d{4}-)?\d{2}-\d{2}',value):
+            raise ValueError('Use month and day (MM-DD).')
+        value=value[-5:]
+        try:
+            parsed=datetime.strptime('2000-'+value,'%Y-%m-%d').date()
+        except ValueError:
+            raise ValueError('Use a valid month and day (MM-DD).')
+        return parsed.strftime('%m-%d')
 
 
 @app.patch('/api/player-list/{player_id}/birthday')
@@ -246,13 +261,14 @@ def update_birthday(player_id:int, body:BirthdayUpdate):
     try:
         with db_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute('UPDATE `player list` SET birthday=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s',
-                            (body.birthday,player_id))
-                if cur.rowcount==0:
+                cur.execute('SELECT id FROM `player list` WHERE id=%s',(player_id,))
+                if cur.fetchone() is None:
                     conn.rollback()
                     raise HTTPException(404,detail='Player not found.')
+                cur.execute('UPDATE `player list` SET birthday=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s',
+                            ('2000-'+body.birthday if body.birthday else None,player_id))
             conn.commit()
-        return {'id':player_id,'birthday':body.birthday.isoformat() if body.birthday else None}
+        return {'id':player_id,'birthday':body.birthday}
     except HTTPException:
         raise
     except Exception as exc:
@@ -392,27 +408,27 @@ class ImportData(BaseModel):
 @app.post('/api/player-list/import')
 def import_players(body: ImportData):
     batch_id = str(uuid.uuid4())
-    # Exact normalized matches only. Never merge merely similar player names.
+    # Canonicalize against the shared master directory before combining categories.
+    with db_connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id,player_name,player_rank,normalized_name FROM `player list`")
+            master=cur.fetchall()
     unique = {}
     for member in body.players:
-        key = normalize_name(member.name)
+        current=match_master({'name':member.name},master)
+        if current:
+            member=member.model_copy(update={'name':current['player_name']})
+        key=normalize_name(member.name)
         if key in unique:
-            other = unique[key]
-            if other.rank != member.rank or (
-                other.avatar_base64 and member.avatar_base64
-                and not portraits_match(other.avatar_base64,member.avatar_base64)
-            ):
-                raise HTTPException(409, detail='Ambiguous duplicate player identity. Review separate leaderboard entries before approving.')
-            unique[key] = other.model_copy(update={
-                'power': member.power if member.power is not None else other.power,
-                'kills': member.kills if member.kills is not None else other.kills,
-                'donations': member.donations if member.donations is not None else other.donations,
-                'power_millions': member.power_millions if member.power_millions is not None else other.power_millions,
-                'hq_level': member.hq_level if member.hq_level is not None else other.hq_level,
-                'avatar_base64': member.avatar_base64 or other.avatar_base64,
+            other=unique[key]
+            # Power and Kills observations can have different portraits/rank OCR.
+            # Same canonical player, independent fields; retain every known stat.
+            unique[key]=other.model_copy(update={
+                field:getattr(member,field) if getattr(member,field) is not None else getattr(other,field)
+                for field in ('power','kills','donations','power_millions','hq_level','avatar_base64')
             })
         else:
-            unique[key] = member
+            unique[key]=member
     if not unique:
         raise HTTPException(400, detail='No valid players were provided.')
     created = updated = removed = 0
@@ -497,5 +513,12 @@ def google_drive_picker_script():
 
 # Register the common Media Upload API after the Player List models and import
 # transaction are defined, avoiding circular startup dependencies.
+from vs_points import install_vs_points
+install_vs_points(app, db_connect)
+
 from media_upload import install_media_upload
 install_media_upload(app, db_connect, import_players, ImportData)
+
+@app.get('/vs_ui.js')
+def vs_ui_script():
+    return FileResponse(BASE / 'vs_ui.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})

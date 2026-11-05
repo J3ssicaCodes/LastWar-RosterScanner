@@ -7,6 +7,8 @@ No browser credential or third party media service is required.
 from __future__ import annotations
 
 import json
+import base64
+from datetime import date
 import os
 import shutil
 import tempfile
@@ -21,6 +23,9 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from player_list_ocr import scan_upload, extract_profile
+from player_identity import match_master
+from vs_points_ocr import scan_vs_upload
+from vs_points import stage_vs_result
 from tested_rankings_adapter import scan_tested_rankings_upload
 from storm_roster_ocr import scan_storm_upload
 import cv2
@@ -57,10 +62,11 @@ class DismissRows(BaseModel):
 
 
 class GoogleDriveImport(BaseModel):
-    destination: str = Field(pattern=r'^(storm|players)$')
+    destination: str = Field(pattern=r'^(storm|players|vs)$')
     file_id: str = Field(min_length=8,max_length=256)
     access_token: str = Field(min_length=10,max_length=8192)
     move_to_trash: bool = False
+    upload_date: date | None = None
 
 
 def google_picker_config():
@@ -182,7 +188,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 cur.execute('UPDATE media_scan_jobs SET ' + ','.join(fields) + ' WHERE id=%s', (*values, job_id))
             conn.commit()
 
-    def run_job(job_id: str, destination: str, paths: list[Path], tempdir: Path, drive=None):
+    def run_job(job_id: str, destination: str, paths: list[Path], tempdir: Path, drive=None, upload_date=None):
         finished_successfully=False
         try:
             set_job(job_id, status='scanning', progress=1, message='Preparing scan…')
@@ -199,6 +205,14 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     report.last_at = time.monotonic()
             report.last = None
             report.last_at = 0.0
+            if destination == 'vs':
+                if upload_date is None:raise ValueError('Upload date is missing. Select the file again.')
+                result=scan_vs_upload(paths,report,upload_date)
+                count=stage_vs_result(connect_db,job_id,result)
+                set_job(job_id,status='review',progress=100,count=count,
+                        message=f"{result['weekday']} · {result['score_date']} · {count} VS scores ready to review")
+                finished_successfully=True
+                return
             if destination == 'storm':
                 result = scan_storm_upload(paths, report)
             else:
@@ -258,6 +272,26 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 set_job(job_id,status='ready',progress=100,count=len(dedup),
                         message=f'Storm Roster ready: {len(dedup)} players. Scanner updated.')
             else:
+                from app import Member, ImportData, normalize_name
+                with connect_db() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute('SELECT id,player_name,player_rank,normalized_name,avatar_image FROM `player list`')
+                        master=cur.fetchall()
+                for player in master:
+                    portrait=player.pop('avatar_image',None)
+                    player['avatar_base64']=base64.b64encode(portrait).decode() if portrait else None
+                merge=[];needs_review=[]
+                for row in records:
+                    current=match_master(row,master)
+                    if current:
+                        row={**row,'name':current['player_name']}
+                        if not row.get('review_required') and row.get('rank') in ('R1','R2','R3','R4','R5'):
+                            merge.append(Member(**{field:row.get(field) for field in
+                                ('name','rank','power_millions','power','kills','donations','hq_level','avatar_base64')}))
+                            continue
+                    needs_review.append(row)
+                if merge:import_players(import_model(players=merge,full_capture=False))
+                records=needs_review
                 with connect_db() as conn:
                     try:
                         with conn.cursor() as cur:
@@ -300,6 +334,19 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                         unchanged += 1
                                         continue
                                     change_kind='review' if review else 'updated'
+                                cur.execute('SELECT id,player_name,player_rank FROM `roster upload` ORDER BY id')
+                                previous=match_master(row,cur.fetchall())
+                                if previous and name:
+                                    cur.execute("""UPDATE `roster upload` SET
+                                        power=COALESCE(%s,power),kills=COALESCE(%s,kills),
+                                        donations=COALESCE(%s,donations),power_millions=COALESCE(%s,power_millions),
+                                        hq_level=COALESCE(%s,hq_level),
+                                        player_rank=IF(%s='Unknown',player_rank,%s),
+                                        review_required=TRUE,evidence_base64=COALESCE(%s,evidence_base64)
+                                        WHERE id=%s""",
+                                        (row.get('power'),row.get('kills'),row.get('donations'),row.get('power_millions'),
+                                         row.get('hq_level'),rank,rank,row.get('evidence_base64'),previous['id']))
+                                    continue
                                 cur.execute("""INSERT INTO `roster upload`
                                     (job_id,player_name,player_rank,power_millions,hq_level,avatar_base64,
                                      source_type,leaderboard_tab,leaderboard_position,power,kills,donations,
@@ -333,10 +380,10 @@ def install_media_upload(app, connect_db, import_players, import_model):
                         raise
                 if inserted:
                     set_job(job_id,status='review',progress=100,count=inserted,
-                            message=f'{inserted} new or changed Player List entries waiting for approval.')
+                            message=f'{len(merge)} master records merged; {inserted} new or uncertain entries waiting for approval.')
                 else:
                     set_job(job_id,status='ready',progress=100,count=0,
-                            message='Scan finished. No changes detected; player list remains as it was.')
+                            message=f'Scan finished. {len(merge)} master records merged; new or uncertain detections remain in review.')
             finished_successfully=True
         except Exception as exc:
             # Exception details are shown in the UI only if they contain no secrets.
@@ -373,6 +420,8 @@ def install_media_upload(app, connect_db, import_players, import_model):
     def import_from_google_drive(body: GoogleDriveImport):
         if not all(google_picker_config().values()):
             raise HTTPException(503,detail='Google Drive selection needs one-time app configuration.')
+        if body.destination=='vs' and body.upload_date is None:
+            raise HTTPException(400,detail='Your local upload date is required for VS points.')
         if not FILE_ID_PATTERN.fullmatch(body.file_id):
             raise HTTPException(400,detail='Invalid selected Google Drive file.')
         with connect_db() as conn:
@@ -392,7 +441,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 conn.commit()
             token_data={'file_id':body.file_id,'access_token':body.access_token,
                         'move_to_trash':body.move_to_trash}
-            executor.submit(run_job,job_id,body.destination,[],work,token_data)
+            executor.submit(run_job,job_id,body.destination,[],work,token_data,body.upload_date)
             return {'job_id':job_id,'destination':body.destination,
                     'message':'Google Drive file queued for scanning.'}
         except Exception:
@@ -400,9 +449,11 @@ def install_media_upload(app, connect_db, import_players, import_model):
             raise
 
     @router.post('/upload', status_code=202)
-    async def upload_media(destination: str, files: list[UploadFile] = File(...), full_capture: bool = False):
-        if destination not in ('storm','players'):
-            raise HTTPException(400, detail='Choose Storm Roster or Player List. VS Scores is coming soon.')
+    async def upload_media(destination: str, files: list[UploadFile] = File(...), full_capture: bool = False, upload_date: date | None = None):
+        if destination not in ('storm','players','vs'):
+            raise HTTPException(400, detail='Choose Storm Roster, Player List or VS Points.')
+        if destination=='vs' and upload_date is None:
+            raise HTTPException(400,detail='Your local upload date is required for VS points.')
         if not files or len(files) > MAX_MEDIA_FILES:
             raise HTTPException(400,detail='Choose one recording or up to 75 screenshots.')
         if destination == 'storm' and any(Path(f.filename or '').suffix.lower() in VIDEO_EXTENSIONS for f in files):
@@ -438,7 +489,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                         VALUES (%s,%s,'queued',0,'Waiting to scan',%s)''',
                         (job_id,destination,False))
                 conn.commit()
-            executor.submit(run_job,job_id,destination,saved,work)
+            executor.submit(run_job,job_id,destination,saved,work,upload_date=upload_date)
             return {'job_id':job_id,'destination':destination,'message':'Upload accepted. Waiting to scan.'}
         except Exception:
             shutil.rmtree(work,ignore_errors=True)
@@ -466,7 +517,8 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 with conn.cursor() as cur:
                     cur.execute("""SELECT j.id FROM media_scan_jobs j
                         WHERE j.status IN ('ready','approved','error','interrupted')
-                          AND NOT EXISTS (SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id)""")
+                          AND NOT EXISTS (SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id)
+                          AND NOT EXISTS (SELECT 1 FROM vs_scan_rows v WHERE v.job_id=j.id)""")
                     ids=[r['id'] for r in cur.fetchall()]
                     if ids:
                         marks=','.join(['%s']*len(ids))
