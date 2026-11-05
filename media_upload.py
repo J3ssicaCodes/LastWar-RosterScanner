@@ -239,8 +239,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                 rank=str(row.get('rank') or 'Unknown')
                                 if rank not in ('R1','R2','R3','R4','R5'):
                                     rank='Unknown'
-                                if not name and row.get('internal_position') is None:
-                                    continue
+                                # Even unrecognized complete rows require review; never silently hide them.
                                 reasons=row.get('review_reasons') or []
                                 review=bool(row.get('review_required') or not name or rank=='Unknown')
                                 audit_fields=row.get('audit') or {}
