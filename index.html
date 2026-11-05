@@ -307,7 +307,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
     <div class="pl-title-row"><div><div class="eyebrow">Shared database</div><h2 id="plDirectoryTitle">Current player list</h2></div><div class="pl-dir-actions"><button class="btn" type="button" id="plRefresh">↻ Refresh</button><a class="btn" href="/api/player-list/export.csv" id="plExport">↓ Export CSV</a></div></div>
     <div class="pl-summary"><div><small>Total</small><strong id="plTotal">0</strong></div><div><small>New</small><strong id="plNew">0</strong></div><div><small>Possibly removed</small><strong id="plMissing">0</strong></div><div><small>Active</small><strong id="plActive">0</strong></div></div>
     <div class="pl-filters"><input id="plSearch" type="search" placeholder="Search player names…" aria-label="Search player names"><select id="plFilter" aria-label="Filter players by status"><option value="all">All players</option><option value="new">New players</option><option value="removed">Possibly removed</option><option value="active">Active</option></select></div>
-    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Photo</th><th scope="col">Player name</th><th scope="col">Power</th><th scope="col">HQ</th><th scope="col">Birthday</th><th scope="col">Status</th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="6" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
+    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Photo</th><th scope="col">Player name</th><th scope="col">Power</th><th scope="col">Kills</th><th scope="col">Donations</th><th scope="col">HQ</th><th scope="col">Birthday</th><th scope="col">Status</th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="8" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
     <p class="pl-hint">Players are matched by their names, ignoring capitalization and spaces. An incomplete capture should not mark other players as missing. Missing players are flagged, never deleted.</p>
   </section>
 </section>
@@ -2284,7 +2284,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       const [status,cls]=p.possibly_removed?['Possibly removed','removed']:p.is_new?['New player','new']:['Active','active'];
       const birthday=p.birthday?new Date(p.birthday+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—';
       const avatar=p.has_avatar?`<img class="pl-avatar" loading="lazy" src="${escape(p.avatar_url)}?v=${encodeURIComponent(p.avatar_updated_at||'1')}" alt="${escape(p.name)} video portrait">`:'<span class="pl-avatar-empty" title="No video portrait yet">♡</span>';
-      return `<tr><td>${avatar}</td><td class="pl-player-name">${escape(p.name)}</td><td>${p.power_millions==null?'—':escape(Number(p.power_millions).toFixed(1)+'M')}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
+      return `<tr><td>${avatar}</td><td class="pl-player-name">${escape(p.name)}</td><td>${p.power!=null?escape(Number(p.power).toLocaleString()):p.power_millions!=null?escape(Number(p.power_millions).toFixed(1)+'M'):'—'}</td><td>${p.kills!=null?escape(Number(p.kills).toLocaleString()):'—'}</td><td>${p.donations!=null?escape(Number(p.donations).toLocaleString()):'—'}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
        <td><div class="pl-birthday-wrap"><span class="pl-birthday-date" title="${escape(p.birthday||'Birthday not set')}">${escape(birthday)}</span><button type="button" class="pl-calendar-btn" data-player-birthday="${p.id}" aria-label="Edit ${escape(p.name)} birthday" title="Set birthday">📅</button><input class="pl-birthday-input" data-birthday-input="${p.id}" type="date" value="${escape(p.birthday||'')}" aria-label="Birthday for ${escape(p.name)}" hidden></div></td>
        <td><span class="pl-status ${cls}">${status}</span></td></tr>`;
     };
@@ -2293,10 +2293,10 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       const group=selected.filter(p=>p.rank===rank);
       if(!group.length)continue;
       const collapsed=collapsedRanks.has(rank);
-      html+=`<tr class="pl-rank-heading"><th colspan="6"><button type="button" data-rank-toggle="${rank}" aria-expanded="${!collapsed}"><span><strong>${rank}</strong> · ${group.length} players</span><small>${collapsed?'▸ Expand':'▾ Collapse'}</small></button></th></tr>`;
+      html+=`<tr class="pl-rank-heading"><th colspan="8"><button type="button" data-rank-toggle="${rank}" aria-expanded="${!collapsed}"><span><strong>${rank}</strong> · ${group.length} players</span><small>${collapsed?'▸ Expand':'▾ Collapse'}</small></button></th></tr>`;
       if(!collapsed)html+=group.map(renderPlayer).join('');
     }
-    $('plDirectoryBody').innerHTML=html||'<tr><td colspan="6" class="pl-empty">No players to display.</td></tr>';
+    $('plDirectoryBody').innerHTML=html||'<tr><td colspan="8" class="pl-empty">No players to display.</td></tr>';
   }
   async function loadDirectory(){
     try{
@@ -2304,7 +2304,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       state.players=result.players||[];
       renderDirectory();
     }catch(err){
-      $('plDirectoryBody').innerHTML='<tr><td colspan="6" class="pl-empty">Player database unavailable. Check Render connection settings.</td></tr>';
+      $('plDirectoryBody').innerHTML='<tr><td colspan="8" class="pl-empty">Player database unavailable. Check Render connection settings.</td></tr>';
     }
   }
   $('plDrop').addEventListener('click',()=>{$('plFiles').click();});
