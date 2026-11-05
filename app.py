@@ -200,8 +200,8 @@ def list_players():
                     avatar_image IS NOT NULL AS has_avatar, avatar_updated_at,
                     first_seen_at, last_seen_at, updated_at
                     FROM `player list`
-                    ORDER BY player_rank DESC, power_millions IS NULL,
-                    power_millions DESC, LOWER(player_name)
+                    ORDER BY player_rank DESC, power IS NULL, power DESC,
+                    power_millions IS NULL, power_millions DESC, LOWER(player_name)
                     LIMIT 10000""")
                 rows=cur.fetchall()
         for row in rows:
@@ -345,6 +345,27 @@ def normalize_name(name):
     return re.sub(r'\s+','',unicodedata.normalize('NFKC',name).casefold())
 
 
+def portraits_match(left: str | None, right: str | None) -> bool:
+    # Never combine categories on username alone. Require matching rank and a
+    # second independent signal, a perceptually matching avatar.
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    try:
+        import cv2
+        import numpy as np
+        a = cv2.imdecode(np.frombuffer(base64.b64decode(left,validate=True),np.uint8),cv2.IMREAD_GRAYSCALE)
+        b = cv2.imdecode(np.frombuffer(base64.b64decode(right,validate=True),np.uint8),cv2.IMREAD_GRAYSCALE)
+        if a is None or b is None:
+            return False
+        aa = cv2.resize(a,(24,24),interpolation=cv2.INTER_AREA)
+        bb = cv2.resize(b,(24,24),interpolation=cv2.INTER_AREA)
+        return float(np.mean(cv2.absdiff(aa,bb))) < 12.0
+    except Exception:
+        return False
+
+
 class Member(BaseModel):
     name: str = Field(min_length=2,max_length=80)
     rank: str = Field(pattern=r'^R[1-5]$')
@@ -379,7 +400,7 @@ def import_players(body: ImportData):
             other = unique[key]
             if other.rank != member.rank or (
                 other.avatar_base64 and member.avatar_base64
-                and other.avatar_base64 != member.avatar_base64
+                and not portraits_match(other.avatar_base64,member.avatar_base64)
             ):
                 raise HTTPException(409, detail='Ambiguous duplicate player identity. Review separate leaderboard entries before approving.')
             unique[key] = other.model_copy(update={
