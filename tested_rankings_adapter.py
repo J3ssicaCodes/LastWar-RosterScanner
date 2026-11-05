@@ -219,7 +219,7 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable):
                         if line:
                             output_tail.append(line.strip())
                             output_tail=output_tail[-12:]
-                            found=re.match(r'page\\s+(\\d+):\\s+(\\d+)\\s+non-pinned',line)
+                            found=re.match(r'page\s+(\d+):\s+(\d+)\s+non-pinned',line)
                             if found:
                                 page_number=max(page_number,int(found.group(1)))
                                 progress(29+round(56*page_number/max(1,len(kept))),100,
