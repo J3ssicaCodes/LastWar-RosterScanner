@@ -31,7 +31,7 @@ class SQLDatabase:
             player_name TEXT,normalized_name TEXT,points INTEGER,source_job_id TEXT,updated_at TEXT,
             UNIQUE(score_date,normalized_name),UNIQUE(score_date,player_id));
             CREATE TABLE vs_scan_rows (id INTEGER PRIMARY KEY,job_id TEXT,upload_date TEXT,
-            score_date TEXT,weekday TEXT,player_name TEXT,points INTEGER,review_reasons TEXT,evidence_base64 TEXT);
+            score_date TEXT,weekday TEXT,player_name TEXT,points INTEGER,review_reasons TEXT,evidence_base64 TEXT,ocr_name TEXT);
             CREATE TABLE media_scan_jobs (id TEXT PRIMARY KEY,status TEXT,message TEXT,updated_at TEXT,updated_player_ids TEXT);
         ''')
     def __call__(self):return self
@@ -219,7 +219,7 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         db.db.execute("INSERT INTO media_scan_jobs (id,status) VALUES ('job','review')")
         db.db.execute("INSERT INTO `player list` (player_name,normalized_name,player_rank) VALUES ('Lady Jess','ladyjess','R4')")
         for idx in (1,2):
-            db.db.execute("INSERT INTO vs_scan_rows (id,job_id,upload_date,score_date,player_name) VALUES (?,'job','2026-11-05','2026-11-04','Ladv Jess')",(idx,))
+            db.db.execute("INSERT INTO vs_scan_rows (id,job_id,upload_date,score_date,player_name,ocr_name) VALUES (?,'job','2026-11-05','2026-11-04','Lady Jesso','Ladv Jess')",(idx,))
         first=VSApproval(job_id='job',score_date=date(2026,11,4),auto_match=True,
                          rows=[{'id':1,'name':'Lady Jess','points':100}])
         self.assertEqual(approve(first)['approved'],1)

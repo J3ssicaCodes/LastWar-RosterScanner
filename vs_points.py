@@ -62,9 +62,9 @@ def stage_vs_result(connect_db, job_id, result):
                     valid = type(points) is int and 0 <= points <= 9007199254740991
                     if player and valid:
                         scores[player['id']].add(points)
-                    candidates.append((row, name, player, valid))
+                    candidates.append((row, raw, name, player, valid))
                 saved_ids = set()
-                for row, name, player, valid in candidates:
+                for row, raw, name, player, valid in candidates:
                     points = row['points']
                     if player and valid and len(scores[player['id']]) == 1:
                         if player['id'] not in saved_ids:
@@ -78,11 +78,11 @@ def stage_vs_result(connect_db, job_id, result):
                     if player and len(scores[player['id']]) > 1:
                         reasons.append('Conflicting points for the same player')
                     cur.execute('''INSERT INTO vs_scan_rows
-                        (job_id,score_date,upload_date,weekday,player_name,points,review_reasons,evidence_base64)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)''',
+                        (job_id,score_date,upload_date,weekday,player_name,points,review_reasons,evidence_base64,ocr_name)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
                         (job_id,result['score_date'],result['upload_date'],result['weekday'],
                          player['player_name'] if player else name, points if valid else None,
-                         json.dumps(reasons),row.get('evidence_base64')))
+                         json.dumps(reasons),row.get('evidence_base64'),raw[:255]))
                     pending += 1
                 record_scan_players(cur,job_id,saved_ids,updated)
             conn.commit()
@@ -121,8 +121,12 @@ def install_vs_points(app, connect_db):
                     points BIGINT UNSIGNED NULL,
                     review_reasons TEXT NULL,
                     evidence_base64 MEDIUMTEXT NULL,
+                    ocr_name VARCHAR(255) NULL,
                     KEY idx_vs_pending_job (job_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4''')
+                cur.execute('SHOW COLUMNS FROM vs_scan_rows LIKE %s',('ocr_name',))
+                if not cur.fetchone():
+                    cur.execute('ALTER TABLE vs_scan_rows ADD COLUMN ocr_name VARCHAR(255) NULL')
             conn.commit()
 
     @router.get('')
@@ -196,10 +200,10 @@ def install_vs_points(app, connect_db):
             try:
                 with conn.cursor() as cur:
                     marks=','.join(['%s']*len(ids))
-                    cur.execute(f'SELECT id,upload_date,player_name FROM vs_scan_rows WHERE job_id=%s AND id IN ({marks}) FOR UPDATE', (body.job_id,*ids))
+                    cur.execute(f'SELECT id,upload_date,COALESCE(ocr_name,player_name) AS original_name FROM vs_scan_rows WHERE job_id=%s AND id IN ({marks}) FOR UPDATE', (body.job_id,*ids))
                     staged=cur.fetchall()
                     if len(staged)!=len(ids):raise HTTPException(409,detail='Review changed. Refresh and retry.')
-                    original_names={source['id']:source['player_name'] for source in staged}
+                    original_names={source['id']:source['original_name'] for source in staged}
                     for source in staged:
                         monday=score_date_for_day(source['upload_date'],0)
                         saturday=score_date_for_day(source['upload_date'],5)

@@ -118,6 +118,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     job_id CHAR(36) NOT NULL,
                     player_name VARCHAR(255) NOT NULL,
                     player_rank VARCHAR(8) NOT NULL,
+                    ocr_name VARCHAR(255) NULL,
                     leaderboard_tab VARCHAR(12) NULL,
                     leaderboard_position SMALLINT UNSIGNED NULL,
                     power BIGINT UNSIGNED NULL,
@@ -148,6 +149,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4''')
                 # Existing staging databases require non-destructive migrations.
                 for field,definition in (
+                    ('ocr_name','VARCHAR(255) NULL'),
                     ('leaderboard_tab','VARCHAR(12) NULL'),
                     ('leaderboard_position','SMALLINT UNSIGNED NULL'),
                     ('power','BIGINT UNSIGNED NULL'),
@@ -303,7 +305,8 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     corrections=load_name_corrections(cur)
                 merge=[];needs_review=[]; merged_ids=set()
                 for row in records:
-                    row={**row,'name':corrected_name(row.get('ocr_name',row.get('name')) or '',corrections,exact.keys())}
+                    raw_name=row.get('ocr_name',row.get('name')) or ''
+                    row={**row,'ocr_name':raw_name,'name':corrected_name(raw_name,corrections,exact.keys())}
                     current=exact.get(name_key(row['name']))
                     stat=row.get('tab')
                     valid_stat=not stat or (type(row.get(stat)) is int and 0 <= row[stat] <= 18446744073709551615)
@@ -387,8 +390,8 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                 cur.execute("""INSERT INTO `roster upload`
                                     (job_id,player_name,player_rank,power_millions,hq_level,avatar_base64,
                                      source_type,leaderboard_tab,leaderboard_position,power,kills,donations,
-                                     review_required,review_reasons,source_image,audit_json,evidence_base64,change_kind)
-                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                     review_required,review_reasons,source_image,audit_json,evidence_base64,change_kind,ocr_name)
+                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                     (job_id,name[:255],rank,row.get('power_millions'),row.get('hq_level'),
                                      row.get('avatar_base64'),row.get('source_type','leaderboard'),
                                      row.get('tab'),row.get('internal_position'),row.get('power'),
@@ -396,7 +399,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                      json.dumps(reasons,ensure_ascii=False)[:8000],
                                      str(row.get('source_image') or '')[:255],
                                      json.dumps(audit_fields,ensure_ascii=False)[:60000],
-                                     str(row.get('evidence_base64') or '')[:320000] or None,change_kind))
+                                     str(row.get('evidence_base64') or '')[:320000] or None,change_kind,row['ocr_name'][:255]))
                             cur.execute('SELECT COUNT(*) AS n FROM `roster upload` WHERE job_id=%s',(job_id,))
                             inserted=int(cur.fetchone()['n'])
                             details=result.get('diagnostics') or {
@@ -635,7 +638,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
             try:
                 with conn.cursor() as cur:
                     marks=','.join(['%s']*len(ids))
-                    cur.execute(f'''SELECT id,job_id,player_name,avatar_base64,leaderboard_tab FROM `roster upload`
+                    cur.execute(f'''SELECT id,job_id,COALESCE(ocr_name,player_name) AS original_name,avatar_base64,leaderboard_tab FROM `roster upload`
                         WHERE id IN ({marks}) FOR UPDATE''',tuple(ids))
                     matching={int(row['id']):row for row in cur.fetchall()}
                     if len(matching)!=len(ids):
@@ -664,7 +667,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                                hq_level=item.hq_level,avatar_base64=info['avatar_base64'],
                                                power=item.power,kills=item.kills,donations=item.donations))
                         keys_by_job[info['job_id']].add(name_key(name))
-                        learn_name_correction(cur,info['player_name'],name)
+                        learn_name_correction(cur,info['original_name'],name)
                     result=import_players(import_model(players=approved,full_capture=False),connection=conn)
                     cur.execute('SELECT id,player_name FROM `player list` WHERE last_import_id=%s',(result['import_id'],))
                     saved=exact_player_index(cur.fetchall())
