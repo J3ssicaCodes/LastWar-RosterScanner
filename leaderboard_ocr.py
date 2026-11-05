@@ -362,7 +362,8 @@ def calibrate_row_geometry(images,layout):
 def extract_complete_rows(image,geometry):
     results=[]
     for start,end in zip(geometry.boundaries,geometry.boundaries[1:]):
-        if start<geometry.top or end>geometry.bottom:
+        edge=max(5,int(geometry.pitch*.035))
+        if start<=geometry.top+edge or end>=geometry.bottom-edge:
             geometry.rejected.append({'top':start,'bottom':end,'reason':'clipped by scrolling viewport'})
             continue
         ratio=(end-start)/max(geometry.pitch,1)
