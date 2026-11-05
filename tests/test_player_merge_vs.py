@@ -126,15 +126,35 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         from vs_points_ocr import recheck_neighbors
         original={'internal_position':4,'page':1,'name':'Ladv Jess','value':'123',
                   'name_conf':85,'value_conf':85}
-        frames=iter([{'name':'Lady Jess','value':'124'}, {'name':'Lady Jess','value':'125'}])
+        frames={39:{'name':'Lady Jess','value':'124'}, 41:{'name':'Lady Jess','value':'125'}}
         capture=Mock()
-        capture.read.side_effect=lambda: (True,next(frames))
+        cursor=0
+
+        def seek(_, frame):
+            nonlocal cursor
+            cursor=frame
+            return True
+
+        def grab():
+            nonlocal cursor
+            cursor+=1
+            return True
+
+        def read():
+            frame=frames[cursor]
+            grab()
+            return True,frame
+
+        capture.set.side_effect=seek
+        capture.grab.side_effect=grab
+        capture.read.side_effect=read
         def read_frame(image,anchors):
             return [{**image,'matched_position':4,'name_conf':90,'value_conf':90}]
         with patch('vs_points_ocr.cv2.VideoCapture',return_value=capture):
             confirmed=recheck_neighbors({4:original},{1:('sample.mp4',40)},{4:['Check']},
                                        str,Mock(),read_frame)
-        self.assertEqual([call.args[1] for call in capture.set.call_args_list],[39,41])
+        self.assertEqual([call.args[1] for call in capture.set.call_args_list],[39])
+        capture.grab.assert_called_once_with()
         self.assertEqual(confirmed[4],{'name'})
         self.assertEqual(original['name'],'Lady Jess')
         self.assertEqual(original['value'],'123')

@@ -18,6 +18,7 @@ from scipy.ndimage import uniform_filter1d
 
 # Reuse pause extraction from this directory if desired.
 from extract_ranking_pages import detect,extract
+from ranking_ocr_engine import read_ranking_text
 
 
 def tabs(im):
@@ -117,6 +118,8 @@ def enlarge(im,scale=2,interp=cv2.INTER_CUBIC):
 
 
 def text_with_conf(im,psm=7,whitelist=None):
+    cached=read_ranking_text(im,psm,whitelist)
+    if cached is not None:return cached
     args=f'--psm {psm}'
     if whitelist:args+=f' -c tessedit_char_whitelist={whitelist}'
     try:
@@ -228,12 +231,7 @@ def refine_numeric_ocr(ob,target_length=None):
     candidates=[]
     for src,psm in variants:
         big=cv2.resize(src,None,fx=3,fy=3,interpolation=cv2.INTER_CUBIC)
-        try:
-            t=pytesseract.image_to_string(big,
-                config=f'--psm {psm} -c tessedit_char_whitelist=0123456789',
-                timeout=18)
-        except (RuntimeError,pytesseract.TesseractError):
-            continue
+        t,_=text_with_conf(big,psm,'0123456789')
         val=re.sub(r'\D','',t)
         if val:candidates.append(val)
     tally=collections.Counter(candidates)
@@ -398,7 +396,7 @@ def main():
         ix=item['page'];fp=out/item['image']
         # OCR is the expensive operation. Cache only if the actual image bytes
         # and scanner version match; reused output directories stay safe.
-        digest=hashlib.sha256(fp.read_bytes()+b'full-rows-v3').hexdigest()
+        digest=hashlib.sha256(fp.read_bytes()+b'full-rows-v4').hexdigest()
         cf=cache_dir/f'page_{ix:03d}.pkl';keyfile=cache_dir/f'page_{ix:03d}.sha256'
         if not a.reprocess and cf.exists() and keyfile.exists() and keyfile.read_text()==digest:
             observations,meta=pickle.loads(cf.read_bytes())
@@ -463,6 +461,8 @@ def main():
             r['review_reason']=';'.join(issues)
     # Determine consensus from most common values, prefer unambiguous repeated OCR.
     final=[];review=[]
+    last_proof_path=None
+    proof_frame=None
     value_key={'Power':'power','Kills':'kills','Donation':'donations'}
     for pos,obs in sorted(groups.items()):
         byvalue=collections.Counter(r['value'] for r in obs if r['value'].isdigit())
@@ -473,7 +473,12 @@ def main():
         best['selected']=True
         imgfn=f'avatar_{pos:03d}.png'
         cv2.imwrite(str(out/'avatars'/imgfn),best['player_crop'],[cv2.IMWRITE_PNG_COMPRESSION,3])
-        cv2.imwrite(str(out/'row_crops'/f'row_{pos:03d}.png'),cv2.imread(best.get('image_path',str(out/'pages'/f"page_{best['page']:03d}.png")))[best['y']-60:best['y']+65,55:1065])
+        proof_path=best.get('image_path',str(out/'pages'/f"page_{best['page']:03d}.png"))
+        if proof_path!=last_proof_path:
+            proof_frame=cv2.imread(proof_path)
+            last_proof_path=proof_path
+        cv2.imwrite(str(out/'row_crops'/f'row_{pos:03d}.png'),
+                    proof_frame[best['y']-60:best['y']+65,55:1065])
         allissues=sorted(set(it for r in obs for it in r['review_reason'].split(';') if it))
         if pitch_inferred:allissues.append('review_inferred_pitch_from_screenshot')
         if len(set(r['value'] for r in obs if r['value']))>1: allissues.append('multi_view_difference')

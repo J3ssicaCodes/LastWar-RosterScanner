@@ -166,12 +166,19 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
                 captures[path] = cv2.VideoCapture(str(path))
             cap = captures[path]
             neighbors = defaultdict(list)
+            previous_read = False
             for adjacent in (frame-1,frame+1):
-                if adjacent < 0 or not cap.set(cv2.CAP_PROP_POS_FRAMES,adjacent):
+                if adjacent < 0:
+                    continue
+                # After reading frame-1 the decoder is already at frame.
+                # Skip that one frame instead of seeking back to a keyframe.
+                positioned = cap.grab() if previous_read else False
+                if not positioned and not cap.set(cv2.CAP_PROP_POS_FRAMES,adjacent):
                     continue
                 ok,image = cap.read()
                 if not ok:
                     continue
+                previous_read = adjacent == frame-1
                 readings = read_frame(image,anchors)
                 for reading in readings:
                     neighbors[reading['matched_position']].append(reading)
