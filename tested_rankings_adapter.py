@@ -15,6 +15,8 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+import select
 import tempfile
 from collections import defaultdict
 from pathlib import Path
@@ -196,13 +198,48 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable):
             # frames to recover from still images.
             scan_input=(str(video_path) if kind=='video'
                         else str(root / pages[0]['original_filename']))
-            command=[sys.executable,str(Path(__file__).with_name('scan_rankings.py')),
+            command=[sys.executable,'-u',str(Path(__file__).with_name('scan_rankings.py')),
                      scan_input,'--output',str(folder),'--keep-pages']
-            result=subprocess.run(command,capture_output=True,text=True,timeout=900)
-            if result.returncode:
-                message=(result.stderr or result.stdout or '').strip()[-650:]
-                raise ValueError('Tested ranking scanner could not process the '+tab+
-                                 ' pages: '+message)
+            # Preserve the supplied OCR algorithm, but stream its per-page
+            # milestones instead of blocking silently until a 15-minute timeout.
+            # Python -u ensures that rendered status is available during a scan.
+            scan_start=time.monotonic()
+            output_tail=[]
+            page_number=0
+            deadline=scan_start+720
+            process=subprocess.Popen(command,stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,text=True,bufsize=1)
+            try:
+                while True:
+                    if time.monotonic()>deadline:
+                        raise TimeoutError('Ranking OCR exceeded 12 minutes. Try a shorter recording.')
+                    available,_,_=select.select([process.stdout],[],[],3)
+                    if available:
+                        line=process.stdout.readline()
+                        if line:
+                            output_tail.append(line.strip())
+                            output_tail=output_tail[-12:]
+                            found=re.match(r'page\\s+(\\d+):\\s+(\\d+)\\s+non-pinned',line)
+                            if found:
+                                page_number=max(page_number,int(found.group(1)))
+                                progress(29+round(56*page_number/max(1,len(kept))),100,
+                                    f'Recognizing {tab} page {page_number} of {len(kept)} ({found.group(2)} rows)…')
+                            elif 'calibrated row height:' in line:
+                                progress(29,100,f'Calibrating {tab} player rows…')
+                            elif 'SUMMARY' in line:
+                                progress(85,100,f'Checking {tab} ranking order and gaps…')
+                    if process.poll() is not None:
+                        output_tail.extend(line.strip() for line in process.stdout if line.strip())
+                        break
+                if process.returncode:
+                    # Never expose raw traceback or local file paths to users.
+                    raise ValueError(f'The {tab} ranking OCR could not finish; check the scan details and retry.')
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=5)
+                if process.stdout:
+                    process.stdout.close()
             if not (folder/'rankings.csv').exists():
                 raise ValueError('Ranking OCR produced no results.')
             report=json.loads((folder/'audit.json').read_text())
