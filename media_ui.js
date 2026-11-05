@@ -156,6 +156,7 @@
           '<td>'+avatar+'</td><td><select data-field="rank">'+['Unknown','R5','R4','R3','R2','R1'].map(rank=>'<option value="'+rank+'" '+(p.rank===rank?'selected':'')+'>'+rank+'</option>').join('')+'</select></td>'+
           '<td><input data-field="name" value="'+escape(p.name||'')+'" maxlength="80" aria-label="Player name">'+
           (p.tab?'<small class="pl-source-label">'+escape(p.tab.toUpperCase())+'</small>':'')+
+          (p.source_image?'<small class="pl-source-label" title="Original file and timestamp">'+escape(p.source_image)+'</small>':'')+
           (flag?'<small class="media-flag">'+escape(flag)+'</small>':'')+'</td>'+
           numeric('power')+numeric('kills')+numeric('donations')+numeric('power_millions','0.1')+numeric('hq_level')+'</tr>';
       }).join('');
