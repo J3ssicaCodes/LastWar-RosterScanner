@@ -236,7 +236,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
 </head>
 <body>
 <main class="shell">
-<header class="top"><div><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><span class="tag"><i></i> Media scans run on Render</span><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch appearance" aria-pressed="false">☀️ Light mode</button></div></header>
+<header class="top"><div><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch appearance" aria-pressed="false">☀️ Light mode</button></div></header>
 <nav class="workspace-tabs" role="tablist" aria-label="Alliance workspace sections">
   <button type="button" class="workspace-tab" id="rosterScannerTab" role="tab" aria-controls="rosterScannerView" aria-selected="true" tabindex="0" data-workspace-tab="scanner"><span class="workspace-tab-icon" aria-hidden="true">▦</span><span>Roster Scanner</span></button>
   <button type="button" class="workspace-tab" id="playerListTab" role="tab" aria-controls="playerListView" aria-selected="false" tabindex="-1" data-workspace-tab="players"><span class="workspace-tab-icon" aria-hidden="true">♙</span><span>Player List</span></button>
@@ -260,7 +260,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
 <div id="fileList" class="file-grid"></div>
 <div class="actions"><button class="btn primary" id="scanBtn" disabled>✧ &nbsp; Scan images</button><button class="btn" id="cancelBtn" hidden>Stop after current image</button><button class="btn danger" id="clearBtn" disabled>Clear images</button><span id="scanHint" class="count push">Upload screenshots to begin</span></div>
 <div id="progressArea" class="progress-shell hidden" role="status" aria-live="polite"><div class="progress-row"><span id="progressLabel">Starting OCR</span><span id="progressPercent">0%</span></div><div class="progress-track"><div id="progressFill" class="progress-fill"></div></div></div>
-<p class="info">Auto detect reads only the <strong>Task Force A / B</strong> label at the top of each screenshot and applies that team to everyone pictured. If the label cannot be read, choose A or B on the screenshot to correct all its players instantly. The first scan needs internet access to load the OCR engine. Once loaded, images are processed locally in your browser.</p>
+<p class="info">Auto detect reads only the <strong>Task Force A / B</strong> label at the top of each screenshot and applies that team to everyone pictured. If the label cannot be read, choose A or B on the screenshot to correct all its players instantly. The first scan needs internet access to load the OCR engine.</p>
 </section>
 <section class="panel" aria-labelledby="resultsHeading"><div class="panel-title"><h2 id="resultsHeading">02 &nbsp; Team rosters and assignments</h2><span class="hint">Team → Status → Power (highest first) · Pencil to edit player details · Phases always editable</span></div>
 <div class="stats"><div class="stat"><small>Total players</small><strong id="totalStat">0</strong></div><div class="stat"><small>Participants</small><strong id="participantsStat">0</strong></div><div class="stat"><small>Substitutes</small><strong id="subsStat">0</strong></div><div class="stat"><small>Needs review</small><strong id="reviewStat">0</strong></div></div>
@@ -312,7 +312,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
   </section>
 </section>
 
-<footer class="app-footer"><strong>This app was created by Lady Jess</strong><span>Media Upload runs on Render · Temporary videos are deleted after scanning</span></footer>
+<footer class="app-footer"><strong>This app was created by Lady Jess</strong></footer>
 </main>
 <dialog id="eventManagerDialog" class="event-manager-dialog" aria-labelledby="eventManagerTitle">
   <header class="event-manager-head"><div><div class="eyebrow">Event manager</div><h2 id="eventManagerTitle">Maps and building priorities</h2><p>Configure 20 priority slots per phase. Desert Storm and Canyon Storm are editable, and any event can have ignored areas. Saved on this device.</p></div><button id="closeEventManager" class="btn smallbtn" type="button">Close ✕</button></header>
@@ -2356,6 +2356,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 })();
 
 </script>
+<script defer src="/google_drive_picker.js"></script>
 <script defer src="/media_ui.js"></script>
 </body>
 </html>
