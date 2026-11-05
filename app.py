@@ -108,9 +108,13 @@ def initialize_db():
                     normalized_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
                     player_rank VARCHAR(2) NOT NULL,
                     power_millions DECIMAL(12,1) NULL,
+                    power BIGINT UNSIGNED NULL,
+                    kills BIGINT UNSIGNED NULL,
+                    donations BIGINT UNSIGNED NULL,
                     hq_level SMALLINT UNSIGNED NULL,
                     birthday DATE NULL,
                     avatar_image MEDIUMBLOB NULL,
+                    avatar_mime VARCHAR(24) NOT NULL DEFAULT 'image/webp',
                     avatar_updated_at DATETIME(6) NULL,
                     is_new BOOLEAN NOT NULL DEFAULT TRUE,
                     possibly_removed BOOLEAN NOT NULL DEFAULT FALSE,
@@ -136,6 +140,10 @@ def initialize_db():
                     ('birthday', 'DATE NULL'),
                     ('avatar_image', 'MEDIUMBLOB NULL'),
                     ('avatar_updated_at', 'DATETIME(6) NULL'),
+                    ('avatar_mime', "VARCHAR(24) NOT NULL DEFAULT 'image/webp'"),
+                    ('power','BIGINT UNSIGNED NULL'),
+                    ('kills','BIGINT UNSIGNED NULL'),
+                    ('donations','BIGINT UNSIGNED NULL'),
                 ):
                     cur.execute('SHOW COLUMNS FROM `player list` LIKE %s',(field,))
                     if not cur.fetchone():
@@ -188,7 +196,7 @@ def list_players():
         with db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("""SELECT id, player_name AS name, player_rank AS `rank`,
-                    power_millions, hq_level, birthday, is_new, possibly_removed,
+                    power_millions, power, kills, donations, hq_level, birthday, is_new, possibly_removed,
                     avatar_image IS NOT NULL AS has_avatar, avatar_updated_at,
                     first_seen_at, last_seen_at, updated_at
                     FROM `player list`
@@ -215,11 +223,11 @@ def player_avatar(player_id:int):
     try:
         with db_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute('SELECT avatar_image FROM `player list` WHERE id=%s',(player_id,))
+                cur.execute('SELECT avatar_image,avatar_mime FROM `player list` WHERE id=%s',(player_id,))
                 row=cur.fetchone()
         if not row or not row['avatar_image']:
             raise HTTPException(404,detail='Portrait not found.')
-        return Response(bytes(row['avatar_image']),media_type='image/webp',
+        return Response(bytes(row['avatar_image']),media_type=row.get('avatar_mime') or 'image/webp',
                         headers={'Cache-Control':'public, max-age=3600','X-Content-Type-Options':'nosniff'})
     except HTTPException:
         raise
@@ -342,7 +350,10 @@ class Member(BaseModel):
     rank: str = Field(pattern=r'^R[1-5]$')
     power_millions: float | None = Field(default=None,ge=0,le=1000000)
     hq_level: int | None = Field(default=None,ge=1,le=99)
-    avatar_base64: str | None = Field(default=None,max_length=47000)
+    avatar_base64: str | None = Field(default=None,max_length=400000)
+    power: int | None = Field(default=None,ge=0,le=18446744073709551615)
+    kills: int | None = Field(default=None,ge=0,le=18446744073709551615)
+    donations: int | None = Field(default=None,ge=0,le=18446744073709551615)
 
     @field_validator('name')
     @classmethod
@@ -361,7 +372,26 @@ class ImportData(BaseModel):
 def import_players(body: ImportData):
     batch_id = str(uuid.uuid4())
     # Exact normalized matches only. Never merge merely similar player names.
-    unique = {normalize_name(member.name): member for member in body.players}
+    unique = {}
+    for member in body.players:
+        key = normalize_name(member.name)
+        if key in unique:
+            other = unique[key]
+            if other.rank != member.rank or (
+                other.avatar_base64 and member.avatar_base64
+                and other.avatar_base64 != member.avatar_base64
+            ):
+                raise HTTPException(409, detail='Ambiguous duplicate player identity. Review separate leaderboard entries before approving.')
+            unique[key] = other.model_copy(update={
+                'power': member.power if member.power is not None else other.power,
+                'kills': member.kills if member.kills is not None else other.kills,
+                'donations': member.donations if member.donations is not None else other.donations,
+                'power_millions': member.power_millions if member.power_millions is not None else other.power_millions,
+                'hq_level': member.hq_level if member.hq_level is not None else other.hq_level,
+                'avatar_base64': member.avatar_base64 or other.avatar_base64,
+            })
+        else:
+            unique[key] = member
     if not unique:
         raise HTTPException(400, detail='No valid players were provided.')
     created = updated = removed = 0
@@ -378,30 +408,40 @@ def import_players(body: ImportData):
                                 portrait=base64.b64decode(member.avatar_base64,validate=True)
                             except (ValueError,binascii.Error) as exc:
                                 raise HTTPException(400,detail='Invalid portrait image.') from exc
-                            if len(portrait)>32000 or len(portrait)<50 or not portrait.startswith(b'RIFF') or portrait[8:12]!=b'WEBP':
-                                raise HTTPException(400,detail='Invalid portrait format or size.')
+                            if len(portrait)>256000 or len(portrait)<50 or not (
+                                (portrait.startswith(b'RIFF') and portrait[8:12]==b'WEBP') or
+                                portrait.startswith(b'\x89PNG\r\n\x1a\n')
+                            ):
+                                raise HTTPException(400,detail='Invalid PNG or WebP portrait image.')
+                        avatar_mime = ('image/png' if portrait and portrait.startswith(b'\x89PNG') else 'image/webp')
                         cur.execute('SELECT id FROM `player list` WHERE normalized_name=%s FOR UPDATE', (key,))
                         existing = cur.fetchone()
                         if existing:
                             cur.execute("""UPDATE `player list` SET
                                 player_name=%s, player_rank=%s,
                                 power_millions=COALESCE(%s,power_millions),
+                                power=COALESCE(%s,power),
+                                kills=COALESCE(%s,kills),
+                                donations=COALESCE(%s,donations),
                                 hq_level=COALESCE(%s,hq_level),
                                 avatar_image=COALESCE(%s,avatar_image),
+                                avatar_mime=IF(%s IS NOT NULL,%s,avatar_mime),
                                 avatar_updated_at=IF(%s IS NOT NULL,UTC_TIMESTAMP(6),avatar_updated_at),
                                 is_new=FALSE, possibly_removed=FALSE,
                                 last_seen_at=UTC_TIMESTAMP(6),updated_at=UTC_TIMESTAMP(6),last_import_id=%s
                                 WHERE id=%s""",
                                 (member.name, member.rank, member.power_millions,
-                                 member.hq_level, portrait, portrait, batch_id, existing['id']))
+                                 member.power,member.kills,member.donations,
+                                 member.hq_level,portrait,portrait,avatar_mime,
+                                 portrait,batch_id,existing['id']))
                             updated += 1
                         else:
                             cur.execute("""INSERT INTO `player list` (
-                                player_name,normalized_name,player_rank,power_millions,hq_level,
-                                avatar_image,avatar_updated_at,is_new,possibly_removed,last_import_id)
-                                VALUES (%s,%s,%s,%s,%s,%s,IF(%s IS NOT NULL,UTC_TIMESTAMP(6),NULL),TRUE,FALSE,%s)""",
-                                (member.name,key,member.rank,member.power_millions,
-                                 member.hq_level,portrait,portrait,batch_id))
+                                player_name,normalized_name,player_rank,power_millions,power,kills,donations,hq_level,
+                                avatar_image,avatar_mime,avatar_updated_at,is_new,possibly_removed,last_import_id)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,IF(%s IS NOT NULL,UTC_TIMESTAMP(6),NULL),TRUE,FALSE,%s)""",
+                                (member.name,key,member.rank,member.power_millions,member.power,member.kills,member.donations,
+                                 member.hq_level,portrait,avatar_mime,portrait,batch_id))
                             created += 1
                     if body.full_capture:
                         cur.execute("""UPDATE `player list` SET possibly_removed=TRUE,
