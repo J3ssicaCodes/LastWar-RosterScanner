@@ -219,6 +219,16 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
 .pl-review-table input[type=checkbox]{accent-color:var(--violet);width:16px;height:16px}.pl-review-table .pl-name-input{min-width:150px}.pl-review-table .pl-number-input{min-width:86px;max-width:115px}.pl-review-table select{min-width:76px}.pl-review-table .pl-invalid{border-color:#b74d6a}.pl-review-table button{cursor:pointer;color:var(--muted);background:transparent;border:0;padding:5px 8px;font-size:18px}.pl-review-table button:hover{color:var(--text)}
 .pl-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:15px}.pl-summary>div{border:1px solid var(--stroke);border-radius:11px;background:var(--panel2);padding:13px 15px}.pl-summary small{display:block;color:var(--muted);font-size:11px}.pl-summary strong{font-size:24px;display:block;margin-top:4px;font-weight:800}
 .pl-filters{display:flex;gap:10px;margin-bottom:12px}.pl-filters input{flex:1}.pl-filters select{max-width:195px}.pl-player-name{font-weight:730}.pl-status{font-size:11px;font-weight:700;border-radius:99px;border:1px solid var(--stroke);padding:5px 9px;white-space:nowrap;background:var(--panel2)}.pl-status.new{color:var(--violet)}.pl-status.removed{color:#d17f84}.pl-empty{padding:28px!important;text-align:center;color:var(--muted)}
+/* Player List portraits come exclusively from video; birthdays are manual. */
+.pl-avatar{display:block;width:42px;height:42px;object-fit:cover;border-radius:10px;border:1px solid var(--stroke);background:var(--panel2)}
+.pl-avatar.pl-avatar-review{width:36px;height:36px}
+.pl-avatar-empty{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:1px solid var(--stroke);border-radius:10px;color:var(--muted);background:var(--panel2);font-size:18px}
+.pl-birthday-wrap{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.pl-calendar-btn{border:1px solid var(--stroke);border-radius:8px;background:var(--panel2);font-size:16px;cursor:pointer;padding:5px 7px;line-height:1.3;color:var(--text)}
+.pl-calendar-btn:hover,.pl-calendar-btn:focus-visible{border-color:var(--violet)}
+.pl-birthday-input{width:135px;color:var(--text);background:var(--panel2);border:1px solid var(--stroke);border-radius:7px;padding:5px;font-size:12px;color-scheme:normal}
+.pl-birthday-input[hidden]{display:none}
+.pl-birthday-date{font-size:12px;min-width:20px}
 @media(max-width:720px){.pl-section{padding:17px}.pl-upload-grid{grid-template-columns:1fr}.pl-drop{min-height:175px}.pl-summary{gap:7px}.pl-summary>div{padding:11px}.pl-summary strong{font-size:20px}.pl-title-row h2{font-size:21px}.pl-review-actions .btn{flex:1}}
 @media(max-width:460px){.pl-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.pl-filters{flex-direction:column}.pl-filters select{max-width:none}.pl-dir-actions .btn{padding:8px 10px;font-size:12px}}
 
@@ -290,14 +300,14 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
     <div class="pl-title-row"><div><div class="eyebrow">Review before saving</div><h2 id="plReviewTitle">Scanned players</h2></div><span class="pl-count" id="plScannedCount">0 found</span></div>
     <p class="pl-hint" id="plReviewHint">Correct any player names, power values or HQ levels the OCR missed. Uncheck false detections before syncing.</p>
     <div class="pl-review-actions"><button type="button" id="plAddRow" class="btn">+ Add player</button><button type="button" id="plSyncBtn" class="btn primary">Sync reviewed players to database</button></div>
-    <div class="pl-table-wrap"><table class="pl-table pl-review-table"><thead><tr><th scope="col">Include</th><th scope="col">Rank</th><th scope="col">Player name</th><th scope="col">Power (M)</th><th scope="col">HQ Lv.</th><th scope="col">Remove</th></tr></thead><tbody id="plReviewBody"></tbody></table></div>
+    <div class="pl-table-wrap"><table class="pl-table pl-review-table"><thead><tr><th scope="col">Include</th><th scope="col">Photo</th><th scope="col">Rank</th><th scope="col">Player name</th><th scope="col">Power (M)</th><th scope="col">HQ Lv.</th><th scope="col">Remove</th></tr></thead><tbody id="plReviewBody"></tbody></table></div>
   </section>
 
   <section class="panel pl-section" aria-labelledby="plDirectoryTitle">
     <div class="pl-title-row"><div><div class="eyebrow">Shared database</div><h2 id="plDirectoryTitle">Current player list</h2></div><div class="pl-dir-actions"><button class="btn" type="button" id="plRefresh">↻ Refresh</button><a class="btn" href="/api/player-list/export.csv" id="plExport">↓ Export CSV</a></div></div>
     <div class="pl-summary"><div><small>Total</small><strong id="plTotal">0</strong></div><div><small>New</small><strong id="plNew">0</strong></div><div><small>Possibly removed</small><strong id="plMissing">0</strong></div><div><small>Active</small><strong id="plActive">0</strong></div></div>
     <div class="pl-filters"><input id="plSearch" type="search" placeholder="Search player names…" aria-label="Search player names"><select id="plFilter" aria-label="Filter players by status"><option value="all">All players</option><option value="new">New players</option><option value="removed">Possibly removed</option><option value="active">Active</option></select></div>
-    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Rank</th><th scope="col">Player name</th><th scope="col">Power</th><th scope="col">HQ</th><th scope="col">Status</th><th scope="col">Last seen</th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="6" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
+    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Photo</th><th scope="col">Rank</th><th scope="col">Player name</th><th scope="col">Power</th><th scope="col">HQ</th><th scope="col">Birthday</th><th scope="col">Status</th><th scope="col">Last seen</th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="8" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
     <p class="pl-hint">Players are matched by their names, ignoring capitalization and spaces. An incomplete capture should not mark other players as missing. Missing players are flagged, never deleted.</p>
   </section>
 </section>
@@ -2072,8 +2082,8 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
         request.timeout=600000;
         request.upload.onprogress=event=>{
           if(event.lengthComputable && event.total){
-            const uploadPercent=Math.min(100,Math.round(event.loaded/event.total*100));
-            progress(Math.round(uploadPercent*.15),'Uploading media: '+uploadPercent+'%');
+            const percent=Math.min(99,Math.round(event.loaded/event.total*100));
+            progress(percent,'Uploading media: '+percent+'%');
           }
         };
         request.onload=()=>{
@@ -2086,13 +2096,12 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
         request.ontimeout=()=>reject(Error('Upload timed out. Please try a shorter recording.'));
         request.send(form);
       });
-      progress(16,'Upload complete. Preparing video frames…');
+      progress(1,'Upload complete. Preparing video frames…');
       let result;
       for(let attempt=0;attempt<900;attempt++){
         await pause(1100);
         result=await checkedJson(await fetch('/api/player-list/scan/'+encodeURIComponent(job_id),{cache:'no-store'}));
-        progress(result.status==='ready'?100:Math.min(99,16+Math.round(.84*(result.progress||0))),
-                 result.message||'Scanning video…');
+        progress(result.progress||0,result.message||'Scanning video…');
         if(result.status==='error')throw Error(result.message||'Scan failed.');
         if(result.status==='ready')break;
       }
@@ -2109,7 +2118,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       if(profilesOnly && !notes && !$('plFullCapture').checked){
         msg('Profile recognized. Automatically updating the player database…');
         try{
-          const records=state.candidates.map(({name,rank,power_millions,hq_level})=>({name,rank,power_millions,hq_level}));
+          const records=state.candidates.map(({name,rank,power_millions,hq_level,avatar_base64})=>({name,rank,power_millions,hq_level,avatar_base64:avatar_base64||null}));
           const r=await fetch('/api/player-list/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({players:records,full_capture:false})});
           const saved=await checkedJson(r);
           msg(`Profile saved automatically. ${saved.new_count} new, ${saved.updated_count} updated. Other players were not marked missing.`);
@@ -2130,12 +2139,13 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     $('plScannedCount').textContent=state.candidates.length+' found';
     $('plReviewBody').innerHTML=state.candidates.map((item,i)=>`<tr data-index="${i}">
       <td><input type="checkbox" data-field="included" ${item.included?'checked':''} aria-label="Include ${escape(item.name)}"></td>
+      <td>${item.avatar_base64 && /^[A-Za-z0-9+/=]+$/.test(item.avatar_base64)?`<img class="pl-avatar pl-avatar-review" src="data:image/webp;base64,${item.avatar_base64}" alt="Video portrait of ${escape(item.name)}">`:'<span class="pl-avatar-empty" title="No video portrait available">♡</span>'}</td>
       <td><select data-field="rank">${['R5','R4','R3','R2','R1'].map(rank=>`<option value="${rank}" ${item.rank===rank?'selected':''}>${rank}</option>`).join('')}</select></td>
       <td><input class="pl-name-input" data-field="name" value="${escape(item.name)}" aria-label="Player name" maxlength="80" required><small class="pl-source-label">${item.source_type==='profile'?'Player profile':'Member list'}</small></td>
       <td><input class="pl-number-input ${item.power_millions==null?'pl-invalid':''}" data-field="power_millions" type="number" step="0.1" min="0" value="${item.power_millions??''}" placeholder="Check" aria-label="Power in millions"></td>
       <td><input class="pl-number-input ${item.hq_level==null?'pl-invalid':''}" data-field="hq_level" type="number" step="1" min="1" max="99" value="${item.hq_level??''}" placeholder="Check" aria-label="HQ level"></td>
       <td><button type="button" data-delete="${i}" aria-label="Remove scanned row">✕</button></td>
-    </tr>`).join('') || '<tr><td colspan="6" class="pl-empty">No players found. Try clearer or overlapping screenshots.</td></tr>';
+    </tr>`).join('') || '<tr><td colspan="7" class="pl-empty">No players found. Try clearer or overlapping screenshots.</td></tr>';
   }
   function recordInput(event){
     const field=event.target.dataset.field;
@@ -2149,7 +2159,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
   }
   async function sync(){
     if(state.busy)return;
-    const records=state.candidates.filter(p=>p.included).map(({name,rank,power_millions,hq_level})=>({name:name.trim(),rank,power_millions,hq_level}));
+    const records=state.candidates.filter(p=>p.included).map(({name,rank,power_millions,hq_level,avatar_base64})=>({name:name.trim(),rank,power_millions,hq_level,avatar_base64:avatar_base64||null}));
     if(!records.length){msg('Select at least one player before syncing.',true);return;}
     const bad=records.find(p=>p.name.length<2||!/[\p{L}]/u.test(p.name)||!/^R[1-5]$/.test(p.rank)|| (p.power_millions!==null&&(!Number.isFinite(p.power_millions)||p.power_millions<0))||(p.hq_level!==null&&(!Number.isInteger(p.hq_level)||p.hq_level<1||p.hq_level>99)));
     if(bad){msg('Please check the player names and numeric values before syncing.',true);return;}
@@ -2178,8 +2188,12 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     $('plDirectoryBody').innerHTML=selected.map(p=>{
       const [status,cls]=p.possibly_removed?['Possibly removed','removed']:p.is_new?['New player','new']:['Active','active'];
       const last=p.last_seen_at?new Date(p.last_seen_at).toLocaleDateString():'';
-      return `<tr><td>${escape(p.rank)}</td><td class="pl-player-name">${escape(p.name)}</td><td>${p.power_millions==null?'—':escape(Number(p.power_millions).toFixed(1)+'M')}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td><td><span class="pl-status ${cls}">${status}</span></td><td>${escape(last)}</td></tr>`;
-    }).join('')||'<tr><td colspan="6" class="pl-empty">No players to display.</td></tr>';
+      const birthday=p.birthday?new Date(p.birthday+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—';
+      const avatar=p.has_avatar?`<img class="pl-avatar" loading="lazy" src="${escape(p.avatar_url)}?v=${encodeURIComponent(p.avatar_updated_at||'1')}" alt="${escape(p.name)} video portrait">`:'<span class="pl-avatar-empty" title="No video portrait yet">♡</span>';
+      return `<tr><td>${avatar}</td><td>${escape(p.rank)}</td><td class="pl-player-name">${escape(p.name)}</td><td>${p.power_millions==null?'—':escape(Number(p.power_millions).toFixed(1)+'M')}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
+        <td><div class="pl-birthday-wrap"><span class="pl-birthday-date" title="${escape(p.birthday||'Birthday not set')}">${escape(birthday)}</span><button type="button" class="pl-calendar-btn" data-player-birthday="${p.id}" aria-label="Edit ${escape(p.name)} birthday" title="Set birthday">📅</button><input class="pl-birthday-input" data-birthday-input="${p.id}" type="date" value="${escape(p.birthday||'')}" aria-label="Birthday for ${escape(p.name)}" hidden></div></td>
+        <td><span class="pl-status ${cls}">${status}</span></td><td>${escape(last)}</td></tr>`;
+    }).join('')||'<tr><td colspan="8" class="pl-empty">No players to display.</td></tr>';
   }
   async function loadDirectory(){
     try{
@@ -2187,7 +2201,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       state.players=result.players||[];
       renderDirectory();
     }catch(err){
-      $('plDirectoryBody').innerHTML='<tr><td colspan="6" class="pl-empty">Player database unavailable. Check Render connection settings.</td></tr>';
+      $('plDirectoryBody').innerHTML='<tr><td colspan="8" class="pl-empty">Player database unavailable. Check Render connection settings.</td></tr>';
     }
   }
   $('plDrop').addEventListener('click',()=>{$('plFiles').click();});
@@ -2203,6 +2217,27 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
   $('plAddRow').addEventListener('click',()=>{state.candidates.push({name:'',rank:'R3',power_millions:null,hq_level:null,included:true});renderReview();});
   $('plSyncBtn').addEventListener('click',sync);
   $('plRefresh').addEventListener('click',()=>{status();loadDirectory();});
+  // Birthday is a manual database field. Never infer it from uploaded media.
+  $('plDirectoryBody').addEventListener('click',event=>{
+    const button=event.target.closest('[data-player-birthday]');if(!button)return;
+    const field=button.parentElement.querySelector('[data-birthday-input]');
+    field.hidden=false;field.focus();
+    if(typeof field.showPicker==='function')try{field.showPicker();}catch{}
+  });
+  $('plDirectoryBody').addEventListener('change',async event=>{
+    const field=event.target.closest('[data-birthday-input]');if(!field)return;
+    const id=Number(field.dataset.birthdayInput);
+    const previous=state.players.find(p=>p.id===id);
+    if(!previous)return;
+    field.disabled=true;
+    try{
+      const r=await fetch('/api/player-list/'+id+'/birthday',{
+        method:'PATCH',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({birthday:field.value||null})});
+      const result=await checkedJson(r);
+      previous.birthday=result.birthday;msg('Birthday saved for '+previous.name+'.');renderDirectory();
+    }catch(err){field.disabled=false;field.value=previous.birthday||'';msg('Could not save birthday: '+err.message,true);}
+  });
   $('plSearch').addEventListener('input',renderDirectory);
   $('plFilter').addEventListener('change',renderDirectory);
   status();loadDirectory();
