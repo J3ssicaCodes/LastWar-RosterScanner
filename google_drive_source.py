@@ -77,7 +77,10 @@ def download_selected_file(file_id: str, token: str, destination: str, directory
     ext = Path(name).suffix.lower()
     if mime not in MIME_SUFFIX or (destination == 'storm' and not mime.startswith('image/')):
         raise ValueError('This destination only accepts screenshots or supported video files.')
-    if ext not in ALLOWED_EXTENSIONS or (ext in {'.mp4','.mov','.m4v','.webm'} and destination == 'storm'):
+    video_extension = ext in {'.mp4','.mov','.m4v','.webm'}
+    video_mime = mime.startswith('video/')
+    if (ext not in ALLOWED_EXTENSIONS or video_extension != video_mime
+            or (video_extension and destination == 'storm')):
         ext = MIME_SUFFIX[mime]
     if str(meta.get('size') or '').isdigit() and int(meta['size']) > MAX_BYTES:
         raise ValueError('The selected file exceeds the 150 MB upload limit.')
