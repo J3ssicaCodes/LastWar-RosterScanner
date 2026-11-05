@@ -43,6 +43,10 @@
       });
       tokenClient=google.accounts.oauth2.initTokenClient({
         client_id:config.client_id,scope:SCOPE,
+        error_callback:error=>{
+          if(error?.type==='popup_closed')selectionCallbacks?.onCancel?.();
+          else selectionCallbacks?.onError?.(Error('Google sign in could not open. Allow popups and try again.'));
+        },
         callback:response=>{
           if(!response||response.error||!response.access_token){
             selectionCallbacks?.onError?.(Error('Google Drive access was not granted.'));

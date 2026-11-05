@@ -155,7 +155,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     cur.execute('ALTER TABLE `roster upload` MODIFY COLUMN player_rank VARCHAR(8) NOT NULL')
                 # A service restart should never leave a scan appearing to run forever.
                 cur.execute("""UPDATE media_scan_jobs
-                               SET status='interrupted', message='Server restarted during OCR. Please upload again.',
+                               SET status='interrupted', message='Scan was interrupted. Please upload again.',
                                    updated_at=UTC_TIMESTAMP(6)
                                WHERE status IN ('queued','scanning')""")
             conn.commit()
@@ -304,7 +304,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                     (job_id,player_name,player_rank,power_millions,hq_level,avatar_base64,
                                      source_type,leaderboard_tab,leaderboard_position,power,kills,donations,
                                      review_required,review_reasons,source_image,audit_json,evidence_base64,change_kind)
-                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                     (job_id,name[:255],rank,row.get('power_millions'),row.get('hq_level'),
                                      row.get('avatar_base64'),row.get('source_type','leaderboard'),
                                      row.get('tab'),row.get('internal_position'),row.get('power'),
@@ -435,11 +435,11 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 with conn.cursor() as cur:
                     cur.execute('''INSERT INTO media_scan_jobs
                         (id,destination,status,progress,message,full_capture)
-                        VALUES (%s,%s,'queued',0,'Queued for server scanning',%s)''',
+                        VALUES (%s,%s,'queued',0,'Waiting to scan',%s)''',
                         (job_id,destination,False))
                 conn.commit()
             executor.submit(run_job,job_id,destination,saved,work)
-            return {'job_id':job_id,'destination':destination,'message':'Upload cached; OCR will run on the server.'}
+            return {'job_id':job_id,'destination':destination,'message':'Upload accepted. Waiting to scan.'}
         except Exception:
             shutil.rmtree(work,ignore_errors=True)
             raise
