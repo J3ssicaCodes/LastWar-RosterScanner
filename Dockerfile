@@ -2,7 +2,9 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=10000
+    PORT=10000 \
+    OMP_THREAD_LIMIT=1 \
+    OMP_NUM_THREADS=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ffmpeg tesseract-ocr tesseract-ocr-eng libglib2.0-0 \
