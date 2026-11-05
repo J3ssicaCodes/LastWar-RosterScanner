@@ -142,3 +142,65 @@ Player List leaderboard scans use `leaderboard_ocr.py`, a shared Python pipeline
 **Dependencies:** OpenCV, NumPy, SciPy, Pillow, Tesseract, pytesseract, and FFmpeg are free, locally executed dependencies. The optional file `rank_badge_templates.npz` may be added when trustworthy badge samples exist; until then, ambiguous rank badges are left unresolved for user correction.
 
 **Acceptance test limitation:** The available earlier sample MP4 (`1000024431.mp4`) captures the older Member List interface, not the approximately 4,149 frame Power leaderboard recording described in the feature specification. The full 89 position regression and missing position 77 recovery cannot be claimed as verified until that leaderboard recording is provided. Tests on a controlled leaderboard fixture cover tab selection, pitch and full row recognition, uncertain OCR handling, and video pause extraction.
+
+
+## Scan Queue and Google Drive uploads
+
+The Media Upload dialog closes automatically after the upload is accepted. The
+status banner above the workspace always prioritizes the **actively running**
+scan, including its percentage and how many jobs are waiting. Clicking that
+banner opens Scan Queue with live job information, pending review results and
+earlier errors. **Clear old results** deletes finished scan history and audit
+records only; it never deletes active jobs or pending Player List approvals.
+
+All app dialogs close when their background/backdrop is clicked. The interface
+does not describe where scanning is performed.
+
+### Google Drive setup for the site owner
+
+Google Drive file selection is optional and requires a Google Cloud project;
+credentials cannot be invented by the app. Enable both **Google Picker API**
+and **Google Drive API**. Configure the OAuth consent screen and create an
+**OAuth client ID for a web application**, authorizing the JavaScript origin
+`https://lastwar-rosterscanner.onrender.com`.
+
+Create a browser API key restricted to the Google Picker API and optionally
+the Google Drive API, with website referrer restrictions for both
+`https://lastwar-rosterscanner.onrender.com/*` and
+`https://docs.google.com/*` because the Picker uses an iframe.
+
+Set these Render service environment variables:
+
+* `GOOGLE_OAUTH_CLIENT_ID` — browser OAuth client ID.
+* `GOOGLE_PICKER_API_KEY` — restricted browser API key.
+* `GOOGLE_CLOUD_PROJECT_NUMBER` — numeric Google Cloud project number.
+
+No Google client secret or refresh token is needed. Reload the website after
+configuring them. The **Select from Google Drive** button offers Google's
+account chooser and Picker, requesting only the `drive.file` scope for files
+the user explicitly chooses. Access tokens are kept only in worker/browser
+memory for the current attempt; never in MySQL or GitHub.
+
+The server retrieves the selected file to its temporary scan directory; it
+removes that local copy after processing. If the user checks the extra option
+to move the **original Google Drive file to Trash**, this is attempted only
+after successful OCR and persistence of its scan results. Google Drive Trash
+is reversible. If authorization expires or the user cannot trash that file,
+the original stays untouched and Scan Queue reports the cleanup failure.
+An interrupted scan also leaves the original untouched. This is not a
+permanent Google Drive deletion and does not require broad Drive access.
+
+For Google Picker configuration guidance see:
+https://developers.google.com/workspace/drive/picker/guides/web-picker
+
+### Video processing performance and limitations
+
+The tested OCR scanner remains the source of truth for row geometry, badge
+templates, statistic extraction, overlaps and gap recovery. Pause detection
+now retrieves only every third decoded full-resolution frame, avoiding
+unnecessary image materialization. The long-running OCR process streams
+per-page milestones to the scan worker, with heartbeats during difficult
+pages and timeouts on individual Tesseract calls. A server restart can still
+interrupt an active in-memory worker; the persisted job status will indicate
+it should be retried. Exact full-roster accuracy requires testing against
+the corresponding real leaderboard recording and verifying the review rows.
