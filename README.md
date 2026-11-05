@@ -51,7 +51,16 @@ Browser OCR and imported video OCR are different systems, so this new backend do
 - `POST /api/player-list/import` saves reviewed players in a transaction.
 - `GET /api/player-list/export.csv` exports the current shared list.
 
-A scan job processes up to 150 sampled frames per video, with a 150 MB upload limit and a seven minute duration limit. Server OCR uses the English Tesseract language pack, so names containing scripts not represented by that pack will need manual correction or future language packs. Scans run one at a time to conserve memory on Render's free service.
+A scan job processes up to 96 adaptive sampled frames per video, with a 150 MB upload limit and a seven minute duration limit. Server OCR uses the English Tesseract language pack, so names containing scripts not represented by that pack will need manual correction or future language packs. Scans run one at a time to conserve memory on Render's free service.
+
+
+## Faster video scans and temporary media
+
+Player List uploads are streamed into a temporary directory on Render. Once the upload returns a scan job ID, OCR runs on the server in a background worker. The video, screenshots, and any extracted video frames are deleted from that temporary directory after scanning completes or fails. Only the extracted review results are retained in short-lived server memory until the user confirms an import; the shared MySQL player list is not changed by merely scanning.
+
+Android or iOS may suspend an upload when a phone locks. Keep the page open **until the upload finishes and the server confirms it is scanning**. After that acknowledgement, locking the screen will not stop the server's worker. Player List remembers the job ID in the browser and resumes progress or recovers the review table after a page reload. Jobs can be lost if Render restarts its process, and a long-running scan is subject to Render's free-service runtime limits; if that happens, upload the source again.
+
+The OCR engine remains free open source Tesseract running within Render. Videos use adaptive frame sampling, repeat-card skipping, and a dedicated member-list detector to avoid unnecessary OCR work. Highly rapid scrolling can still cause missed players and should be reviewed before a complete-roster import.
 
 ## Notes
 
