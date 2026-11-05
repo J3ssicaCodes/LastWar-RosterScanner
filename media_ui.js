@@ -62,7 +62,6 @@
   </div>
   <div class="media-select" role="button" tabindex="0" id="mediaSelect"><span style="font-size:32px" aria-hidden="true">⇧</span><strong id="mediaSelectTitle">Choose Storm Roster screenshots</strong><small id="mediaSelectHint">PNG, JPG or WebP images only.</small><input type="file" id="mediaFileInput" accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm,.m4v" multiple hidden></div>
   <div id="mediaFileNames" class="media-files">No files selected</div>
-  <label id="mediaCompleteLabel" style="display:none;gap:10px;align-items:flex-start;margin:12px 0"><input type="checkbox" id="mediaComplete"> <span><b>Complete Player List recording</b><small style="display:block;color:var(--muted)">Only enable if the entire member list was captured. Missing players can then be flagged after review.</small></span></label>
   <div class="media-progress" id="mediaProgress" hidden><progress id="mediaBar" max="100" value="0"></progress><small id="mediaProgressText">Uploading…</small></div>
   <div id="mediaMessage" class="media-banner" role="status" aria-live="polite" hidden></div>
   <div class="media-actions"><small style="color:var(--muted)">Uploaded media is deleted when scanning completes.</small><button class="btn primary" id="mediaSubmit" disabled>Upload and scan</button></div>`;
@@ -74,9 +73,9 @@
   const pendingPanel=document.createElement('section');
   pendingPanel.id='mediaPendingPanel';pendingPanel.className='panel pl-section media-review';pendingPanel.hidden=true;
   pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Awaiting your approval</div><h2>Player changes to review</h2><p>New uploads are staged here, not saved to the official Player List until approved.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
-    <div class="media-review-actions"><label><input type="checkbox" id="mediaApproveComplete"> This was a complete list</label><button class="btn" type="button" id="mediaDismiss">Dismiss unchecked</button><button class="btn primary" type="button" id="mediaApprove">Approve checked changes</button></div>
+    <div class="media-review-actions"><button class="btn" type="button" id="mediaDismiss">Dismiss unchecked</button><button class="btn primary" type="button" id="mediaApprove">Approve checked changes</button></div>
     <p id="mediaDiagnostics" hidden></p>
-    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Use</th><th>Photo</th><th>Rank</th><th>Player</th><th>Power</th><th>Kills</th><th>Donations</th><th>Power (M) / Profile</th><th>HQ Lv.</th></tr></thead><tbody id="mediaPendingRows"></tbody></table></div>
+    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Use</th><th>Change</th><th>Photo</th><th>Rank</th><th>Player</th><th>Power</th><th>Kills</th><th>Donations</th><th>Power (M) / Profile</th><th>HQ Lv.</th></tr></thead><tbody id="mediaPendingRows"></tbody></table></div>
     <p class="pl-hint">Check the entries to approve. Unchecked entries remain pending until you explicitly dismiss them. Correct uncertain names and numbers before approval.</p>`;
   const directory=playerView?.querySelector('[aria-labelledby="plDirectoryTitle"]');
   directory?.before(pendingPanel);
@@ -85,8 +84,6 @@
   function message(text,error=false){const el=$('mediaMessage');el.hidden=!text;el.textContent=text;el.style.borderColor=error?'#db7284':'#9476b0';}
   function updateTarget(){
     dialog.querySelectorAll('[data-dest]').forEach(btn=>btn.setAttribute('aria-pressed',String(btn.dataset.dest===destination)));
-    $('mediaCompleteLabel').style.display=destination==='players'?'flex':'none';
-    $('mediaComplete').checked=false;
     const isStorm=destination==='storm';
     $('mediaSelectTitle').textContent=isStorm?'Choose Storm Roster screenshots':'Choose leaderboard screenshots or an MP4 recording';
     $('mediaSelectHint').textContent=isStorm?'PNG, JPG or WebP images only. MP4 is not allowed for Storm Roster.':'PNG, JPG, WebP, MP4, MOV or WebM. Record the Power or Kills leaderboard while scrolling; pause on each page.';
@@ -125,7 +122,7 @@
       const form=new FormData();files.forEach(f=>form.append('files',f,f.name));
       const job=await new Promise((resolve,reject)=>{
         const xhr=new XMLHttpRequest();
-        const url='/api/media/upload?destination='+destination+'&full_capture='+$('mediaComplete').checked;
+        const url='/api/media/upload?destination='+encodeURIComponent(destination);
         xhr.open('POST',url);xhr.timeout=600000;
         xhr.upload.onprogress=e=>{if(e.lengthComputable)setProgress(Math.min(99,Math.round(e.loaded/e.total*100)),'Uploading: '+Math.round(e.loaded/e.total*100)+'%');};
         xhr.onload=()=>{let payload={};try{payload=JSON.parse(xhr.responseText);}catch{}if(xhr.status<200||xhr.status>=300)reject(Error(payload.detail||'Upload failed: '+xhr.status));else resolve(payload);};
@@ -148,9 +145,7 @@
       const result=await getJson('/api/media/pending');pending=result.players||[];
       pendingPanel.hidden=!pending.length;
       $('mediaPendingCount').textContent=pending.length+' waiting';
-      $('mediaApproveComplete').checked=false;
-      $('mediaApproveComplete').disabled=new Set(pending.map(p=>p.job_id)).size!==1 || !pending.every(p=>p.full_capture);
-      $('mediaPendingRows').innerHTML=pending.map(p=>{
+                  $('mediaPendingRows').innerHTML=pending.map(p=>{
         const flag=(p.review_required?(p.review_reasons||[]).join('; '):'');
         const avatar=p.avatar_base64&&/^[A-Za-z0-9+/=]+$/.test(p.avatar_base64)?
           '<img class="pl-avatar" src="data:image/'+(p.avatar_base64.startsWith('UklGR')?'webp':'png')+';base64,'+p.avatar_base64+'" alt="Player avatar">':'♡';
@@ -158,7 +153,9 @@
           '<details class="media-evidence"><summary>View captured leaderboard row</summary><img loading="lazy" src="data:image/webp;base64,'+
           p.evidence_base64+'" alt="Cropped original leaderboard row for '+escape(p.name||'this player')+'"></details>' : '';
         const numeric=(field,step='1')=>'<td><input data-field="'+field+'" type="number" step="'+step+'" min="0" value="'+(p[field]??'')+'" aria-label="'+field+'"></td>';
+        const type=p.change_kind==='new'?'New':p.change_kind==='updated'?'Updated':'Needs review';
         return '<tr data-pending-id="'+p.id+'"><td><input type="checkbox" data-field="include" checked aria-label="Include '+escape(p.name||'unrecognized player')+'"></td>'+
+          '<td><span class="pl-status '+(type==='New'?'new':type==='Updated'?'active':'removed')+'">'+type+'</span></td>'+
           '<td>'+avatar+'</td><td><select data-field="rank">'+['Unknown','R5','R4','R3','R2','R1'].map(rank=>'<option value="'+rank+'" '+(p.rank===rank?'selected':'')+'>'+rank+'</option>').join('')+'</select></td>'+
           '<td><input data-field="name" value="'+escape(p.name||'')+'" maxlength="80" aria-label="Player name">'+
           (p.tab?'<small class="pl-source-label">'+escape(p.tab.toUpperCase())+'</small>':'')+
@@ -212,7 +209,7 @@
     if(!rows.some(r=>r.include)){announce('Check at least one reviewed player to approve.');return;}
     $('mediaApprove').disabled=true;
     try{
-      const result=await getJson('/api/media/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows,full_capture:$('mediaApproveComplete').checked})});
+      const result=await getJson('/api/media/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows})});
       announce('✓ Player List updated: '+result.approved+' approved; unchecked entries remain pending.');
       await Promise.all([refreshPending(),window.playerListRefresh?.()]);
     }catch(e){announce('Unable to approve player changes: '+e.message);}
@@ -251,7 +248,9 @@
             announce('✓ Storm Roster scanned! '+job.result_count+' players loaded into Roster Scanner.');
           }else{
             await refreshPending();
-            announce('✓ Player List scan finished. '+job.result_count+' entries are waiting for your review.');
+            announce(job.result_count?
+              '✓ Player List scan finished. '+job.result_count+' new, changed, or uncertain entries are ready for approval.' :
+              '✓ Player List scan finished. No player changes were found.');
           }
         }
       }
