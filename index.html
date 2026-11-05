@@ -248,6 +248,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
   <button type="button" class="workspace-tab" id="rosterScannerTab" role="tab" aria-controls="rosterScannerView" aria-selected="true" tabindex="0" data-workspace-tab="scanner"><span class="workspace-tab-icon" aria-hidden="true">▦</span><span>Roster Scanner</span></button>
   <button type="button" class="workspace-tab" id="playerListTab" role="tab" aria-controls="playerListView" aria-selected="false" tabindex="-1" data-workspace-tab="players"><span class="workspace-tab-icon" aria-hidden="true">♙</span><span>Player List</span></button>
   <button type="button" class="workspace-tab" id="vsPointsTab" role="tab" aria-controls="vsPointsView" aria-selected="false" tabindex="-1" data-workspace-tab="vs"><span class="workspace-tab-icon" aria-hidden="true">▤</span><span>VS Points</span></button>
+  <button type="button" class="workspace-tab" id="adminTab" role="tab" aria-controls="adminView" aria-selected="false" tabindex="-1" data-workspace-tab="admin">Admin</button>
 </nav>
 <section id="rosterScannerView" class="workspace-view" role="tabpanel" aria-labelledby="rosterScannerTab" tabindex="0">
 <section class="event-selector panel" aria-labelledby="eventSelectorTitle">
@@ -327,6 +328,19 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
   <div class="pl-filters"><label>Week <select id="vsDate" aria-label="Score week"><option value="">Current week</option></select></label><input id="vsSearch" type="search" placeholder="Search player names…" aria-label="Search VS players"><a class="btn" id="vsExport" href="/api/vs-points/export.csv">↓ Export CSV</a></div>
   <p id="vsSummary"></p><div class="pl-table-wrap"><table class="pl-table"><thead><tr id="vsWeekColumns"><th>Player</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Total</th></tr></thead><tbody id="vsRows"><tr><td colspan="8">No scores saved yet.</td></tr></tbody></table></div>
   <datalist id="vsPlayerNames"></datalist>
+  </section>
+</section>
+<section id="adminView" class="workspace-view" role="tabpanel" aria-labelledby="adminTab" tabindex="0" hidden>
+  <section class="panel pl-section" aria-labelledby="adminTitle">
+    <h2 id="adminTitle">Admin</h2>
+    <h3>Clear Data</h3>
+    <p>Permanently clears saved rosters, players, VS scores, pending approvals, and scan history for everyone. This also resets browser settings and custom events when users reopen the app. The OCR dictionary is kept.</p>
+    <form id="adminClearForm" style="display:grid;gap:12px;max-width:360px">
+      <label>Admin password <input style="width:100%" type="password" name="password" autocomplete="current-password" required></label>
+      <label>Type CLEAR DATA to confirm <input style="width:100%" name="confirmation" autocomplete="off" spellcheck="false" required></label>
+      <button type="submit" class="btn danger" disabled>Clear Data</button>
+    </form>
+    <p id="adminClearMessage" role="status" aria-live="polite"></p>
   </section>
 </section>
 <footer class="app-footer"><strong>This app was created by Lady Jess</strong></footer>
@@ -2047,7 +2061,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 (() => {
   const storageKey='lastwar.workspaceTab.v1';
   const tabs=[...document.querySelectorAll('[data-workspace-tab]')];
-  const views={scanner:document.getElementById('rosterScannerView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView')};
+  const views={scanner:document.getElementById('rosterScannerView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView'),admin:document.getElementById('adminView')};
   function selectTab(tabId,focus=false){
     if(!Object.hasOwn(views,tabId))tabId='scanner';
     for(const tab of tabs){
@@ -2401,5 +2415,6 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 <script defer src="/google_drive_picker.js"></script>
 <script defer src="/media_ui.js"></script>
 <script defer src="/vs_ui.js"></script>
+<script defer src="/admin_ui.js"></script>
 </body>
 </html>

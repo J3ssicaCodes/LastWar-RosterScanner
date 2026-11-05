@@ -15,7 +15,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY vs_points.py vs_points_ocr.py vs_ui.js player_identity.py index.html app.py player_list_ocr.py leaderboard_ocr.py media_upload.py google_drive_source.py storm_roster_ocr.py media_ui.js google_drive_picker.js \
-     scan_rankings.py extract_ranking_pages.py tested_rankings_adapter.py rank_badge_templates.npz player_profile.js review_validation.js ./
+     scan_rankings.py extract_ranking_pages.py tested_rankings_adapter.py rank_badge_templates.npz player_profile.js review_validation.js admin_reset.py admin_ui.js ./
 
 EXPOSE 10000
 CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1"]

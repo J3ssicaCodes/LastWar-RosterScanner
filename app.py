@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from player_identity import match_master, name_key, corrected_name, load_name_corrections, learn_name_correction
 from player_list_ocr import scan_upload
+from admin_reset import initialize_admin_state, install_admin_reset
 
 BASE = Path(__file__).parent
 app = FastAPI(title='Alliance Tools Player List API', docs_url=None, redoc_url=None)
@@ -103,6 +104,7 @@ def initialize_db():
     try:
         with db_connect() as conn:
             with conn.cursor() as cur:
+                initialize_admin_state(cur)
                 cur.execute("""CREATE TABLE IF NOT EXISTS `player list` (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                     player_name VARCHAR(255) NOT NULL,
@@ -620,3 +622,10 @@ def review_validation_script():
 @app.get('/player_profile.js')
 def player_profile_script():
     return FileResponse(BASE / 'player_profile.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})
+
+
+install_admin_reset(app, db_connect, jobs, job_lock)
+
+@app.get('/admin_ui.js')
+def admin_ui_script():
+    return FileResponse(BASE / 'admin_ui.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})

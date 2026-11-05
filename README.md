@@ -236,3 +236,19 @@ gaps from transitions, and recognizes visible single zero glyphs explicitly.
 It never turns unreadable/blank stat cells into zero.
 
 Run regressions with `python -m unittest discover -s tests -v`.
+
+### Admin reset
+
+Set `ADMIN_RESET_PASSWORD` in the Render service environment to a strong
+password of at least 16 ASCII characters. The Admin tab requires that password
+and the exact confirmation phrase `CLEAR DATA` before clearing shared data.
+Active uploads and scans must finish before a reset can proceed. The reset
+keeps the OCR dictionaries and clears saved app data in each browser the next
+time it opens the app online. Downloaded exports and source files are outside
+the app's storage.
+
+For future user data tables, use `ENGINE=InnoDB COMMENT='alliance_tools:user_data'`
+in the table definition so Clear Data includes them. Only apply this marker
+to tables whose rows should be deleted on reset. The reset uses one transaction,
+preserves the dictionary and reset marker, and rejects dependencies from tables
+outside its scope.
