@@ -46,7 +46,7 @@ class ReviewEntry(BaseModel):
 
 class ApprovalRequest(BaseModel):
     rows: list[ReviewEntry] = Field(min_length=1, max_length=2000)
-    # Missing players are only flagged if a single complete capture was reviewed.
+    # Accepted for older clients, but never used to flag absent players.
     full_capture: bool = False
 
 
@@ -103,6 +103,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     hq_level SMALLINT UNSIGNED NULL,
                     avatar_base64 MEDIUMTEXT NULL,
                     evidence_base64 MEDIUMTEXT NULL,
+                    change_kind VARCHAR(16) NOT NULL DEFAULT 'review',
                     source_type VARCHAR(32) NULL,
                     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                     KEY idx_roster_upload_job (job_id)
@@ -124,6 +125,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     ('review_reasons','TEXT NULL'),
                     ('source_image','VARCHAR(255) NULL'),
                     ('evidence_base64','MEDIUMTEXT NULL'),
+                    ('change_kind',"VARCHAR(16) NOT NULL DEFAULT 'review'"),
                     ('audit_json','LONGTEXT NULL'),
                 ):
                     cur.execute('SHOW COLUMNS FROM `roster upload` LIKE %s',(field,))
@@ -236,6 +238,13 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 with connect_db() as conn:
                     try:
                         with conn.cursor() as cur:
+                            from app import normalize_name
+                            cur.execute("""SELECT normalized_name,player_name,player_rank,
+                                power_millions,power,kills,donations,hq_level,
+                                avatar_image IS NOT NULL AS has_avatar
+                                FROM `player list`""")
+                            existing_players = {p['normalized_name']: p for p in cur.fetchall()}
+                            unchanged = 0
                             for row in records:
                                 name=str(row.get('name') or '').strip()
                                 rank=str(row.get('rank') or 'Unknown')
@@ -245,11 +254,34 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                 reasons=row.get('review_reasons') or []
                                 review=bool(row.get('review_required') or not name or rank=='Unknown')
                                 audit_fields=row.get('audit') or {}
+                                current=existing_players.get(normalize_name(name)) if name else None
+                                if current is None:
+                                    change_kind='review' if review else 'new'
+                                else:
+                                    differences=(
+                                        (rank!='Unknown' and rank!=current['player_rank']) or
+                                        (name!=current['player_name']) or
+                                        any(
+                                            row.get(field) is not None and
+                                            (
+                                                current[field] is None or
+                                                (abs(float(row[field])-float(current[field])) > 0.049
+                                                 if field=='power_millions'
+                                                 else int(row[field])!=int(current[field]))
+                                            )
+                                            for field in ('power_millions','power','kills','donations','hq_level')
+                                        ) or
+                                        (bool(row.get('avatar_base64')) and not current['has_avatar'])
+                                    )
+                                    if not differences and not review:
+                                        unchanged += 1
+                                        continue
+                                    change_kind='review' if review else 'updated'
                                 cur.execute("""INSERT INTO `roster upload`
                                     (job_id,player_name,player_rank,power_millions,hq_level,avatar_base64,
                                      source_type,leaderboard_tab,leaderboard_position,power,kills,donations,
-                                     review_required,review_reasons,source_image,audit_json,evidence_base64)
-                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                     review_required,review_reasons,source_image,audit_json,evidence_base64,change_kind)
+                                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                                     (job_id,name[:255],rank,row.get('power_millions'),row.get('hq_level'),
                                      row.get('avatar_base64'),row.get('source_type','leaderboard'),
                                      row.get('tab'),row.get('internal_position'),row.get('power'),
@@ -257,7 +289,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                      json.dumps(reasons,ensure_ascii=False)[:8000],
                                      str(row.get('source_image') or '')[:255],
                                      json.dumps(audit_fields,ensure_ascii=False)[:60000],
-                                     str(row.get('evidence_base64') or '')[:320000] or None))
+                                     str(row.get('evidence_base64') or '')[:320000] or None,change_kind))
                             cur.execute('SELECT COUNT(*) AS n FROM `roster upload` WHERE job_id=%s',(job_id,))
                             inserted=int(cur.fetchone()['n'])
                             details=result.get('diagnostics') or {
@@ -272,14 +304,16 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                     audit_json=VALUES(audit_json)""",
                                 (job_id,json.dumps(details,ensure_ascii=False)[:250000],
                                  json.dumps(result.get('audit',[]),ensure_ascii=False)[:1000000]))
-                        if not inserted:
-                            raise ValueError('No complete readable leaderboard rows to review. No player data was changed.')
                         conn.commit()
                     except Exception:
                         conn.rollback()
                         raise
-                set_job(job_id,status='review',progress=100,count=inserted,
-                        message=f'{inserted} Player List entries ready for review and approval.')
+                if inserted:
+                    set_job(job_id,status='review',progress=100,count=inserted,
+                            message=f'{inserted} new or changed Player List entries waiting for approval.')
+                else:
+                    set_job(job_id,status='ready',progress=100,count=0,
+                            message='Scan finished. No changes detected; player list remains as it was.')
         except Exception as exc:
             # Exception details are shown in the UI only if they contain no secrets.
             print('Media OCR scan failed:',type(exc).__name__, flush=True)
@@ -326,7 +360,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     cur.execute('''INSERT INTO media_scan_jobs
                         (id,destination,status,progress,message,full_capture)
                         VALUES (%s,%s,'queued',0,'Queued for server scanning',%s)''',
-                        (job_id,destination,bool(full_capture and destination=='players')))
+                        (job_id,destination,False))
                 conn.commit()
             executor.submit(run_job,job_id,destination,saved,work)
             return {'job_id':job_id,'destination':destination,'message':'Upload cached; OCR will run on the server.'}
@@ -374,7 +408,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 cur.execute('''SELECT r.id,r.job_id,r.player_name AS name,r.player_rank AS `rank`,
                     r.power_millions,r.hq_level,r.avatar_base64,r.source_type,
                     r.leaderboard_tab AS tab,r.power,r.kills,r.donations,
-                    r.review_required,r.review_reasons,r.source_image,r.evidence_base64,
+                    r.review_required,r.review_reasons,r.source_image,r.evidence_base64,r.change_kind,
                     j.full_capture FROM `roster upload` r JOIN media_scan_jobs j ON j.id=r.job_id
                     ORDER BY r.id LIMIT 2000''')
                 rows=cur.fetchall()
@@ -424,13 +458,10 @@ def install_media_upload(app, connect_db, import_players, import_model):
             approved.append(Member(name=item.name,rank=item.rank,power_millions=item.power_millions,
                                    hq_level=item.hq_level,avatar_base64=info['avatar_base64'],
                                    power=item.power,kills=item.kills,donations=item.donations))
-        # Never flag missing if reviewing multiple separate captures, or if omitted rows.
-        batches={matching[r].get('job_id') for r in ids}
-        complete = bool(body.full_capture and len(batches)==1 and all(x.include for x in body.rows)
-                        and all(bool(matching[x.id]['full_capture']) for x in body.rows))
+        # An absent player is not evidence of removal. Never mark missing.
         if not approved:
             raise HTTPException(400,detail='Select at least one valid reviewed player to approve.')
-        result = import_players(import_model(players=approved,full_capture=complete))
+        result = import_players(import_model(players=approved,full_capture=False))
         approved_ids=[item.id for item in body.rows if item.include]
         with connect_db() as conn:
             with conn.cursor() as cur:
