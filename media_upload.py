@@ -379,6 +379,27 @@ def install_media_upload(app, connect_db, import_players, import_model):
             except (ValueError,TypeError):row['review_reasons']=[]
         return {'players':rows,'count':len(rows)}
 
+    class DismissRows(BaseModel):
+        ids: list[int] = Field(min_length=1, max_length=2000)
+
+    @router.post('/dismiss')
+    def dismiss_review(body: DismissRows):
+        # Explicit dismissal only. Unselected review rows remain staged.
+        ids=list(dict.fromkeys(body.ids))
+        if any(i<1 for i in ids):
+            raise HTTPException(400,detail='Invalid review row id.')
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                marks=','.join(['%s']*len(ids))
+                cur.execute(f'DELETE FROM `roster upload` WHERE id IN ({marks})',tuple(ids))
+                count=cur.rowcount
+                cur.execute("""UPDATE media_scan_jobs j SET status='approved',
+                    message='All pending Player List rows reviewed',updated_at=UTC_TIMESTAMP(6)
+                    WHERE j.destination='players' AND j.status='review'
+                    AND NOT EXISTS(SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id)""")
+            conn.commit()
+        return {'dismissed':count}
+
     @router.post('/approve')
     def approve_review(body: ApprovalRequest):
         from app import Member
@@ -404,18 +425,19 @@ def install_media_upload(app, connect_db, import_players, import_model):
         batches={matching[r].get('job_id') for r in ids}
         complete = bool(body.full_capture and len(batches)==1 and all(x.include for x in body.rows)
                         and all(bool(matching[x.id]['full_capture']) for x in body.rows))
-        result = {'new_count':0,'updated_count':0,'scanned_count':0,'possible_removed_count':0}
-        if approved:
-            result = import_players(import_model(players=approved,full_capture=complete))
+        if not approved:
+            raise HTTPException(400,detail='Select at least one valid reviewed player to approve.')
+        result = import_players(import_model(players=approved,full_capture=complete))
+        approved_ids=[item.id for item in body.rows if item.include]
         with connect_db() as conn:
             with conn.cursor() as cur:
-                marks=','.join(['%s']*len(ids))
-                cur.execute(f'DELETE FROM `roster upload` WHERE id IN ({marks})',tuple(ids))
+                marks=','.join(['%s']*len(approved_ids))
+                cur.execute(f'DELETE FROM `roster upload` WHERE id IN ({marks})',tuple(approved_ids))
                 cur.execute('''UPDATE media_scan_jobs j SET status='approved',
                     message='Player List changes reviewed',updated_at=UTC_TIMESTAMP(6)
                     WHERE j.destination='players' AND j.status='review'
                       AND NOT EXISTS(SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id)''')
             conn.commit()
-        return {'approved':len(approved),'dismissed':len(ids)-len(approved),**result}
+        return {'approved':len(approved),'remaining':len(ids)-len(approved),**result}
 
     app.include_router(router)
