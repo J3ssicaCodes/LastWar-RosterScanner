@@ -1,7 +1,7 @@
 """Backend for the Player List tab.
 
 Only the Player List API accesses MySQL. Roster Scanner remains client-side.
-Database passwords and upload keys are read from Render environment variables,
+Database passwords are read from Render environment variables,
 never returned to the browser or written to the frontend source.
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ from typing import Any
 
 import pymysql
 from pymysql.cursors import DictCursor
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -159,11 +159,10 @@ def health():
                 cur.execute('SELECT COUNT(*) AS n FROM `player list`')
                 count = int(cur.fetchone()['n'])
         return {'online': True, 'database': 'connected', 'table_ready': True,
-                'player_count': count, 'upload_protected': bool(_env('PLAYER_LIST_UPLOAD_KEY'))}
+                'player_count': count}
     except Exception:
         return JSONResponse(status_code=503, content={
             'online': True, 'database': 'disconnected', 'table_ready': False,
-            'upload_protected': bool(_env('PLAYER_LIST_UPLOAD_KEY')),
             'hint': 'Check the MySQL connection settings and Render logs.'})
 
 
@@ -204,17 +203,6 @@ def export_csv():
     return StreamingResponse(iter([buf.getvalue()]),media_type='text/csv',headers={'Content-Disposition':'attachment; filename="lastwar_player_list.csv"'})
 
 
-def _authorize(key: str | None, allow_unconfigured_scan: bool = False):
-    from secrets import compare_digest
-    required=_env('PLAYER_LIST_UPLOAD_KEY')
-    if not required:
-        if allow_unconfigured_scan:
-            return
-        raise HTTPException(503,detail='Database updates are disabled until PLAYER_LIST_UPLOAD_KEY is configured in Render.')
-    if not (key and compare_digest(key,required)):
-        raise HTTPException(401,detail='Incorrect Player List upload key.')
-
-
 def _update_job(job_id, **fields):
     with job_lock:
         job=jobs.get(job_id)
@@ -236,8 +224,7 @@ def _run_scan(job_id, paths, tempdir):
 
 
 @app.post('/api/player-list/scan',status_code=202)
-async def upload_scan(files:list[UploadFile]=File(...),x_player_list_key:str|None=Header(default=None)):
-    _authorize(x_player_list_key,allow_unconfigured_scan=True)
+async def upload_scan(files:list[UploadFile]=File(...)):
     if not files or len(files)>MAX_FILES:
         raise HTTPException(400,detail='Upload between 1 and 75 screenshots or one video.')
     if sum(1 for f in files if Path(f.filename or '').suffix.lower() in ('.mp4','.mov','.m4v','.webm'))>1:
@@ -304,8 +291,7 @@ class ImportData(BaseModel):
 
 
 @app.post('/api/player-list/import')
-def import_players(body: ImportData, x_player_list_key: str | None = Header(default=None)):
-    _authorize(x_player_list_key)
+def import_players(body: ImportData):
     batch_id = str(uuid.uuid4())
     # Exact normalized matches only. Never merge merely similar player names.
     unique = {normalize_name(member.name): member for member in body.players}
