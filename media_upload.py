@@ -1,0 +1,314 @@
+"""Shared asynchronous Media Upload service for Alliance Tools.
+
+Only temporary uploads are stored on the Render filesystem. Scan metadata,
+Storm Roster snapshots, and Player List review rows live in MySQL.
+No browser credential or third party media service is required.
+"""
+from __future__ import annotations
+
+import json
+import shutil
+import tempfile
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, File, HTTPException, UploadFile
+from pydantic import BaseModel, Field
+
+from player_list_ocr import scan_upload
+from storm_roster_ocr import scan_storm_upload
+
+MAX_MEDIA_BYTES = 150 * 1024 * 1024
+MAX_MEDIA_FILES = 75
+ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.mp4', '.mov', '.m4v', '.webm'}
+VIDEO_EXTENSIONS = {'.mp4', '.mov', '.m4v', '.webm'}
+executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='alliance-media-ocr')
+job_lock = threading.Lock()
+
+
+class ReviewEntry(BaseModel):
+    id: int = Field(ge=1)
+    name: str = Field(min_length=2, max_length=80)
+    rank: str = Field(pattern=r'^R[1-5]$')
+    power_millions: float | None = Field(default=None, ge=0, le=1000000)
+    hq_level: int | None = Field(default=None, ge=1, le=99)
+    include: bool = True
+
+
+class ApprovalRequest(BaseModel):
+    rows: list[ReviewEntry] = Field(min_length=1, max_length=2000)
+    # Missing players are only flagged if a single complete capture was reviewed.
+    full_capture: bool = False
+
+
+def install_media_upload(app, connect_db, import_players, import_model):
+    router = APIRouter(prefix='/api/media', tags=['Media Upload'])
+
+    def schema():
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute('''CREATE TABLE IF NOT EXISTS `media_scan_jobs` (
+                    id CHAR(36) NOT NULL PRIMARY KEY,
+                    destination VARCHAR(24) NOT NULL,
+                    status VARCHAR(24) NOT NULL DEFAULT 'queued',
+                    progress TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                    message VARCHAR(350) NOT NULL DEFAULT '',
+                    result_count INT UNSIGNED NOT NULL DEFAULT 0,
+                    full_capture BOOLEAN NOT NULL DEFAULT FALSE,
+                    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    KEY idx_media_jobs_created (created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4''')
+                cur.execute('''CREATE TABLE IF NOT EXISTS `storm roster` (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    source_job_id CHAR(36) NOT NULL,
+                    team CHAR(1) NOT NULL,
+                    player_rank VARCHAR(2) NOT NULL,
+                    player_name VARCHAR(255) NOT NULL,
+                    normalized_name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+                    player_power VARCHAR(24) NULL,
+                    player_role VARCHAR(32) NOT NULL,
+                    scanned_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    UNIQUE KEY uq_storm_team_name (team, normalized_name),
+                    KEY idx_storm_team_rank (team, player_rank)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4''')
+                cur.execute('''CREATE TABLE IF NOT EXISTS `roster upload` (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    job_id CHAR(36) NOT NULL,
+                    player_name VARCHAR(255) NOT NULL,
+                    player_rank VARCHAR(2) NOT NULL,
+                    power_millions DECIMAL(12,2) NULL,
+                    hq_level SMALLINT UNSIGNED NULL,
+                    avatar_base64 MEDIUMTEXT NULL,
+                    source_type VARCHAR(32) NULL,
+                    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+                    KEY idx_roster_upload_job (job_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4''')
+                # A service restart should never leave a scan appearing to run forever.
+                cur.execute("""UPDATE media_scan_jobs
+                               SET status='interrupted', message='Server restarted during OCR. Please upload again.',
+                                   updated_at=UTC_TIMESTAMP(6)
+                               WHERE status IN ('queued','scanning')""")
+            conn.commit()
+        print('Shared Media Upload MySQL tables initialized', flush=True)
+
+    @app.on_event('startup')
+    def startup_media():
+        try:
+            schema()
+        except Exception as exc:
+            print('Media Upload schema unavailable:', type(exc).__name__, flush=True)
+
+    def set_job(job_id: str, *, status: str | None = None, progress: int | None = None,
+                message: str | None = None, count: int | None = None):
+        fields = []
+        values: list[Any] = []
+        if status is not None: fields.append('status=%s'); values.append(status)
+        if progress is not None: fields.append('progress=%s'); values.append(max(0, min(100, progress)))
+        if message is not None: fields.append('message=%s'); values.append(message[:350])
+        if count is not None: fields.append('result_count=%s'); values.append(count)
+        fields.append('updated_at=UTC_TIMESTAMP(6)')
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute('UPDATE media_scan_jobs SET ' + ','.join(fields) + ' WHERE id=%s', (*values, job_id))
+            conn.commit()
+
+    def run_job(job_id: str, destination: str, paths: list[Path], tempdir: Path):
+        try:
+            set_job(job_id, status='scanning', progress=1, message='Preparing media on the server…')
+            def report(current, total, message):
+                # Avoid issuing a database write for every OCR pixel or video frame.
+                pct = round(100 * current / max(total, 1))
+                if not hasattr(report, 'last') or pct != report.last or time.monotonic()-report.last_at>4:
+                    set_job(job_id, progress=pct, message=message)
+                    report.last = pct
+                    report.last_at = time.monotonic()
+            report.last = None
+            report.last_at = 0.0
+            result = scan_storm_upload(paths, report) if destination == 'storm' else scan_upload(paths, report)
+            records = result.get('players', [])
+            if not records:
+                raise ValueError('No readable players were found. The previous list was kept unchanged.')
+            if destination == 'storm':
+                # Last completed Storm upload becomes the new event snapshot.
+                from app import normalize_name
+                dedup = {}
+                for row in records:
+                    name = str(row.get('name') or '').strip()
+                    team = str(row.get('team') or '?').upper()
+                    if not name or team not in ('A','B'): continue
+                    key = (team, normalize_name(name))
+                    if key[1] and (key not in dedup or not dedup[key].get('power')):
+                        dedup[key] = row
+                if not dedup:
+                    raise ValueError('Team A or B was not readable. Previous Storm Roster remains unchanged.')
+                with connect_db() as conn:
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute('DELETE FROM `storm roster`')
+                            for (team, norm), row in dedup.items():
+                                cur.execute('''INSERT INTO `storm roster`
+                                    (source_job_id,team,player_rank,player_name,normalized_name,player_power,player_role)
+                                    VALUES (%s,%s,%s,%s,%s,%s,%s)''',
+                                    (job_id,team,row.get('rank') or 'R3',str(row['name'])[:255],norm,
+                                     str(row.get('power') or '')[:24],row.get('role') or 'Needs review'))
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+                        raise
+                set_job(job_id,status='ready',progress=100,count=len(dedup),
+                        message=f'Storm Roster ready: {len(dedup)} players. Scanner updated.')
+            else:
+                with connect_db() as conn:
+                    try:
+                        with conn.cursor() as cur:
+                            for row in records:
+                                name=str(row.get('name') or '').strip()
+                                rank=str(row.get('rank') or '')
+                                if len(name)<2 or rank not in ('R1','R2','R3','R4','R5'): continue
+                                cur.execute('''INSERT INTO `roster upload`
+                                    (job_id,player_name,player_rank,power_millions,hq_level,avatar_base64,source_type)
+                                    VALUES (%s,%s,%s,%s,%s,%s,%s)''',
+                                    (job_id,name[:255],rank,row.get('power_millions'),row.get('hq_level'),
+                                     row.get('avatar_base64'),row.get('source_type','member_list')))
+                            inserted=cur.rowcount
+                            cur.execute('SELECT COUNT(*) AS n FROM `roster upload` WHERE job_id=%s',(job_id,))
+                            inserted=int(cur.fetchone()['n'])
+                        if not inserted: raise ValueError('No recognizable players to review.')
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+                        raise
+                set_job(job_id,status='review',progress=100,count=inserted,
+                        message=f'{inserted} Player List entries ready for review and approval.')
+        except Exception as exc:
+            # Exception details are shown in the UI only if they contain no secrets.
+            print('Media OCR scan failed:',type(exc).__name__, flush=True)
+            try: set_job(job_id,status='error',progress=0,message=str(exc)[:240])
+            except Exception: pass
+        finally:
+            # Keep upload media in a temporary location only until processing ends.
+            shutil.rmtree(tempdir, ignore_errors=True)
+
+    @router.post('/upload', status_code=202)
+    async def upload_media(destination: str, files: list[UploadFile] = File(...), full_capture: bool = False):
+        if destination not in ('storm','players'):
+            raise HTTPException(400, detail='Choose Storm Roster or Player List. VS Scores is coming soon.')
+        if not files or len(files) > MAX_MEDIA_FILES:
+            raise HTTPException(400,detail='Choose one recording or up to 75 screenshots.')
+        if sum(1 for f in files if Path(f.filename or '').suffix.lower() in VIDEO_EXTENSIONS)>1:
+            raise HTTPException(400,detail='Upload one video at a time; additional screenshots are allowed.')
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS n FROM media_scan_jobs WHERE status IN ('queued','scanning')")
+                if int(cur.fetchone()['n']) >= 3:
+                    raise HTTPException(429,detail='The scanner is busy. Please retry shortly.')
+        work = Path(tempfile.mkdtemp(prefix='alliance_media_'))
+        total_size = 0
+        saved = []
+        try:
+            for i, upload in enumerate(files):
+                ext = Path(upload.filename or '').suffix.lower()
+                if ext not in ALLOWED_EXTENSIONS:
+                    raise HTTPException(400, detail='Upload JPG, PNG, WebP, MP4, MOV or WebM.')
+                dest = work / f'upload_{i:03d}{ext}'
+                with dest.open('wb') as f:
+                    while data := await upload.read(1024 * 1024):
+                        total_size += len(data)
+                        if total_size > MAX_MEDIA_BYTES:
+                            raise HTTPException(413,detail='The upload exceeds 150 MB.')
+                        f.write(data)
+                saved.append(dest)
+            job_id = str(uuid.uuid4())
+            with connect_db() as conn:
+                with conn.cursor() as cur:
+                    cur.execute('''INSERT INTO media_scan_jobs
+                        (id,destination,status,progress,message,full_capture)
+                        VALUES (%s,%s,'queued',0,'Queued for server scanning',%s)''',
+                        (job_id,destination,bool(full_capture and destination=='players')))
+                conn.commit()
+            executor.submit(run_job,job_id,destination,saved,work)
+            return {'job_id':job_id,'destination':destination,'message':'Upload cached; OCR will run on the server.'}
+        except Exception:
+            shutil.rmtree(work,ignore_errors=True)
+            raise
+
+    @router.get('/jobs')
+    def list_media_jobs():
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute('''SELECT id,destination,status,progress,message,result_count,
+                    full_capture,created_at,updated_at FROM media_scan_jobs
+                    ORDER BY created_at DESC LIMIT 35''')
+                rows=cur.fetchall()
+        for row in rows:
+            for field in ('created_at','updated_at'):
+                if row.get(field): row[field]=row[field].isoformat()+'Z'
+        return {'jobs': rows}
+
+    @router.get('/storm-roster')
+    def get_storm_roster():
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute('''SELECT team,player_rank AS `rank`,player_name AS name,
+                    player_power AS power,player_role AS role,source_job_id
+                    FROM `storm roster` ORDER BY team,player_rank DESC,player_name''')
+                rows=cur.fetchall()
+        return {'players':rows,'job_id':rows[0]['source_job_id'] if rows else None}
+
+    @router.get('/pending')
+    def get_pending_review():
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute('''SELECT r.id,r.job_id,r.player_name AS name,r.player_rank AS `rank`,
+                    r.power_millions,r.hq_level,r.avatar_base64,r.source_type,
+                    j.full_capture FROM `roster upload` r JOIN media_scan_jobs j ON j.id=r.job_id
+                    ORDER BY r.id LIMIT 2000''')
+                rows=cur.fetchall()
+        for row in rows:
+            if row['power_millions'] is not None:row['power_millions']=float(row['power_millions'])
+        return {'players':rows,'count':len(rows)}
+
+    @router.post('/approve')
+    def approve_review(body: ApprovalRequest):
+        from app import Member
+        ids = [item.id for item in body.rows]
+        if len(ids) != len(set(ids)):
+            raise HTTPException(400, detail='Duplicate review rows.')
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                marks=','.join(['%s']*len(ids))
+                cur.execute(f'''SELECT r.id,r.job_id,r.avatar_base64,j.full_capture FROM `roster upload` r
+                    JOIN media_scan_jobs j ON j.id=r.job_id WHERE r.id IN ({marks})''',tuple(ids))
+                matching={int(r['id']):r for r in cur.fetchall()}
+        if len(matching)!=len(ids):
+            raise HTTPException(409,detail='The pending list changed. Refresh before approving.')
+        approved=[]
+        for item in body.rows:
+            if not item.include:continue
+            info=matching[item.id]
+            approved.append(Member(name=item.name,rank=item.rank,power_millions=item.power_millions,
+                                   hq_level=item.hq_level,avatar_base64=info['avatar_base64']))
+        # Never flag missing if reviewing multiple separate captures, or if omitted rows.
+        batches={matching[r].get('job_id') for r in ids}
+        complete = bool(body.full_capture and len(batches)==1 and all(x.include for x in body.rows)
+                        and all(bool(matching[x.id]['full_capture']) for x in body.rows))
+        result = {'new_count':0,'updated_count':0,'scanned_count':0,'possible_removed_count':0}
+        if approved:
+            result = import_players(import_model(players=approved,full_capture=complete))
+        with connect_db() as conn:
+            with conn.cursor() as cur:
+                marks=','.join(['%s']*len(ids))
+                cur.execute(f'DELETE FROM `roster upload` WHERE id IN ({marks})',tuple(ids))
+                cur.execute('''UPDATE media_scan_jobs j SET status='approved',
+                    message='Player List changes reviewed',updated_at=UTC_TIMESTAMP(6)
+                    WHERE j.destination='players' AND j.status='review'
+                      AND NOT EXISTS(SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id)''')
+            conn.commit()
+        return {'approved':len(approved),'dismissed':len(ids)-len(approved),**result}
+
+    app.include_router(router)
