@@ -9,7 +9,7 @@ Visit the Render hosted website, or open `index.html` in a modern Chrome or Edge
 ## Workspace tabs
 
 - **Roster Scanner:** The complete existing screenshot scanner, Desert Storm and Canyon Storm Event Manager, assignments, map generator, and OCR correction dictionary.
-- **Player List:** A separate workspace reserved for upcoming player list features. No player list functionality has been added yet.
+- **Player List:** Import player screenshots, profile screenshots, or a scrolling video; review OCR results and synchronize the shared MySQL player list.
 - The selected tab is remembered in this browser. Switching tabs does not reset in memory roster data or saved settings.
 
 ## Features
@@ -37,7 +37,7 @@ Visit the Render hosted website, or open `index.html` in a modern Chrome or Edge
 
 The backend automatically creates a MySQL table named `"player list"` (and an import audit table `player_list_imports`) on startup, using Render environment variables. Configure either `DATABASE_URL` or the equivalent `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` variables. Other common MySQL environment variable names are supported too. Never place secrets in `index.html` or commit them to GitHub.
 
-For safer public access, set `PLAYER_LIST_UPLOAD_KEY` as a Render environment variable; authorized uploaders enter it in the Player List tab. Viewing the shared roster does not require the key. The key is never sent to the browser as a page variable, and is checked on the server for uploads and imports.
+Player List requires no upload key. Visitors can submit screenshots or videos and synchronize their player entries directly. This is convenient, but anyone with access to the public site can also modify the shared player list. If access restrictions are needed later, consider individual sign-in rather than sharing a single key.
 
 After a video or screenshot batch is OCR scanned, review the extracted entries and select **Sync**. Existing names are updated; new names are marked **New player**. When an import is explicitly marked as the complete roster, players not seen in that import are marked **Possibly removed** without being deleted. Incomplete screenshots should not be marked as complete.
 
