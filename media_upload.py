@@ -50,6 +50,10 @@ class ApprovalRequest(BaseModel):
     full_capture: bool = False
 
 
+class DismissRows(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=2000)
+
+
 def install_media_upload(app, connect_db, import_players, import_model):
     router = APIRouter(prefix='/api/media', tags=['Media Upload'])
 
@@ -378,9 +382,6 @@ def install_media_upload(app, connect_db, import_players, import_model):
             try:row['review_reasons']=json.loads(row.get('review_reasons') or '[]')
             except (ValueError,TypeError):row['review_reasons']=[]
         return {'players':rows,'count':len(rows)}
-
-    class DismissRows(BaseModel):
-        ids: list[int] = Field(min_length=1, max_length=2000)
 
     @router.post('/dismiss')
     def dismiss_review(body: DismissRows):
