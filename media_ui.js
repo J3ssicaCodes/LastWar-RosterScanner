@@ -71,10 +71,10 @@
   const pendingPanel=document.createElement('section');
   pendingPanel.id='mediaPendingPanel';pendingPanel.className='panel pl-section media-review';pendingPanel.hidden=true;
   pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Awaiting your approval</div><h2>Player changes to review</h2><p>New uploads are staged here, not saved to the official Player List until approved.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
-    <div class="media-review-actions"><label><input type="checkbox" id="mediaApproveComplete"> This was a complete list</label><button class="btn primary" type="button" id="mediaApprove">Approve reviewed changes</button></div>
+    <div class="media-review-actions"><label><input type="checkbox" id="mediaApproveComplete"> This was a complete list</label><button class="btn" type="button" id="mediaDismiss">Dismiss unchecked</button><button class="btn primary" type="button" id="mediaApprove">Approve checked changes</button></div>
     <p id="mediaDiagnostics" hidden></p>
     <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Use</th><th>Photo</th><th>Rank</th><th>Player</th><th>Power</th><th>Kills</th><th>Donations</th><th>Power (M) / Profile</th><th>HQ Lv.</th></tr></thead><tbody id="mediaPendingRows"></tbody></table></div>
-    <p class="pl-hint">Uncheck false detections to dismiss them. Correct names and values here before approval.</p>`;
+    <p class="pl-hint">Check the entries to approve. Unchecked entries remain pending until you explicitly dismiss them. Correct uncertain names and numbers before approval.</p>`;
   const directory=playerView?.querySelector('[aria-labelledby="plDirectoryTitle"]');
   directory?.before(pendingPanel);
 
@@ -194,10 +194,24 @@
     $('mediaApprove').disabled=true;
     try{
       const result=await getJson('/api/media/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows,full_capture:$('mediaApproveComplete').checked})});
-      announce('✓ Player List updated: '+result.approved+' approved, '+result.dismissed+' dismissed.');
+      announce('✓ Player List updated: '+result.approved+' approved; unchecked entries remain pending.');
       await Promise.all([refreshPending(),window.playerListRefresh?.()]);
     }catch(e){announce('Unable to approve player changes: '+e.message);}
     finally{$('mediaApprove').disabled=false;}
+  };
+  $('mediaDismiss').onclick=async()=>{
+    const ids=[...$('mediaPendingRows').querySelectorAll('tr[data-pending-id]')]
+      .filter(tr=>!tr.querySelector('[data-field="include"]').checked)
+      .map(tr=>Number(tr.dataset.pendingId));
+    if(!ids.length){announce('Uncheck the incorrect entries you want to dismiss.');return;}
+    if(!confirm('Permanently dismiss '+ids.length+' unchecked OCR entries? They will not update your player database.'))return;
+    $('mediaDismiss').disabled=true;
+    try{
+      const result=await getJson('/api/media/dismiss',{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
+      announce('Dismissed '+result.dismissed+' unwanted OCR entries.');await refreshPending();
+    }catch(e){announce('Could not dismiss entries: '+e.message);}
+    finally{$('mediaDismiss').disabled=false;}
   };
   async function refreshJobs(){
     try{
