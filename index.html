@@ -275,7 +275,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
     <div class="player-list-header">
       <div class="eyebrow">Alliance member directory</div>
       <h2 id="playerListHeading">Player List</h2>
-      <p>Upload screenshots or a recording of your scrolling <strong>Member List</strong>, plus individual <strong>Player Profile</strong> screenshots for players such as R5. The scanner merges both sources, extracts name, rank, power and HQ level, and uses the search bar to ignore the decorative member list header. Clear single profiles can sync automatically; uncertain results are reviewed first.</p>
+      <p>Upload screenshots or a recording of your scrolling <strong>Member List</strong>, plus individual <strong>Player Profile</strong> screenshots for players such as R5. The scanner merges both sources, extracts name, rank, power and HQ level, and uses the search bar to ignore the decorative member list header. All uploaded Player List changes wait for review before they are added to the shared database.</p>
     </div>
     <div id="plConnection" class="pl-connection" role="status" aria-live="polite">Checking player database…</div>
     <div class="pl-upload-grid">
@@ -307,7 +307,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
     <div class="pl-title-row"><div><div class="eyebrow">Shared database</div><h2 id="plDirectoryTitle">Current player list</h2></div><div class="pl-dir-actions"><button class="btn" type="button" id="plRefresh">↻ Refresh</button><a class="btn" href="/api/player-list/export.csv" id="plExport">↓ Export CSV</a></div></div>
     <div class="pl-summary"><div><small>Total</small><strong id="plTotal">0</strong></div><div><small>New</small><strong id="plNew">0</strong></div><div><small>Possibly removed</small><strong id="plMissing">0</strong></div><div><small>Active</small><strong id="plActive">0</strong></div></div>
     <div class="pl-filters"><input id="plSearch" type="search" placeholder="Search player names…" aria-label="Search player names"><select id="plFilter" aria-label="Filter players by status"><option value="all">All players</option><option value="new">New players</option><option value="removed">Possibly removed</option><option value="active">Active</option></select></div>
-    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Photo</th><th scope="col">Rank</th><th scope="col">Player name</th><th scope="col">Power</th><th scope="col">HQ</th><th scope="col">Birthday</th><th scope="col">Status</th><th scope="col">Last seen</th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="8" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
+    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Photo</th><th scope="col">Player name</th><th scope="col">Power</th><th scope="col">HQ</th><th scope="col">Birthday</th><th scope="col">Status</th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="6" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
     <p class="pl-hint">Players are matched by their names, ignoring capitalization and spaces. An incomplete capture should not mark other players as missing. Missing players are flagged, never deleted.</p>
   </section>
 </section>
@@ -1869,6 +1869,31 @@ $('importEventsFile').addEventListener('change',async e=>{
 });
 
 loadEvents();loadNameDictionary();updateDictionaryCount();renderFiles();renderRows();
+
+/* Hydrate the scanner from the latest event snapshot in MySQL. */
+window.loadServerStormRoster=async function(){
+  try{
+    const response=await fetch('/api/media/storm-roster',{cache:'no-store'});
+    if(!response.ok)return;
+    const data=await response.json();
+    if(!data.players?.length||!data.job_id||window.__stormRosterLoadedId===data.job_id)return;
+    for(const item of items)try{URL.revokeObjectURL(item.url);}catch{}
+    items.length=0;extraRows.length=0;manualOverrides.clear();
+    for(const entry of data.players){
+      if(!['A','B'].includes(entry.team)||!entry.name)continue;
+      extraRows.push({
+        id:'stormdb_'+(++rowCounter),team:entry.team,rank:entry.rank||'R3',
+        name:entry.name,ocrName:entry.name,power:entry.power||'',
+        role:entry.role||'Needs review',source:['Storm Roster database'],
+        detectionIds:[],ocrNames:[entry.name],possibleDuplicates:[],
+        manual:true,phase1Manual:false,phase2Manual:false
+      });
+    }
+    window.__stormRosterLoadedId=data.job_id;
+    rebuildRows();renderFiles();
+    showState('Storm Roster synchronized: '+extraRows.length+' players from the latest scan.');
+  }catch(err){console.warn('Storm Roster sync unavailable:',err);}
+};
 </script>
 <script id="interfaceLocalization">
 'use strict';
@@ -2312,5 +2337,6 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 })();
 
 </script>
+<script defer src="/media_ui.js"></script>
 </body>
 </html>
