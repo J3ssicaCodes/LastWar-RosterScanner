@@ -589,6 +589,7 @@ def _extract_page_observations(pages,progress,audit,settings=None):
                       'calibration':confidence,'complete_rows':len(accepted),
                       'rejected':g.rejected,'image_hash':p['hash'],
                       'source_count':len(pages)})
+        page_observations=[]
         for y0,y1 in accepted:
             complete_count+=1
             row=im[y0:y1,:]
@@ -598,7 +599,25 @@ def _extract_page_observations(pages,progress,audit,settings=None):
             obs=recognize_player_row(row,layout,tab,
                 source=f"{p['source']}@{p['timestamp']:.2f}s" if p.get('timestamp') is not None else p['source'],
                 cache=cache,templates=templates)
-            observations.append(obs)
+            if confidence=='low':
+                obs['review_required']=True
+                obs['review_reasons'].append('Row pitch calibrated from resolution prior; verify complete row boundary')
+            page_observations.append(obs)
+        # Use >=2 consistent observed positions to correct an internal OCR digit
+        # misread; every corrected value still belongs to a complete observed row.
+        offsets=[obs['leaderboard_position']-idx for idx,obs in enumerate(page_observations)
+                 if obs.get('leaderboard_position') is not None]
+        if offsets:
+            winner,votes=Counter(offsets).most_common(1)[0]
+            if votes>=2 and votes>=max(2,len(offsets)//2):
+                for idx,obs in enumerate(page_observations):
+                    inferred=winner+idx
+                    if 1<=inferred<=100 and obs.get('leaderboard_position')!=inferred:
+                        obs['original_position']=obs.get('leaderboard_position')
+                        obs['leaderboard_position']=inferred
+                        obs['review_required']=True
+                        obs['review_reasons'].append('Position OCR disagreed with neighboring complete rows; internal alignment adjusted')
+        observations.extend(page_observations)
         if progress:progress(44+round(38*(i+1)/len(pages)),100,
                              f'Analyzing {i+1}/{len(pages)} pages; {len(observations)} observations')
     return observations,sorted({o['tab'] for o in observations}),complete_count
