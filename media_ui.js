@@ -130,10 +130,13 @@
         xhr.ontimeout=()=>reject(Error('Upload timed out before Render received the recording.'));
         xhr.send(form);
       });
-      setProgress(100,'Upload accepted. Render is scanning in the background.');
-      message('Upload complete! You may close this window or lock your phone. A notice will appear when the scan is finished.');
+      // Close only after Render acknowledges the upload and queues the scan.
+      // The server continues processing; status and completion appear outside this dialog.
       files=[];fileInput.value='';$('mediaFileNames').textContent='No files selected';
+      $('mediaProgress').hidden=true;
+      message('');
       announce('✓ '+(destination==='storm'?'Storm Roster':'Player List')+' upload accepted. Scanning continues on Render.');
+      if(dialog.open)dialog.close();
       await refreshJobs();
     }catch(e){message(e.message,true);}
     finally{busy=false;$('mediaSubmit').disabled=!files.length;}
