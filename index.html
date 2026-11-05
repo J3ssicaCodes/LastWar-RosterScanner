@@ -334,14 +334,19 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
   <section class="panel pl-section" aria-labelledby="adminTitle">
     <h2 id="adminTitle">Admin</h2>
     <h3>Clear Data</h3>
-    <p>Permanently clears saved rosters, players, VS scores, pending approvals, and scan history for everyone. This also resets browser settings and custom events when users reopen the app. The OCR dictionary is kept.</p>
+    <p>Choose which tables to clear for everyone. The OCR dictionary and browser settings are kept.</p>
+    <fieldset style="display:grid;gap:6px;margin:12px 0">
+      <legend>Tables to clear</legend>
+      <div id="adminClearTables" style="display:grid;gap:6px">Loading tables…</div>
+    </fieldset>
     <button id="adminClearButton" type="button" class="btn danger" disabled>Clear Data</button>
     <dialog id="adminClearConfirm" aria-labelledby="adminClearConfirmTitle">
       <h3 id="adminClearConfirmTitle">Are you sure?</h3>
-      <p>This permanently clears saved app data for everyone. The OCR dictionary is kept.</p>
+      <p>This permanently clears the selected tables for everyone.</p>
+      <ul id="adminConfirmTables"></ul>
       <form method="dialog" style="display:flex;gap:8px;flex-wrap:wrap">
         <button type="submit" class="btn" value="cancel" autofocus>Cancel</button>
-        <button type="submit" class="btn danger" value="clear">Yes, clear data</button>
+        <button type="submit" class="btn danger" value="clear">Yes, clear selected tables</button>
       </form>
     </dialog>
     <p id="adminClearMessage" role="status" aria-live="polite"></p>

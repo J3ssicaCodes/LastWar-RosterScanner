@@ -10,3 +10,12 @@ assert.ok(check(original,{name:'Jess',points:'1.2'},['Jess'],'vs').length);
 assert.deepEqual(check({name:'Jess',rank:'Unknown',power:30,tab:'power',review_reasons:['uncertain_rank_badge']},{name:'Jess',rank:'R4',power:'30'},['Jess'],'media'),[]);
 assert.ok(check({name:'Jess',rank:'R4',power:30,tab:'power',review_reasons:['conflicting_stat']},{name:'Jess',rank:'R4',power:'30'},['Jess'],'media').includes('conflicting_stat'));
 console.log('8 review validation checks passed');
+
+const scanned={name:'Jess',rank:'R4',tab:'kills',kills:300,review_required:true,review_reasons:['OCR confidence below recommended threshold']};
+const verified={name:'Jess',rank:'R4',kills:'300'};
+assert.deepEqual(check.mediaInputIssues(scanned,verified),[]);
+assert.ok(check(scanned,verified,['Jess'],'media').length,'OCR warnings still exclude the row from bulk approval');
+assert.ok(check.mediaInputIssues(scanned,{...verified,kills:''}).length);
+assert.deepEqual(check({...scanned,review_required:false,review_reasons:[]},verified,['Jess'],'media'),[]);
+assert.ok(check({...scanned,review_reasons:[]},verified,['Jess'],'media').length);
+console.log('5 media approval checks passed');

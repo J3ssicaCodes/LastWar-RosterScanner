@@ -139,10 +139,11 @@
   const pendingPanel=document.createElement('section');
   pendingPanel.id='mediaPendingPanel';pendingPanel.className='panel pl-section media-review';pendingPanel.hidden=true;
   pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Awaiting your approval</div><h2>Player changes to review</h2><p>Recognized players merge into the master list. Review new or uncertain detections here; Power, Kills and Donations are kept together.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
-    <div class="media-review-actions"><button class="btn" type="button" id="mediaDismiss">Dismiss checked</button><button class="btn primary" type="button" id="mediaApprove">Approve checked changes</button></div>
+    <div class="media-review-actions"><button class="btn" type="button" id="mediaDismiss">Dismiss checked</button><button class="btn" type="button" id="mediaApproveClean">Add rows without concerns</button><button class="btn primary" type="button" id="mediaApprove">Approve checked changes</button></div>
+    <p id="mediaReviewMessage" role="status" aria-live="polite" tabindex="-1" hidden></p>
     <p id="mediaDiagnostics" hidden></p>
     <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th><label><input type="checkbox" id="mediaSelectAll" checked aria-label="Select all Player List review rows"> Use</label></th><th>Change</th><th>Photo</th><th>Rank</th><th>Player</th><th>Power</th><th>Kills</th><th>Donations</th><th>Power (M) / Profile</th><th>HQ Lv.</th></tr></thead><tbody id="mediaPendingRows"></tbody></table></div>
-    <p class="pl-hint">Check the entries to approve. Save and Dismiss apply to checked entries. Correct uncertain names and numbers before approval.</p>`;
+    <p class="pl-hint">Check the rows you’ve reviewed to approve them. Add rows without concerns saves all rows with no warnings, regardless of the checkboxes.</p>`;
   const directory=playerView?.querySelector('[aria-labelledby="plDirectoryTitle"]');
   directory?.before(pendingPanel);
   const masterNames=document.createElement('datalist');masterNames.id='playerMasterNames';document.body.append(masterNames);
@@ -266,19 +267,29 @@
     finally{busy=false;$('mediaSubmit').disabled=!files.length&&!driveSelection;}
   };
 
-  async function getJson(url,options){const r=await fetch(url,{cache:'no-store',...options});let data={};try{data=await r.json();}catch{}if(!r.ok)throw Error(data.detail||'Request failed ('+r.status+')');return data;}
-  let pendingSnapshot;
+  async function getJson(url,options){const r=await fetch(url,{cache:'no-store',...options});let data={};try{data=await r.json();}catch{}if(!r.ok){
+      const detail=Array.isArray(data.detail)?data.detail.map(e=>(e.loc||[]).slice(1).join(' ')+' '+e.msg).join('; '):data.detail;
+      throw Error(detail||'Request failed ('+r.status+')');
+    }return data;}
+  let pendingSnapshot,pendingRequest=0;
   async function refreshPending(){
+    const request=++pendingRequest;
     try{
       const result=await getJson('/api/media/pending');
+      if(request!==pendingRequest)return;
       const snapshot=JSON.stringify(result.players||[]);
       if(snapshot===pendingSnapshot)return;
+      const previous=new Map(pending.map(row=>[row.id,JSON.stringify(row)]));
+      const drafts=new Map([...$('mediaPendingRows').querySelectorAll('[data-pending-id]')].map(row=>[
+        Number(row.dataset.pendingId),[...row.querySelectorAll('[data-field]')].map(input=>[
+          input.dataset.field,input.type==='checkbox'?input.checked:input.value
+        ])
+      ]));
       pendingSnapshot=snapshot;
       pending=result.players||[];
-      try{const master=await getJson('/api/player-list');masterNames.innerHTML=master.players.map(p=>'<option value="'+escape(p.name)+'">').join('');}catch{}
       pendingPanel.hidden=!pending.length;
       $('mediaPendingCount').textContent=pending.length+' waiting';
-                  $('mediaPendingRows').innerHTML=pending.map(p=>{
+      $('mediaPendingRows').innerHTML=pending.map(p=>{
         const flag=p.review_required?((p.review_reasons||[]).join(' · ')||'Verify this row against the capture.'):'';
         const avatar=p.avatar_base64&&/^[A-Za-z0-9+/=]+$/.test(p.avatar_base64)?
           '<img class="pl-avatar" src="data:image/'+(p.avatar_base64.startsWith('UklGR')?'webp':'png')+';base64,'+p.avatar_base64+'" alt="Player avatar">':'♡';
@@ -296,9 +307,21 @@
           '<small class="media-flag" data-review-warning '+(flag?'':'hidden')+'>'+escape(flag)+'</small>'+evidence+'</td>'+
           numeric('power')+numeric('kills')+numeric('donations')+numeric('power_millions','0.1')+numeric('hq_level')+'</tr>';
       }).join('');
+      const originals=new Map(pending.map(row=>[row.id,row]));
+      for(const row of $('mediaPendingRows').querySelectorAll('[data-pending-id]')){
+        const id=Number(row.dataset.pendingId);
+        if(previous.get(id)!==JSON.stringify(originals.get(id)))continue;
+        for(const [field,value] of drafts.get(id)||[]){
+          const input=row.querySelector('[data-field="'+field+'"]');
+          if(input.type==='checkbox')input.checked=value;
+          else input.value=value;
+        }
+        validateMediaRow(row,originals.get(id));
+      }
       updateMediaSelection();
       await loadDiagnostics();
       $('mediaBadge').hidden=!pending.length;$('mediaBadge').textContent=String(pending.length);
+      try{const master=await getJson('/api/player-list');if(request===pendingRequest)masterNames.innerHTML=master.players.map(p=>'<option value="'+escape(p.name)+'">').join('');}catch{}
     }catch(e){console.warn('Could not load pending media:',e.message);}
   }
   async function loadDiagnostics(){
@@ -331,68 +354,98 @@
   pendingPanel.addEventListener('change',event=>{
     if(event.target.matches('#mediaSelectAll,[data-field="include"]'))updateMediaSelection(event);
   });
-  function validateMediaRow(row){
-    const original=pending.find(p=>p.id===Number(row.dataset.pendingId));
+  function validateMediaRow(row,original,names){
+    original??=pending.find(p=>p.id===Number(row.dataset.pendingId));
     if(!original)return;
     const values=Object.fromEntries([...row.querySelectorAll('[data-field]')].map(input=>[input.dataset.field,input.value]));
-    const names=[...masterNames.options].map(option=>option.value);
+    names??=[...masterNames.options].map(option=>option.value);
     const issues=window.reviewIssues(original,values,names,'media');
+    const errors=window.reviewIssues.mediaInputIssues(original,values);
+    for(const input of row.querySelectorAll('input[type="number"]')){
+      if(input.validity.badInput)errors.push('Check '+input.dataset.field.replaceAll('_',' '));
+    }
     const warning=row.querySelector('[data-review-warning]');
-    warning.textContent=issues.join(' · ');warning.hidden=!issues.length;
-    row.dataset.reviewInvalid=issues.length?'true':'false';
+    warning.textContent=[...new Set([...issues,...errors])].join(' · ');
+    warning.hidden=!issues.length&&!errors.length;
+    return {row,original,values,issues,errors};
   }
   pendingPanel.addEventListener('focusout',event=>{
     const row=event.target.closest('[data-pending-id]');
     if(row&&event.target.matches('[data-field]:not([data-field="include"])'))validateMediaRow(row);
   });
-  $('mediaApprove').onclick=async()=>{
-    const checkedRows=[...$('mediaPendingRows').querySelectorAll('tr[data-pending-id]')];
-    checkedRows.forEach(validateMediaRow);
-    if(checkedRows.some(tr=>tr.querySelector('[data-field="include"]').checked&&tr.dataset.reviewInvalid==='true')){
-      announce('Correct the remaining warnings before saving the checked rows.');
-      return;
-    }
-    const rows=checkedRows.map(tr=>{
-      const val=field=>tr.querySelector('[data-field="'+field+'"]');
-      const n=v=>v===''?null:Number(v);
-      return {id:Number(tr.dataset.pendingId),include:val('include').checked,name:val('name').value.trim(),
-              rank:val('rank').value,power_millions:n(val('power_millions').value),hq_level:n(val('hq_level').value),
-              power:n(val('power').value),kills:n(val('kills').value),donations:n(val('donations').value)};
-    });
-    if(!rows.length)return;
-    const invalid=rows.filter(r=>r.include && (
-      !r.name || r.name.length<2 || !/\p{L}/u.test(r.name) ||
-      !/^R[1-5]$/.test(r.rank) ||
-      ['power','kills','donations'].some(field=>
-         r[field]!==null&&(!Number.isSafeInteger(r[field])||r[field]<0)) ||
-      (r.hq_level!==null&&(!Number.isInteger(r.hq_level)||r.hq_level<1||r.hq_level>99))
-    ));
-    if(invalid.length){
-      announce('Review required: correct missing player names, ranks and invalid statistics, or uncheck those rows before approving.');
-      return;
-    }
-    if(!rows.some(r=>r.include)){announce('Check at least one reviewed player to approve.');return;}
-    $('mediaApprove').disabled=true;
+  function reviewMessage(text){
+    const status=$('mediaReviewMessage');
+    if(pending.length)$('mediaDiagnostics').before(status);
+    else pendingPanel.after(status);
+    status.hidden=false;
+    status.textContent=text;
+  }
+  let savingReview=false;
+  async function approveRows(onlyClean){
+    if(savingReview)return;
     try{
+      const originals=new Map(pending.map(item=>[item.id,item]));
+      const names=[...masterNames.options].map(option=>option.value);
+      const candidates=[...$('mediaPendingRows').querySelectorAll('[data-pending-id]')]
+        .filter(row=>onlyClean||row.querySelector('[data-field="include"]').checked)
+        .map(row=>validateMediaRow(row,originals.get(Number(row.dataset.pendingId)),names)).filter(Boolean);
+      const selected=onlyClean?candidates.filter(item=>!item.issues.length&&!item.errors.length):candidates;
+      if(!selected.length){
+        reviewMessage(onlyClean?'No rows without concerns are ready to add.':'Check at least one row to approve.');
+        return;
+      }
+      const invalid=selected.find(item=>item.errors.length);
+      if(invalid){
+        reviewMessage((invalid.values.name||'Unnamed row')+': '+invalid.errors.join(' · ')+'. Correct this row or uncheck it.');
+        invalid.row.scrollIntoView({block:'nearest'});
+        return;
+      }
+      const rows=selected.map(({original,values})=>{
+        const numbers=Object.fromEntries(['power','kills','donations','power_millions','hq_level']
+          .map(field=>[field,values[field]===''?null:Number(values[field])]));
+        return {id:original.id,name:values.name.trim(),rank:values.rank,...numbers};
+      });
+      savingReview=true;
+      for(const id of ['mediaApprove','mediaApproveClean','mediaDismiss'])$(id).disabled=true;
+      reviewMessage('Saving '+rows.length+' rows…');
       const result=await getJson('/api/media/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows})});
-      announce('✓ Player List updated: '+result.approved+' approved; unchecked entries remain pending.');
+      ++pendingRequest;
+      const approvedIds=new Set(rows.map(row=>row.id));
+      pending=pending.filter(row=>!approvedIds.has(row.id));
+      for(const row of $('mediaPendingRows').querySelectorAll('[data-pending-id]')){
+        if(approvedIds.has(Number(row.dataset.pendingId)))row.remove();
+      }
+      $('mediaPendingCount').textContent=pending.length+' waiting';
+      $('mediaBadge').hidden=!pending.length;
+      $('mediaBadge').textContent=String(pending.length);
+      updateMediaSelection();
+      const summary='Added '+result.approved+' rows to the Player List.';
+      reviewMessage(summary+(pending.length?' '+pending.length+' rows still awaiting review.':''));
       await Promise.all([refreshPending(),window.playerListRefresh?.()]);
-    }catch(e){announce('Unable to approve player changes: '+e.message);}
-    finally{$('mediaApprove').disabled=false;}
-  };
+    }catch(error){
+      reviewMessage('Could not approve player changes: '+error.message);
+    }finally{
+      savingReview=false;
+      for(const id of ['mediaApprove','mediaApproveClean','mediaDismiss'])$(id).disabled=false;
+    }
+  }
+  $('mediaApprove').onclick=()=>approveRows(false);
+  $('mediaApproveClean').onclick=()=>approveRows(true);
   $('mediaDismiss').onclick=async()=>{
+    if(savingReview)return;
     const ids=[...$('mediaPendingRows').querySelectorAll('tr[data-pending-id]')]
       .filter(tr=>tr.querySelector('[data-field="include"]').checked)
       .map(tr=>Number(tr.dataset.pendingId));
     if(!ids.length){announce('Check the entries you want to dismiss.');return;}
     if(!confirm('Permanently dismiss '+ids.length+' checked OCR entries? They will not update your player database.'))return;
-    $('mediaDismiss').disabled=true;
+    savingReview=true;
+    for(const id of ['mediaApprove','mediaApproveClean','mediaDismiss'])$(id).disabled=true;
     try{
       const result=await getJson('/api/media/dismiss',{method:'POST',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
       announce('Dismissed '+result.dismissed+' unwanted OCR entries.');await refreshPending();
     }catch(e){announce('Could not dismiss entries: '+e.message);}
-    finally{$('mediaDismiss').disabled=false;}
+    finally{savingReview=false;for(const id of ['mediaApprove','mediaApproveClean','mediaDismiss'])$(id).disabled=false;}
   };
   function renderScanQueue(jobs){
     const active=jobs.filter(job=>job.status==='scanning')

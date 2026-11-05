@@ -239,12 +239,10 @@ Run regressions with `python -m unittest discover -s tests -v`.
 
 ### Admin reset
 
-In Admin, select **Clear Data** and then **Yes, clear data**. Anyone who
-can open the app can run this reset.
-Active uploads and scans must finish before a reset can proceed. The reset
-keeps the OCR dictionaries and clears saved app data in each browser the next
-time it opens the app online. Downloaded exports and source files are outside
-the app's storage.
+In Admin, check the tables to clear, select **Clear Data**, and confirm.
+Anyone who can open the app can run this reset. The reset waits for active
+uploads and scans to finish. It preserves the OCR dictionaries, browser
+settings, and unselected tables.
 
 For future user data tables, use `ENGINE=InnoDB COMMENT='alliance_tools:user_data'`
 in the table definition so Clear Data includes them. Only apply this marker

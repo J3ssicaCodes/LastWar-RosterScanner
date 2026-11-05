@@ -79,8 +79,10 @@ class ResetTest(unittest.TestCase):
         yield Cursor()
         sql_cursor.close()
 
-    def clear(self):
-        return self.routes['/api/admin/clear-data'](ClearData(confirmation='CLEAR DATA'))
+    def clear(self, tables=None):
+        if tables is None:
+            tables = ['player list', 'roster upload', 'media_scan_jobs', 'future_scores']
+        return self.routes['/api/admin/clear-data'](ClearData(confirmation='CLEAR DATA', tables=tables))
 
     def count(self, table):
         return self.db.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
@@ -93,7 +95,7 @@ class ResetTest(unittest.TestCase):
         self.assertEqual(self.count('future_scores'), 0)
         self.assertEqual(self.count('player_name_dictionary'), 1)
         self.assertEqual(self.count('unrelated'), 1)
-        self.assertEqual(self.count('alliance_admin_state'), 1)
+        self.assertEqual(self.count('alliance_admin_state'), 0)
         self.assertFalse(self.jobs)
 
     def test_rejects_active_scan(self):
@@ -121,3 +123,26 @@ class ResetTest(unittest.TestCase):
             self.clear()
         self.assertEqual(error.exception.status_code, 409)
         self.assertEqual(self.count('player_name_dictionary'), 1)
+
+    def test_only_selected_table_is_cleared(self):
+        result = self.clear(['player list'])
+        self.assertEqual(result, {'tables_cleared': 1, 'rows_deleted': 1})
+        self.assertEqual(self.count('player list'), 0)
+        self.assertEqual(self.count('roster upload'), 1)
+        self.assertEqual(self.count('media_scan_jobs'), 1)
+        self.assertTrue(self.jobs)
+
+    def test_lists_readable_names_and_excludes_preserved_tables(self):
+        tables = {row['id']: row['label'] for row in self.routes['/api/admin/tables']()['tables']}
+        self.assertEqual(tables['roster upload'], 'Pending Player List Reviews')
+        self.assertEqual(tables['future_scores'], 'Future Scores')
+        self.assertNotIn('player_name_dictionary', tables)
+        self.assertNotIn('unrelated', tables)
+
+    def test_rejects_dictionary_and_orphaned_review(self):
+        for tables, code in [(['player_name_dictionary'], 400), (['media_scan_jobs'], 409)]:
+            with self.assertRaises(HTTPException) as error:
+                self.clear(tables)
+            self.assertEqual(error.exception.status_code, code)
+        self.assertEqual(self.count('player_name_dictionary'), 1)
+        self.assertEqual(self.count('roster upload'), 1)
