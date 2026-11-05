@@ -21,6 +21,50 @@ import pytesseract
 NAME_BAD_WORDS = {"POWER", "MANAGE", "ONLINE", "LV", "MEMBERS", "LEGENDS", "INACTIVE", "SEARCH", "MEMBER", "LIST"}
 
 
+def _safe_ocr(image, config='--psm 7'):
+    """Bound each OCR subprocess so a bad frame cannot freeze the upload."""
+    try:
+        return pytesseract.image_to_string(image, config=config, timeout=12)
+    except (RuntimeError, pytesseract.TesseractError):
+        return ''
+
+
+def _decode_video(command, seconds, progress):
+    """Track actual FFmpeg decode progress rather than showing 0% indefinitely."""
+    import threading
+    command = [*command[:-1], '-progress', 'pipe:1', '-nostats', command[-1]]
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               text=True, bufsize=1)
+    timeout = threading.Timer(170, process.kill)
+    timeout.daemon = True
+    timeout.start()
+    messages = []
+    try:
+        for line in process.stdout:
+            line = line.strip()
+            if line.startswith('out_time_ms='):
+                try:
+                    done = int(line.split('=', 1)[1]) / 1_000_000
+                    portion = min(1.0, max(0.0, done / max(seconds, 1)))
+                    progress(3 + round(19 * portion), 100,
+                             f'Extracting video frames: {round(portion * 100)}%')
+                except ValueError:
+                    pass
+            elif line and not line.startswith(('frame=', 'fps=', 'stream_', 'bitrate=',
+                                               'total_size=', 'out_time=', 'out_time_us=',
+                                               'progress=', 'dup_frames=', 'drop_frames=', 'speed=')):
+                messages.append(line)
+                messages = messages[-3:]
+        code = process.wait(timeout=5)
+        if code:
+            raise ValueError('Video decoding failed. Please try MP4/H.264 or screenshots.')
+    finally:
+        timeout.cancel()
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+
+
 def _groups(indices, max_gap=5, min_span=20):
     groups = []
     for value in indices:
@@ -56,11 +100,11 @@ def _detect_rank_headers(image):
             continue
         badge = image[max(0, y0 - 4): min(h, y1 + 6), 33:126]
         large = cv2.resize(badge, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        text = pytesseract.image_to_string(large, config='--psm 7 -c tessedit_char_whitelist=Rr12345')
+        text = _safe_ocr(large, config='--psm 7 -c tessedit_char_whitelist=Rr12345')
         match = re.search(r'[Rr]\s*([1-5])', text)
         if not match:
             header_line = image[y0:y1, 115:430]
-            text = pytesseract.image_to_string(cv2.resize(header_line, None, fx=2, fy=2), config='--psm 7')
+            text = _safe_ocr(cv2.resize(header_line, None, fx=2, fy=2), config='--psm 7')
             match = re.search(r'\bR\s*([1-5])\b', text, flags=re.I)
         if match:
             results.append((y0, y1, 'R' + match.group(1)))
@@ -103,7 +147,7 @@ def _ocr_line(image, box, config='--psm 7', scale=2):
     if x0>=x1 or y0>=y1:return ''
     crop=image[y0:y1,x0:x1]
     if scale>1:crop=cv2.resize(crop,None,fx=scale,fy=scale,interpolation=cv2.INTER_CUBIC)
-    return pytesseract.image_to_string(crop,config=config).strip().replace('\n',' ')
+    return _safe_ocr(crop,config=config).strip().replace('\n',' ')
 
 
 def _normalize_name(name):
@@ -199,7 +243,7 @@ def _profile_text(image, box, threshold=210, psm=7):
     if threshold is not None:
         gray=cv2.threshold(gray,threshold,255,cv2.THRESH_BINARY)[1]
     enlarged=cv2.resize(gray,None,fx=3,fy=3,interpolation=cv2.INTER_CUBIC)
-    return pytesseract.image_to_string(enlarged,config=f'--psm {psm}').strip().replace('\n',' ')
+    return _safe_ocr(enlarged,config=f'--psm {psm}').strip().replace('\n',' ')
 
 
 def extract_profile(frame):
@@ -259,7 +303,7 @@ def extract_profile(frame):
         rank=None
         for version in versions:
             up=cv2.resize(version,None,fx=4,fy=4,interpolation=cv2.INTER_CUBIC)
-            match=re.search(r'R\s*([1-5])',pytesseract.image_to_string(up,
+            match=re.search(r'R\s*([1-5])',_safe_ocr(up,
                 config='--psm 7 -c tessedit_char_whitelist=Rr12345'),re.I)
             if match:
                 rank='R'+match.group(1)
@@ -376,6 +420,7 @@ def reconcile_players(rows):
 def scan_upload(paths,progress:Callable[[int,int,str],None]):
     """Return OCR candidates and diagnostics. Does not mutate the database."""
     all_frames=[]; filenames=[]; warnings=[]
+    progress(1, 100, 'Checking uploaded files…')
     for path in paths:
         suffix=Path(path).suffix.lower()
         if suffix in ('.mp4','.mov','.m4v','.webm'):
@@ -383,26 +428,44 @@ def scan_upload(paths,progress:Callable[[int,int,str],None]):
                 meta=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',str(path)],capture_output=True,text=True,timeout=12,check=True)
                 seconds=max(1,float(meta.stdout.strip()))
                 if seconds>420: raise ValueError('Video is too long. Limit recordings to seven minutes.')
-                fps=min(3.0,max(0.7,130/seconds))
-                count_limit=150
+                # Keep enough frames to cover scrolling while staying practical
+                # on Render's free CPU. Static frames are skipped before OCR.
+                fps=min(2.4,max(0.6,75/seconds))
+                count_limit=100
                 folder=Path(tempfile.mkdtemp(prefix='frames_'))
                 command=['ffmpeg','-hide_banner','-nostdin','-loglevel','error','-i',str(path),'-vf',f'fps={fps:.3f},scale=1080:-2','-frames:v',str(count_limit),'-q:v','4',str(folder/'frame_%04d.jpg')]
-                subprocess.run(command,timeout=170,check=True,capture_output=True)
+                progress(3, 100, 'Extracting video frames…')
+                _decode_video(command, seconds, progress)
                 images=sorted(folder.glob('frame_*.jpg'))
                 all_frames.extend(images);filenames.extend([Path(path).name]*len(images))
                 if len(images)==count_limit:
-                    warnings.append('The recording reached the 150 frame safety limit. Check for players not captured near the end.')
+                    warnings.append('The recording reached the 100 frame safety limit. Check for players not captured near the end.')
             except (ValueError,subprocess.CalledProcessError,subprocess.TimeoutExpired) as exc:
                 raise ValueError('Could not decode the video: '+str(exc)[:150]) from exc
         else:
             all_frames.append(Path(path));filenames.append(Path(path).name)
     if not all_frames:raise ValueError('No usable screenshots or video frames were found.')
     observed={};fps_seen=[];total=len(all_frames);missing_stats=0
+    previous_video_thumb=None
+    progress(24, 100, f'Found {total} frames. Starting text recognition…')
     try:
         for index,frame_file in enumerate(all_frames,1):
+            progress(24 + round(72*(index-1)/total), 100,
+                     f'Reading frame {index} of {total}…')
             frame=cv2.imread(str(frame_file))
             if frame is None:
                 warnings.append('Could not read an image frame.');continue
+            if frame_file.parent.name.startswith('frames_'):
+                h,w=frame.shape[:2]
+                view=frame[int(h*.42):int(h*.91),int(w*.15):int(w*.87)]
+                if view.size:
+                    thumb=cv2.resize(cv2.cvtColor(view,cv2.COLOR_BGR2GRAY),(36,48))
+                    if previous_video_thumb is not None and np.mean(
+                            cv2.absdiff(previous_video_thumb,thumb))<1.8:
+                        progress(24 + round(72*index/total), 100,
+                                 f'Frame {index} of {total}: unchanged, skipped')
+                        continue
+                    previous_video_thumb=thumb
             profile=extract_profile(frame)
             rows=[profile] if profile else extract_frame(frame,fps_seen if total>3 else None)
             for row in rows:
@@ -418,7 +481,8 @@ def scan_upload(paths,progress:Callable[[int,int,str],None]):
                 elif prev:
                     if prev.get('power_millions') is None:prev['power_millions']=row.get('power_millions')
                     if prev.get('hq_level') is None:prev['hq_level']=row.get('hq_level')
-            progress(index,total,f'Reading frame {index} of {total}')
+            progress(24 + round(72*index/total),100,
+                     f'Processed frame {index} of {total}; {len(observed)} names found')
     finally:
         for f in all_frames:
             if f.parent.name.startswith('frames_'):
@@ -428,6 +492,7 @@ def scan_upload(paths,progress:Callable[[int,int,str],None]):
         for folder in folders:
             try:folder.rmdir()
             except OSError:pass
+    progress(97, 100, 'Combining detected players…')
     candidates=sorted(reconcile_players(list(observed.values())),key=lambda x:(-(int(x['rank'][1]) if x.get('rank') else 0),-(x.get('power_millions') or 0),x['name'].casefold()))
     for item in candidates:
         if item['power_millions'] is None or item['hq_level'] is None: missing_stats+=1
