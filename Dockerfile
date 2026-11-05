@@ -14,7 +14,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY index.html app.py player_list_ocr.py leaderboard_ocr.py media_upload.py storm_roster_ocr.py media_ui.js \
+COPY index.html app.py player_list_ocr.py leaderboard_ocr.py media_upload.py google_drive_source.py storm_roster_ocr.py media_ui.js \
      scan_rankings.py extract_ranking_pages.py tested_rankings_adapter.py rank_badge_templates.npz ./
 
 EXPOSE 10000
