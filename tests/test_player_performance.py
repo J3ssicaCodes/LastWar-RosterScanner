@@ -156,3 +156,22 @@ class PerformanceTests(unittest.TestCase):
         self.assertEqual(result['daily'][0]['points'],'0')
         self.assertIsNone(players[duplicate]['vs_points'])
         self.assertEqual(players[duplicate]['power_change'],'20')
+
+    def test_profile_compares_matching_weekdays_and_keeps_missing_scores_blank(self):
+        keep, other = self.add_players()
+        self.db.db.executemany('INSERT INTO vs_points (score_date,player_id,player_name,normalized_name,points) VALUES (?,?,?,?,?)',[
+            ('2026-10-26',keep,'DonPepon','donpepon',10),
+            ('2026-10-31',keep,'DonPepon','donpepon',60),
+            ('2026-11-01',keep,'DonPepon','donpepon',99),
+            ('2026-11-02',keep,'DonPepon','old-name',0),
+            ('2026-11-02',None,'DonPepon','donpepon',88),
+            ('2026-11-04',keep,'DonPepon','donpepon',30),
+            ('2026-11-09',keep,'DonPepon','donpepon',70),
+            ('2026-11-03',other,'ep','ep',80),
+        ])
+        history = app.player_history(keep,date(2026,11,6))
+        self.assertEqual(history['vs_comparison'], {
+            'current':[0,None,30,None,None,None],
+            'previous':[10,None,None,None,None,60],
+        })
+        self.assertEqual([row['value'] for row in history['vs']],[70,30,70])

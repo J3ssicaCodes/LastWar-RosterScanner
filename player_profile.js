@@ -20,6 +20,14 @@
     .profile-history svg text{fill:var(--muted);font:10px system-ui}
     .profile-history figcaption{font-weight:700}
     .profile-history small{color:var(--muted)}
+    .profile-vs-legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0;color:var(--muted);font-size:.85rem}
+    .profile-vs-legend span{display:inline-flex;align-items:center;gap:6px}
+    .profile-vs-legend i{display:inline-block;width:18px;border-top:3px solid var(--cyan)}
+    .profile-vs-legend .previous{border-top:3px dashed var(--violet)}
+    .profile-vs-values{margin-top:8px}
+    .profile-vs-values summary{cursor:pointer;font-size:.85rem}
+    .profile-vs-values table{width:100%;font-size:.82rem;text-align:right}
+    .profile-vs-values th:first-child{text-align:left}
     .player-profile-name{display:flex;align-items:center;gap:8px;margin-top:10px}
     .player-profile-name h2{margin:0;min-width:0;overflow-wrap:anywhere}
     .player-profile-name input{flex:1;min-width:0}
@@ -31,6 +39,36 @@
   const editIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v3M7 8h6M7 12h3"/><path d="m18 10 4 4-7 7h-4v-4Z"/></svg>';
   const saveIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v6h8"/></svg>';
   const number=v=>v==null?'—':Number(v).toLocaleString();
+  function vsComparisonChart(comparison){
+    const caption='<figcaption>Daily VS points · This week vs. last week</figcaption>';
+    const current=comparison?.current||[],previous=comparison?.previous||[];
+    const values=[...current,...previous].filter(value=>value!=null);
+    if(!values.length)return '<figure>'+caption+'<p>No VS scores recorded for either week.</p></figure>';
+    const days=['Mon','Tue','Wed','Thu','Fri','Sat'];
+    const max=Math.max(2,Math.ceil(Math.max(...values)/2)*2);
+    const x=index=>52+59*index,y=value=>108-92*value/max;
+    const short=new Intl.NumberFormat(undefined,{notation:'compact',maximumFractionDigits:1});
+    const grid=[0,max/2,max].map(value=>
+      '<path d="M52 '+y(value)+' H347" stroke="var(--stroke)"/><text x="47" y="'+(y(value)+3)+'" text-anchor="end">'+esc(short.format(value))+'</text>').join('');
+    const ticks=days.map((day,i)=>'<text x="'+x(i)+'" y="127" text-anchor="middle">'+day+'</text>').join('');
+    function plot(scores,label,color,dashed=false){
+      let path='',dots='';
+      for(const [i,score] of scores.entries()){
+        if(score==null)continue;
+        path+=(scores[i-1]==null?'M':'L')+x(i)+' '+y(score)+' ';
+        dots+='<circle cx="'+x(i)+'" cy="'+y(score)+'" r="'+(dashed?5:3)+'" fill="'+(dashed?'var(--panel)':color)+'" stroke="'+color+'" stroke-width="2"><title>'+
+          esc(label+' · '+days[i]+' · '+number(score))+'</title></circle>';
+      }
+      return '<path d="'+path+'" fill="none" stroke="'+color+'" stroke-width="2"'+(dashed?' stroke-dasharray="5 4"':'')+'/>'+dots;
+    }
+    const exact=days.map((day,i)=>'<tr><th scope="row">'+day+'</th><td>'+esc(number(current[i]))+
+      '</td><td>'+esc(number(previous[i]))+'</td></tr>').join('');
+    return '<figure>'+caption+'<div class="profile-vs-legend"><span><i aria-hidden="true"></i>This week</span><span><i class="previous" aria-hidden="true"></i>Last week</span></div>'+
+      '<svg viewBox="0 0 370 136" role="img" aria-label="Daily VS points for this week and last week, Monday through Saturday">'+
+      grid+plot(previous,'Last week','var(--violet)',true)+plot(current,'This week','var(--cyan)')+ticks+'</svg>'+
+      '<details class="profile-vs-values"><summary>View daily scores</summary><table><thead><tr><th scope="col">Day</th><th scope="col">This week</th><th scope="col">Last week</th></tr></thead><tbody>'+
+      exact+'</tbody></table></details></figure>';
+  }
   function historyChart(label,axis,rows){
     const caption='<figcaption>'+label+'</figcaption><small>'+axis+'</small>';
     if(!rows.length)return '<figure>'+caption+'<p>No history yet.</p></figure>';
@@ -59,7 +97,7 @@
     const target=dialog.querySelector('[data-history]');
     if(!target)return;
     target.innerHTML='<h3>History</h3>'+(history===null?'<p role="status">Loading stats history…</p>':
-      history.error?'<p role="status">Could not load stats history.</p>':[
+      history.error?'<p role="status">Could not load stats history.</p>':vsComparisonChart(history.vs_comparison)+[
         ['Weekly VS points','Week ending Sunday',history.vs],
         ['Power','Upload date',history.power],['Kills','Upload date',history.kills],
         ['Donations','Upload date',history.donations],
@@ -247,7 +285,9 @@
       const message=dialog.querySelector('[data-merge-message]');
       if(notice&&message){message.hidden=false;message.textContent=notice;}
       try{
-        const stats=await fetch('/api/player-list/'+player.id+'/history',{cache:'no-store'});
+        const today=new Date();
+        const localDay=[today.getFullYear(),String(today.getMonth()+1).padStart(2,'0'),String(today.getDate()).padStart(2,'0')].join('-');
+        const stats=await fetch('/api/player-list/'+player.id+'/history?week_start='+localDay,{cache:'no-store'});
         if(!stats.ok)throw Error('History unavailable.');
         const result=await stats.json();
         if(current===request&&dialog.open){history=result;renderHistory();}

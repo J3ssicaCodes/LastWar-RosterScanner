@@ -686,7 +686,7 @@ def merge_players(body: ImportData, connection=None):
             'updated_count':updated,'possibly_removed_count':removed,'full_capture':body.full_capture}
 
 @app.get('/api/player-list/{player_id}/history')
-def player_history(player_id: int):
+def player_history(player_id: int, week_start: date | None = None):
     with db_connect() as conn, conn.cursor() as cur:
         cur.execute('SELECT normalized_name FROM `player list` WHERE id=%s',(player_id,))
         player = cur.fetchone()
@@ -703,16 +703,25 @@ def player_history(player_id: int):
 
     series = stat_series(history)
     series['vs'] = {}
+    reference = week_start or date.today()
+    monday = reference - timedelta(days=reference.weekday())
+    comparison = {'current':[None]*6, 'previous':[None]*6}
     seen = set()
     for row in scores:
         day = row['score_date']
         if day in seen or day.weekday() == 6:
             continue
         seen.add(day)
+        points = int(row['points'])
         sunday = (day + timedelta(days=6-day.weekday())).isoformat()
-        series['vs'][sunday] = series['vs'].get(sunday,0) + int(row['points'])
-    return {key:[{'date':day,'value':value} for day,value in sorted(values.items())]
-            for key,values in series.items()}
+        series['vs'][sunday] = series['vs'].get(sunday,0) + points
+        offset = (day-monday).days
+        if 0 <= offset < 6:
+            comparison['current'][offset] = points
+        elif -7 <= offset < -1:
+            comparison['previous'][offset+7] = points
+    return {**{key:[{'date':day,'value':value} for day,value in sorted(values.items())]
+               for key,values in series.items()}, 'vs_comparison':comparison}
 
 
 @app.get('/api/player-performance')
