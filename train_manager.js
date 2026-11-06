@@ -17,6 +17,8 @@
     .train-card h3,.train-card h4{margin:0 0 6px}
     .train-picks{position:sticky;top:12px}
     .train-picks label,.train-history-form label{margin-bottom:10px}
+    .train-vip-methods{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;padding:8px;border:1px solid var(--stroke);border-radius:9px}
+    .train-vip-methods label{display:flex;align-items:center;gap:4px;margin:0}
     #trainView .pl-table{min-width:0}
     #trainView .pl-table :is(td,th){padding:7px;white-space:normal;overflow-wrap:anywhere}
     .train-badge{display:block;margin-top:4px;font-size:.85em;color:var(--muted)}
@@ -71,15 +73,23 @@
             <h3 id="trainNomineeTitle"><span class="train-step" aria-hidden="true">1</span> Choose a Conductor</h3>
             <p class="train-hint">Pick a nominee or use the Conductor menu. Checked nominees go on the VIP wheel once you pick a Conductor.</p>
             <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Include</th><th scope="col">Player</th><th scope="col">VS points</th><th scope="col">Assign</th></tr></thead><tbody id="trainRows"></tbody></table></div>
-            <div class="train-nominee-actions"><button id="trainMore" type="button" class="btn smallbtn" hidden>Show all nominees</button><label class="train-field">Add a player<select id="trainManual"></select></label><button class="btn" type="button" id="trainAppend">Add nominee</button></div>
+            <div class="train-nominee-actions"><button id="trainMore" type="button" class="btn smallbtn" hidden>Show all nominees</button><label class="train-field">Add nominee<select id="trainManual"></select></label><button class="btn" type="button" id="trainAppend">Add nominee</button></div>
           </section>
           <section class="train-card train-picks" aria-labelledby="trainPickTitle">
             <h3 id="trainPickTitle"><span class="train-step" aria-hidden="true">2</span> Pick a VIP</h3>
             <label class="train-field">Conductor<select id="trainConductor"></select></label>
+            <fieldset id="trainVipMethods" class="train-vip-methods"><legend>VIP selection method</legend>
+              <label><input type="radio" name="trainVipMethod" value="wheel" checked> Wheel of Fortune</label>
+              <label><input type="radio" name="trainVipMethod" value="dice"> Dice Roll</label>
+              <label><input type="radio" name="trainVipMethod" value="manual"> Manual VIP</label>
+            </fieldset>
+            <div id="trainWheelPanel">
             <p class="train-hint" id="trainWheelStatus" role="status" aria-live="polite"></p>
             <div class="train-wheel-wrap" id="trainWheelWrap" hidden><span class="train-pointer" aria-hidden="true">▼</span><canvas id="trainWheel" width="480" height="480" aria-label="VIP randomizer wheel"></canvas></div>
             <div class="train-controls"><button class="btn" type="button" id="trainSpin" disabled>Spin for VIP</button></div>
-            <label class="train-field">VIP<select id="trainVip"></select></label>
+            </div>
+            <p class="train-hint" id="trainDiceHint" hidden>Roll in the game. Save the Conductor now and record the VIP here once you know who won.</p>
+            <label class="train-field" id="trainManualVip" hidden>VIP<select id="trainVip"></select></label>
             <button class="btn primary" type="button" id="trainSave">Save train assignment</button>
             <p id="trainSaveStatus" role="status" aria-live="polite"></p>
           </section>
@@ -87,7 +97,13 @@
         <section class="train-card" id="trainSavedAssignment" hidden>
           <h3>Saved train assignment</h3>
           <p id="trainSavedNames"></p>
+          <form id="trainDiceWinnerForm" class="train-controls" hidden>
+            <label>Dice roll winner<select name="winner" required></select></label>
+            <button class="btn primary" type="submit">Save VIP winner</button>
+          </form>
+          <p class="train-hint" id="trainDiceStatus" role="status" aria-live="polite"></p>
           <div class="train-controls">
+            <button class="btn primary" type="button" id="trainViewEmail" hidden>View saved email</button>
             <button class="btn primary" type="button" id="trainOpenEmail">Generate Alliance Email</button>
             <button class="btn" type="button" id="trainRedo" hidden>Clear today’s picks and redo</button>
           </div>
@@ -111,7 +127,7 @@
       <div id="trainDraftActions" class="train-controls" hidden><button class="btn" type="button" id="trainCopy">Copy email</button><button class="btn primary" type="button" id="trainSaveEmail">Save email</button></div>
       <p id="trainEmailStatus" role="status" aria-live="polite"></p>
     </section>
-    <details class="panel pl-section"><summary class="train-summary">Saved alliance emails</summary>
+    <details class="panel pl-section" id="trainEmailArchive"><summary class="train-summary">Saved alliance emails</summary>
       <div class="train-controls"><button class="btn" type="button" id="trainOlderEmail">‹ Older</button><strong id="trainEmailDate"></strong><button class="btn" type="button" id="trainNewerEmail">Newer ›</button></div>
       <label id="trainSavedEmailField" class="train-field" hidden>Saved email<textarea id="trainSavedEmail" readonly></textarea></label>
       <button id="trainCopySaved" class="btn" type="button" hidden>Copy saved email</button>
@@ -267,7 +283,8 @@
   let events=[],emailRows=[],emailIndex=0,historyRows=[],historyPlayers=[],editingHistory,historyRequest=0;
   const getPlayer=id=>board?.players.find(p=>p.id===id);
   const conductor=()=>Number($('trainConductor').value);
-  const vip=()=>Number($('trainVip').value);
+  const vipMethod=()=>view.querySelector('[name="trainVipMethod"]:checked').value;
+  const vip=()=>vipMethod()==='wheel'?wheelWinner:Number($('trainVip').value);
   $('trainDay').value=localDate(new Date());
   const weekKey=()=>{
     const start=new Date(day()+'T12:00:00');start.setDate(start.getDate()-(start.getDay()+6)%7);
@@ -300,7 +317,7 @@
   }
   function render(){
     const assigned=board.assignment;
-    const oldConductor=conductor(),oldVip=vip();
+    const oldConductor=conductor(),oldVip=Number($('trainVip').value),method=vipMethod();
     const ids=nomineeIds();
     const choices=board.players.filter(p=>!p.blocked&&!excluded.has(p.id));
     const selectedConductor=assigned?.conductor_id||choices.find(p=>p.id===oldConductor)?.id||0;
@@ -321,13 +338,17 @@
         (assigned?'':choices.filter(p=>p.id!==other).map(p=>option(p,chosen)).join(''));
       select.disabled=!!assigned||spin||(id==='trainVip'&&!selectedConductor);
     }
-    if(vip()!==wheelWinner)wheelWinner=0;
+    if(!choices.some(p=>p.id===wheelWinner)||wheelWinner===selectedConductor)wheelWinner=0;
     syncWheel(assigned?[]:remaining);
     $('trainWheelWrap').hidden=!selectedConductor||!wheel.length;
+    $('trainVipMethods').disabled=spin||saving;
+    $('trainWheelPanel').hidden=method!=='wheel';
+    $('trainDiceHint').hidden=method!=='dice';
+    $('trainManualVip').hidden=method!=='manual';
     if(!spin){
       message('trainWheelStatus',!selectedConductor?'Choose a Conductor to enable the VIP wheel.':wheelWinner?
         getPlayer(wheelWinner).name+' selected as VIP.':wheel.length?
-        wheel.length+' on the VIP wheel. You can also choose a VIP below.':'No checked nominees on the wheel. Choose a VIP below or check a nominee.');
+        wheel.length+' on the VIP wheel.':'Check a nominee to add them to the wheel.');
       $('trainSpin').textContent=wheelWinner?'Respin for VIP':'Spin for VIP';
     }
     $('trainWorkflow').hidden=!!assigned;
@@ -335,11 +356,20 @@
     $('trainRedo').hidden=assigned?.assignment_date!==localDate(new Date());
     $('trainGoalControls').disabled=!!assigned;
     $('trainTarget').disabled=!!assigned||spin;
-    if(assigned)message('trainSavedNames','Conductor · '+assigned.conductor_name+'   |   VIP · '+assigned.vip_name);
+    if(assigned)message('trainSavedNames','Conductor · '+assigned.conductor_name+'   |   VIP · '+vipName(assigned));
+    const diceForm=$('trainDiceWinnerForm');
+    diceForm.hidden=!(assigned?.vip_method==='dice'&&!assigned.vip_id);
+    if(!diceForm.hidden){
+      const select=diceForm.elements.winner,selected=Number(select.value);
+      select.innerHTML='<option value="">Choose the in-game winner…</option>'+
+        board.players.filter(p=>p.id!==assigned.conductor_id).map(p=>option({...p,blocked:''},selected)).join('');
+    }
+    updateEmailAction();
     $('trainManual').disabled=!!assigned||spin;
     $('trainAppend').disabled=true;
     $('trainSpin').disabled=!!assigned||spin||!conductor()||!wheel.length;
-    $('trainSave').disabled=!!assigned||spin||saving||!conductor()||!vip();
+    $('trainSave').disabled=!!assigned||spin||saving||!conductor()||(method!=='dice'&&!vip());
+    $('trainSave').textContent=method==='dice'?'Save with VIP pending':'Save train assignment';
   }
 
   async function loadBoard(reset=false){
@@ -353,7 +383,7 @@
       const result=await api('/board?'+new URLSearchParams({day:day(),goal:goal(),target:target()}));
       if(current!==request)return;
       board=result;
-      if(reset){manual=[];excluded.clear();showAll=false;$('trainConductor').value='';$('trainVip').value='';}
+      if(reset){manual=[];excluded.clear();showAll=false;wheelWinner=0;$('trainConductor').value='';$('trainVip').value='';}
       else manual=manual.filter(id=>getPlayer(id)&&!getPlayer(id).blocked);
       const goalHint=goal()==='Push'?'Push ranks the highest scores.':'Save prioritizes exact matches, then scores closest above the goal.';
       message('trainContext',board.assignment?'':goalHint+' VS scores from '+board.score_date+'. '+board.settings.cooldown_weeks+'-week cooldown.');
@@ -391,12 +421,17 @@
   };
   $('trainManual').onchange=()=>{$('trainAppend').disabled=!$('trainManual').value;};
   $('trainConductor').onchange=()=>selectConductor(conductor());
-  $('trainVip').onchange=()=>{wheelWinner=0;render();};
+  $('trainVip').onchange=render;
+  $('trainVipMethods').onchange=render;
+  function vipName(assignment){
+    return assignment.vip_name||'Pending in-game dice roll';
+  }
   function resetEmailEditor(){
     $('trainEmailEditor').hidden=true;events=[];$('trainNotes').value='';$('trainDraft').value='';
     $('trainDraftField').hidden=true;$('trainDraftActions').hidden=true;
     message('trainSaveStatus','');
     $('trainRedoStatus').hidden=true;
+    message('trainDiceStatus','');
   }
   $('trainDay').onchange=()=>{
     resetEmailEditor();
@@ -427,7 +462,7 @@
     }
   }
   $('trainSpin').onclick=()=>{
-    if(spin||!conductor()||!wheel.length)return;
+    if(spin||vipMethod()!=='wheel'||!conductor()||!wheel.length)return;
     const previous=vip();
     const pool=wheel.length>1?wheel.filter(id=>id!==previous):wheel;
     const sample=new Uint32Array(1),limit=2**32-(2**32%pool.length);
@@ -442,7 +477,7 @@
     canvas.style.transition='transform '+duration+'s cubic-bezier(.15,.72,.17,1)';
     canvas.style.transform='rotate('+rotation+'deg)';
     setTimeout(()=>{
-      spin=false;$('trainVip').value=winner;wheelWinner=winner;render();
+      spin=false;wheelWinner=winner;render();
       for(const input of view.querySelectorAll('[name="trainGoal"],#trainDay,#trainTarget,[data-train-include],#trainMore'))input.disabled=false;
     },duration*1000);
   };
@@ -452,13 +487,30 @@
     const date=day();
     message('trainSaveStatus','Saving assignment…');
     try{
-      await api('/assignments',json('POST',{day:date,conductor_id:conductor(),vip_id:vip(),goal:goal(),target:target(),wheel_vip:wheelWinner===vip()}));
+      const method=vipMethod();
+      await api('/assignments',json('POST',{day:date,conductor_id:conductor(),vip_id:method==='dice'?null:vip(),
+        goal:goal(),target:target(),vip_method:method}));
       if(day()===date){
         await loadBoard();
         if(day()===date&&board?.assignment)$('trainOpenEmail').focus();
       }
     }catch(error){if(day()===date)message('trainSaveStatus',error.message);}
     finally{saving=false;if(board&&!loading)render();}
+  };
+
+  $('trainDiceWinnerForm').onsubmit=async event=>{
+    event.preventDefault();
+    const assignment=board.assignment,form=event.currentTarget,button=form.querySelector('button');
+    button.disabled=true;
+    try{
+      await api('/assignments/'+assignment.assignment_date+'/dice-winner',
+        json('PUT',{conductor_id:assignment.conductor_id,vip_id:Number(form.elements.winner.value)}));
+      if(day()===assignment.assignment_date){
+        await loadBoard();
+        message('trainDiceStatus','Dice roll winner saved.');
+      }
+    }catch(error){if(day()===assignment.assignment_date)message('trainDiceStatus',error.message);}
+    finally{button.disabled=false;}
   };
 
   $('trainRedo').onclick=async()=>{
@@ -470,7 +522,8 @@
     $('trainRedoStatus').hidden=true;
     try{
       const query=new URLSearchParams({timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC',
-        conductor_id:assignment.conductor_id,vip_id:assignment.vip_id});
+        conductor_id:assignment.conductor_id});
+      if(assignment.vip_id)query.set('vip_id',assignment.vip_id);
       await api('/assignments/'+date+'?'+query,{method:'DELETE'});
       if(day()===date){
         resetEmailEditor();
@@ -498,7 +551,7 @@
       if(request!==historyRequest)return;
       if(players)historyPlayers=players;
       historyRows=older?[...historyRows,...rows]:rows;
-      $('trainHistory').innerHTML=historyRows.map(row=>'<tr><td>'+esc(row.assignment_date)+'</td><td>'+esc(row.conductor_name)+'</td><td>'+esc(row.vip_name)+'</td>'+
+      $('trainHistory').innerHTML=historyRows.map(row=>'<tr><td>'+esc(row.assignment_date)+'</td><td>'+esc(row.conductor_name)+'</td><td>'+esc(vipName(row))+'</td>'+
         '<td><button class="btn smallbtn" type="button" data-history-date="'+esc(row.assignment_date)+'" aria-label="Edit assignment for '+esc(row.assignment_date)+'">Edit</button></td></tr>').join('')||
         '<tr><td colspan="4">No assignments saved yet.</td></tr>';
       button.hidden=!more;
@@ -533,9 +586,11 @@
     historyForm.elements.day.value=editingHistory.assignment_date;
     for(const role of ['conductor','vip']){
       const id=editingHistory[role+'_id'];
-      const players=historyPlayers.some(p=>p.id===id)?historyPlayers:
+      const players=!id||historyPlayers.some(p=>p.id===id)?historyPlayers:
         [{id,name:editingHistory[role+'_name']+' (saved player)'},...historyPlayers];
-      historyForm.elements[role+'_id'].innerHTML=players.map(p=>option(p,id)).join('');
+      const select=historyForm.elements[role+'_id'],dice=role==='vip'&&editingHistory.vip_method==='dice';
+      select.required=!dice;
+      select.innerHTML=(dice?'<option value="">Pending in-game dice roll</option>':'')+players.map(p=>option(p,id)).join('');
     }
     message('trainHistoryEditTitle','Edit assignment for '+editingHistory.assignment_date);
     message('trainHistoryStatus','');
@@ -551,7 +606,7 @@
   historyForm.onsubmit=async event=>{
     event.preventDefault();
     const original=editingHistory,form=historyForm.elements;
-    const body={day:form.day.value,conductor_id:Number(form.conductor_id.value),vip_id:Number(form.vip_id.value),
+    const body={day:form.day.value,conductor_id:Number(form.conductor_id.value),vip_id:Number(form.vip_id.value)||null,
       original_conductor_id:original.conductor_id,original_vip_id:original.vip_id};
     if(body.conductor_id===body.vip_id){message('trainHistoryStatus','Choose different players for Conductor and VIP.');return;}
     const submit=historyForm.querySelector('[type="submit"]');submit.disabled=true;
@@ -632,8 +687,9 @@
       emailTemplates[Math.floor(Math.random()*emailTemplates.length)];
     if(!template){message('trainEmailStatus','Choose an available email template.');return;}
     const reasons=[];
-    const c=selectionReason(assignment.conductor_reason,assignment),v=selectionReason(assignment.vip_reason,assignment);
-    if(assignment.goal==='Save'&&assignment.conductor_points===assignment.target&&assignment.vip_points===assignment.target){
+    const dice=assignment.vip_method==='dice',pending=dice&&!assignment.vip_id;
+    const c=selectionReason(assignment.conductor_reason,assignment),v=dice?'':selectionReason(assignment.vip_reason,assignment);
+    if(!dice&&assignment.goal==='Save'&&assignment.conductor_points===assignment.target&&assignment.vip_points===assignment.target){
       reasons.push('Both hit the save goal of '+num(assignment.target)+' VS points.');
       if(c.includes('birthday'))reasons.push(assignment.conductor_name+' has a birthday this week.');
       if(v.includes('birthday'))reasons.push(assignment.vip_name+' has a birthday this week.');
@@ -642,12 +698,14 @@
       if(c)reasons.push(assignment.conductor_name+' '+c+'.');
       if(v)reasons.push(assignment.vip_name+' '+v+'.');
     }
+    if(dice)reasons.push(pending?'The VIP will be selected with an in-game dice roll.':
+      assignment.vip_name+' won the in-game dice roll for VIP.');
     const eventLines=events.map(event=>{
       let line=event.name+' is at '+event.time+' '+event.zone+'.';
       if(event.name.trim().toLowerCase()==='zombie siege')line+=' Please have troops on the wall by '+wallTime(event.time)+' '+event.zone+(event.time<'00:30'?' the previous day':'')+'.';
       return line;
     });
-    const fields={alliance:board.settings.alliance_name,conductor:assignment.conductor_name,vip:assignment.vip_name,
+    const fields={alliance:board.settings.alliance_name,conductor:assignment.conductor_name,vip:pending?'the dice-roll winner':assignment.vip_name,
       reasons:reasons.join(' '),events:eventLines.join('\n\n'),notes:$('trainNotes').value.trim(),author:author.name};
     const draft=template.body.split(/\n{2,}/)
       .map(paragraph=>paragraph.replace(/\{([a-zA-Z_]+)\}/g,(_,field)=>fields[field]))
@@ -679,10 +737,23 @@
     $('trainSavedEmail').value=row?.body||'';
     message('trainArchiveStatus','');
   }
+  function updateEmailAction(){
+    const saved=board?.assignment&&emailRows.some(row=>row.assignment_date===board.assignment.assignment_date);
+    $('trainViewEmail').hidden=!saved;
+    $('trainOpenEmail').textContent=saved?'Generate new email':'Generate Alliance Email';
+  }
+  $('trainViewEmail').onclick=()=>{
+    const index=emailRows.findIndex(row=>row.assignment_date===board?.assignment?.assignment_date);
+    if(index<0)return;
+    emailIndex=index;
+    renderSavedEmail();
+    $('trainEmailArchive').open=true;
+    $('trainCopySaved').focus();
+  };
   async function loadEmails(preferred){
     try{
       const {rows}=await api('/emails');emailRows=rows;
-      emailIndex=Math.max(0,rows.findIndex(row=>row.assignment_date===preferred));renderSavedEmail();
+      emailIndex=Math.max(0,rows.findIndex(row=>row.assignment_date===preferred));renderSavedEmail();updateEmailAction();
     }catch(error){message('trainArchiveStatus',error.message);}
   }
   $('trainOlderEmail').onclick=()=>{if(emailIndex<emailRows.length-1)emailIndex++;renderSavedEmail();};

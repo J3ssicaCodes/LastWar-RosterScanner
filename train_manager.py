@@ -109,18 +109,24 @@ class Restriction(BaseModel):
 class Assignment(BaseModel):
     day: date
     conductor_id: int = Field(gt=0)
-    vip_id: int = Field(gt=0)
+    vip_id: int | None = Field(default=None,gt=0)
     goal: Literal['Push','Save'] = 'Push'
     target: int = Field(default=7200000,ge=1,le=9007199254740991)
     wheel_vip: bool = False
+    vip_method: Literal['wheel','dice','manual'] | None = None
 
 
 class HistoryEdit(BaseModel):
     day: date
     conductor_id: int = Field(gt=0)
-    vip_id: int = Field(gt=0)
+    vip_id: int | None = Field(gt=0)
     original_conductor_id: int = Field(gt=0)
-    original_vip_id: int = Field(gt=0)
+    original_vip_id: int | None = Field(gt=0)
+
+
+class DiceWinner(BaseModel):
+    conductor_id: int = Field(gt=0)
+    vip_id: int = Field(gt=0)
 
 
 class EmailDraft(BaseModel):
@@ -275,11 +281,12 @@ def install_train_manager(app, connect_db):
                 ) ENGINE=InnoDB COMMENT='alliance_tools:user_data'""",
                 """CREATE TABLE IF NOT EXISTS train_assignments (
                     assignment_date DATE PRIMARY KEY,
-                    conductor_id BIGINT UNSIGNED NOT NULL, vip_id BIGINT UNSIGNED NOT NULL,
+                    conductor_id BIGINT UNSIGNED NOT NULL, vip_id BIGINT UNSIGNED NULL,
                     conductor_name VARCHAR(255) NOT NULL, vip_name VARCHAR(255) NOT NULL,
                     conductor_reason VARCHAR(140) NOT NULL, vip_reason VARCHAR(140) NOT NULL,
                     goal VARCHAR(10) NOT NULL, target BIGINT UNSIGNED NOT NULL,
-                    conductor_points BIGINT UNSIGNED NULL, vip_points BIGINT UNSIGNED NULL
+                    conductor_points BIGINT UNSIGNED NULL, vip_points BIGINT UNSIGNED NULL,
+                    vip_method VARCHAR(10) NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='alliance_tools:user_data'""",
                 """CREATE TABLE IF NOT EXISTS train_event_names (
                     name_key VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin PRIMARY KEY,
@@ -296,6 +303,10 @@ def install_train_manager(app, connect_db):
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='alliance_tools:user_data'""",
             ):
                 cur.execute(sql)
+            cur.execute("SHOW COLUMNS FROM train_assignments LIKE 'vip_method'")
+            if not cur.fetchone():
+                cur.execute("""ALTER TABLE train_assignments MODIFY vip_id BIGINT UNSIGNED NULL,
+                               ADD vip_method VARCHAR(10) NULL""")
             purge(cur)
             conn.commit()
 
@@ -361,34 +372,38 @@ def install_train_manager(app, connect_db):
                 'assignment':assignment,'event_names':names,'score_date':day-timedelta(days=1)}
 
     def save_assignment(body, historical=False):
+        method = 'manual' if historical else body.vip_method or ('wheel' if body.wheel_vip else 'manual')
+        if (method == 'dice') != (body.vip_id is None):
+            raise HTTPException(422,detail='Save a dice roll without a VIP, or choose a VIP for the other methods.')
         if body.conductor_id==body.vip_id:
             raise HTTPException(422,detail='Choose different players for Conductor and VIP.')
         with connect_db() as conn, conn.cursor() as cur:
             cur.execute('SELECT id,player_name AS name FROM `player list` WHERE id IN (%s,%s) ORDER BY id FOR UPDATE',
-                        tuple(sorted((body.conductor_id,body.vip_id))))
+                        (body.conductor_id,body.vip_id))
             locked = cur.fetchall()
-            if len(locked)!=2:
-                raise HTTPException(422,detail='Both players must be on the Player List.')
+            if len(locked)!=(1 if body.vip_id is None else 2):
+                raise HTTPException(422,detail='Selected players must be on the Player List.')
             if historical:
                 players = [dict(row,reason='Historical import',points=None) for row in locked]
             else:
                 players,_ = load_nominations(cur,body.day,read_settings(cur),body.goal,body.target)
             by_id = {p['id']:p for p in players}
-            conductor,vip = by_id[body.conductor_id],by_id[body.vip_id]
+            conductor = by_id[body.conductor_id]
+            vip = by_id.get(body.vip_id,{'id':None,'name':'','reason':'Dice roll','points':None})
             for player in (conductor,vip):
                 if player.get('blocked'):
                     raise HTTPException(409,detail=f"{player['name']} is ineligible. {player['blocked']}.")
             vip_reason = vip['reason']
-            if body.wheel_vip and not historical:
+            if method == 'wheel':
                 vip_reason = ('Wheel of Fortune' if vip_reason=='Manual selection'
                               else vip_reason+' and selected by the Wheel of Fortune')
             try:
                 cur.execute("""INSERT INTO train_assignments
                     (assignment_date,conductor_id,vip_id,conductor_name,vip_name,conductor_reason,vip_reason,
-                     goal,target,conductor_points,vip_points)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                     goal,target,conductor_points,vip_points,vip_method)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (body.day,conductor['id'],vip['id'],conductor['name'],vip['name'],
-                     conductor['reason'],vip_reason,body.goal,body.target,conductor['points'],vip['points']))
+                     conductor['reason'],vip_reason,body.goal,body.target,conductor['points'],vip['points'],method))
                 conn.commit()
             except IntegrityError as exc:
                 conn.rollback()
@@ -400,7 +415,7 @@ def install_train_manager(app, connect_db):
         return save_assignment(body)
 
     @router.delete('/assignments/{day}')
-    def clear_today(day:date, timezone:str, conductor_id:int, vip_id:int):
+    def clear_today(day:date, timezone:str, conductor_id:int, vip_id:int|None=None):
         try:
             today = datetime.now(ZoneInfo(timezone)).date()
         except (ValueError, ZoneInfoNotFoundError) as exc:
@@ -413,6 +428,24 @@ def install_train_manager(app, connect_db):
             if not current or (current['conductor_id'],current['vip_id']) != (conductor_id,vip_id):
                 raise HTTPException(409,detail='Today’s assignment changed. Refresh it and try again.')
             cur.execute('DELETE FROM train_assignments WHERE assignment_date=%s',(day,))
+            conn.commit()
+        return {'day':day}
+
+    @router.put('/assignments/{day}/dice-winner')
+    def save_dice_winner(day:date,body:DiceWinner):
+        if body.conductor_id == body.vip_id:
+            raise HTTPException(422,detail='Choose a different player from the Conductor.')
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute('SELECT player_name FROM `player list` WHERE id=%s FOR UPDATE',(body.vip_id,))
+            player = cur.fetchone()
+            if not player:
+                raise HTTPException(422,detail='Choose a winner from the Player List.')
+            cur.execute('SELECT conductor_id,vip_id,vip_method FROM train_assignments WHERE assignment_date=%s FOR UPDATE',(day,))
+            current = cur.fetchone()
+            if not current or current['conductor_id'] != body.conductor_id or current['vip_method'] != 'dice' or current['vip_id'] is not None:
+                raise HTTPException(409,detail='This assignment changed. Refresh it and try again.')
+            cur.execute('UPDATE train_assignments SET vip_id=%s,vip_name=%s WHERE assignment_date=%s',
+                        (body.vip_id,player['player_name'],day))
             conn.commit()
         return {'day':day}
 
@@ -438,7 +471,7 @@ def install_train_manager(app, connect_db):
             raise HTTPException(422,detail='Choose different players for Conductor and VIP.')
         with connect_db() as conn, conn.cursor() as cur:
             cur.execute('SELECT id,player_name AS name FROM `player list` WHERE id IN (%s,%s) ORDER BY id FOR UPDATE',
-                        tuple(sorted((body.conductor_id,body.vip_id))))
+                        (body.conductor_id,body.vip_id))
             players = {row['id']:row['name'] for row in cur.fetchall()}
             cur.execute('SELECT * FROM train_assignments WHERE assignment_date=%s FOR UPDATE',(original_day,))
             previous = cur.fetchone()
@@ -446,21 +479,27 @@ def install_train_manager(app, connect_db):
                 raise HTTPException(404,detail='That assignment is no longer on this date. Reopen history to refresh.')
             if (previous['conductor_id'],previous['vip_id']) != (body.original_conductor_id,body.original_vip_id):
                 raise HTTPException(409,detail='This assignment changed. Reopen history and try again.')
+            if body.vip_id is None and previous['vip_method'] != 'dice':
+                raise HTTPException(422,detail='Choose a VIP for this assignment.')
 
             def values(role, player_id):
+                if player_id is None:
+                    return None,'','Dice roll',None
                 unchanged = previous[role+'_id'] == player_id
                 if not unchanged and player_id not in players:
                     raise HTTPException(422,detail='Choose a replacement from the Player List.')
                 name = previous[role+'_name'] if unchanged else players[player_id]
                 if unchanged and body.day == original_day:
                     return player_id,name,previous[role+'_reason'],previous[role+'_points']
-                return player_id,name,'Manual selection',None
+                reason = 'Dice roll' if role == 'vip' and previous['vip_method'] == 'dice' else 'Manual selection'
+                return player_id,name,reason,None
 
             try:
                 cur.execute("""UPDATE train_assignments SET assignment_date=%s,
                     conductor_id=%s,conductor_name=%s,conductor_reason=%s,conductor_points=%s,
-                    vip_id=%s,vip_name=%s,vip_reason=%s,vip_points=%s WHERE assignment_date=%s""",
-                    (body.day,*values('conductor',body.conductor_id),*values('vip',body.vip_id),original_day))
+                    vip_id=%s,vip_name=%s,vip_reason=%s,vip_points=%s,vip_method=%s WHERE assignment_date=%s""",
+                    (body.day,*values('conductor',body.conductor_id),*values('vip',body.vip_id),
+                     previous['vip_method'] if previous['vip_method']=='dice' or body.vip_id==previous['vip_id'] else 'manual',original_day))
                 if body.day != original_day:
                     cur.execute('UPDATE train_emails SET assignment_date=%s WHERE assignment_date=%s',(body.day,original_day))
                 conn.commit()

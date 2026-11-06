@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 from fastapi import HTTPException
 from pymysql.err import IntegrityError
-from train_manager import Assignment, EmailTemplate, HistoryEdit, install_train_manager, nominations, parse_train_csv, validate_template
+from train_manager import Assignment, DiceWinner, EmailTemplate, HistoryEdit, install_train_manager, nominations, parse_train_csv, validate_template
 from test_player_merge_vs import Cursor, SQLDatabase
 
 
@@ -23,7 +23,7 @@ class TrainDatabase(SQLDatabase):
             CREATE TABLE train_assignments (
                 assignment_date TEXT PRIMARY KEY,conductor_id INTEGER,vip_id INTEGER,
                 conductor_name TEXT,vip_name TEXT,conductor_reason TEXT,vip_reason TEXT,
-                goal TEXT,target INTEGER,conductor_points INTEGER,vip_points INTEGER);
+                goal TEXT,target INTEGER,conductor_points INTEGER,vip_points INTEGER,vip_method TEXT);
             CREATE TABLE train_emails (assignment_date TEXT PRIMARY KEY,body TEXT);
             CREATE TABLE train_email_templates (id TEXT PRIMARY KEY,name TEXT,body TEXT,deleted INTEGER DEFAULT 0);
             INSERT INTO `player list` (id,player_name,normalized_name,player_rank,possibly_removed)
@@ -51,6 +51,28 @@ class TrainCursor(Cursor):
 
 
 class TrainTests(TestCase):
+    def test_dice_roll_persists_pending_vip_then_records_winner_once(self):
+        db=TrainDatabase()
+        app=Mock()
+        install_train_manager(app,db)
+        endpoints={(r.path,next(iter(r.methods))):r.endpoint for r in app.include_router.call_args.args[0].routes}
+        save=endpoints['/api/train/assignments','POST']
+        resolve=endpoints['/api/train/assignments/{day}/dice-winner','PUT']
+        day=date(2026,11,6)
+        with self.assertRaises(HTTPException):
+            save(Assignment(day=day,conductor_id=1,vip_method='manual'))
+        save(Assignment(day=day,conductor_id=1,vip_method='dice'))
+        row=db.db.execute('SELECT vip_id,vip_name,vip_method FROM train_assignments').fetchone()
+        self.assertEqual(tuple(row),(None,'','dice'))
+        with self.assertRaises(HTTPException):
+            resolve(day,DiceWinner(conductor_id=1,vip_id=1))
+        resolve(day,DiceWinner(conductor_id=1,vip_id=3))
+        row=db.db.execute('SELECT vip_id,vip_name,vip_method FROM train_assignments').fetchone()
+        self.assertEqual(tuple(row),(3,'Charlie','dice'))
+        with self.assertRaises(HTTPException) as error:
+            resolve(day,DiceWinner(conductor_id=1,vip_id=2))
+        self.assertEqual(error.exception.status_code,409)
+
     def test_email_template_crud_keeps_starter_deletions_and_validates_fields(self):
         db=TrainDatabase()
         app=Mock()
