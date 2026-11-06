@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from fastapi import UploadFile
 import media_upload as media
 from app import ImportData
+from test_player_merge_vs import SQLDatabase
 
 
 class Database:
@@ -50,6 +51,23 @@ class Database:
 
 
 class MediaScanTests(unittest.TestCase):
+    def test_queue_counts_existing_rows_and_includes_older_reviews(self):
+        db = SQLDatabase()
+        for field in ('destination','created_at','progress','result_count','full_capture','started_at','finished_at'):
+            db.db.execute(f'ALTER TABLE media_scan_jobs ADD COLUMN {field} TEXT')
+        db.db.execute('CREATE TABLE `roster upload` (job_id TEXT)')
+        recent = [(f'recent-{i}','ready','players') for i in range(36)]
+        db.db.executemany('INSERT INTO media_scan_jobs (id,status,destination) VALUES (?,?,?)',
+                          [*recent,('a-real','interrupted','vs'),('z-stale','review','vs')])
+        db.db.executemany('INSERT INTO vs_scan_rows (job_id) VALUES (?)',[('a-real',),('a-real',)])
+        web = Mock()
+        media.install_media_upload(web,db,Mock(),ImportData)
+        jobs = next(r.endpoint for r in web.include_router.call_args.args[0].routes if r.path=='/api/media/jobs')()['jobs']
+        self.assertEqual((jobs[0]['id'],jobs[0]['pending_count']),('a-real',2))
+        stale = next(job for job in jobs if job['id']=='z-stale')
+        self.assertEqual((stale['status'],stale['pending_count']),('approved',0))
+        self.assertEqual(len(jobs),36)
+
     def setUp(self):
         self.db = Database()
         self.app = Mock()

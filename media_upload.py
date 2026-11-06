@@ -453,7 +453,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                             message=f'{len(merge)} master records merged; {inserted} new or uncertain entries waiting for approval.')
                 else:
                     set_job(job_id,status='ready',progress=100,count=len(merge),
-                            message=f'Scan finished. {len(merge)} master records merged; new or uncertain detections remain in review.')
+                            message=f'Scan finished. {len(merge)} master records merged.')
             finished_successfully=True
         except Exception as exc:
             # Exception details are shown in the UI only if they contain no secrets.
@@ -569,14 +569,34 @@ def install_media_upload(app, connect_db, import_players, import_model):
     def list_media_jobs():
         with connect_db() as conn:
             with conn.cursor() as cur:
-                cur.execute('''SELECT id,destination,status,progress,message,result_count,
-                    full_capture,created_at,updated_at,started_at,finished_at FROM media_scan_jobs
-                    ORDER BY created_at DESC LIMIT 35''')
+                cur.execute('''SELECT j.id,j.destination,j.status,j.progress,j.message,j.result_count,
+                    j.full_capture,j.created_at,j.updated_at,j.started_at,j.finished_at,
+                    CASE j.destination
+                        WHEN 'players' THEN (SELECT COUNT(*) FROM `roster upload` r WHERE r.job_id=j.id)
+                        WHEN 'vs' THEN (SELECT COUNT(*) FROM vs_scan_rows v WHERE v.job_id=j.id)
+                        ELSE 0
+                    END AS pending_count
+                    FROM media_scan_jobs j
+                    WHERE j.status IN ('queued','scanning','review')
+                      OR (j.destination='players' AND EXISTS (SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id))
+                      OR (j.destination='vs' AND EXISTS (SELECT 1 FROM vs_scan_rows v WHERE v.job_id=j.id))
+                      OR j.id IN (SELECT recent.id FROM
+                          (SELECT id FROM media_scan_jobs ORDER BY created_at DESC,id DESC LIMIT 35) recent)
+                    ORDER BY j.created_at DESC,j.id DESC''')
                 rows=cur.fetchall()
+        active,review,history=[],[],[]
         for row in rows:
             for field in ('created_at','updated_at','started_at','finished_at'):
                 if row.get(field): row[field]=row[field].isoformat()+'Z'
-        return {'jobs': rows}
+            if row['status'] in ('queued','scanning'):
+                active.append(row)
+            elif row['pending_count']:
+                review.append(row)
+            else:
+                if row['status']=='review':
+                    row.update(status='approved',message='No rows left to review.')
+                history.append(row)
+        return {'jobs':active+review+history[:35]}
 
     @router.delete('/jobs/history')
     def clear_old_scan_history():
@@ -586,7 +606,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
             try:
                 with conn.cursor() as cur:
                     cur.execute("""SELECT j.id FROM media_scan_jobs j
-                        WHERE j.status IN ('ready','approved','error','interrupted')
+                        WHERE j.status IN ('ready','approved','error','interrupted','review')
                           AND NOT EXISTS (SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id)
                           AND NOT EXISTS (SELECT 1 FROM vs_scan_rows v WHERE v.job_id=j.id)""")
                     ids=[r['id'] for r in cur.fetchall()]

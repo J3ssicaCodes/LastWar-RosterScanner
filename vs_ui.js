@@ -209,6 +209,7 @@
       $('vsPending').hidden=!pending.length;
       refreshFocusedSuggestions();
       $('vsMessage').textContent='Saved '+player.name+'’s VS score for '+date.value+'.';
+      window.refreshMediaUploads?.();
       await load();
     }catch(err){$('vsMessage').textContent=err.message;}
   }

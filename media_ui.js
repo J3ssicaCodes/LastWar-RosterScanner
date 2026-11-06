@@ -353,7 +353,7 @@
         const fields=[['power','Power'],['kills','Kills'],['donations','Donations'],
           ['power_millions','Power (millions)'],['hq_level','HQ level']]
           .filter(([field])=>field===p.tab||p[field]!=null||(!p.tab&&['power_millions','hq_level'].includes(field)));
-        return '<article class="review-card" data-pending-id="'+p.id+'"><div class="review-card-head">'+
+        return '<article class="review-card" data-pending-id="'+p.id+'" data-media-review-job="'+escape(p.job_id)+'"><div class="review-card-head">'+
           '<label><input type="checkbox" data-field="include" aria-label="Select '+escape(p.name||'unrecognized player')+'"> Select</label>'+
           '<span class="pl-status '+(type==='New player'?'new':type==='Update'?'active':'removed')+'">'+type+'</span></div>'+
           '<div class="review-fields"><label class="review-name">Player name<input data-field="name" list="playerMasterNames" value="'+escape(p.name||'')+'" maxlength="80"></label>'+
@@ -474,6 +474,7 @@
       if(document.activeElement?.matches('#mediaPendingRows [data-field="name"]'))showMediaSuggestions(document.activeElement);
       reviewMessage('Saved '+player.name+' to the Player List.');
       window.playerListRefresh?.();
+      refreshJobs();
     }catch(error){reviewMessage('Could not save '+player.name+': '+error.message);}
   }
   function reviewMessage(text){
@@ -529,7 +530,7 @@
       removeSavedMedia(new Set(rows.map(row=>row.id)));
       const summary='Added '+result.approved+' rows to the Player List.';
       reviewMessage(summary+(pending.length?' '+pending.length+' rows still awaiting review.':''));
-      await Promise.all([refreshPending(),window.playerListRefresh?.()]);
+      await Promise.all([refreshPending(),refreshJobs(),window.playerListRefresh?.()]);
     }catch(error){
       notify('Could not save: '+error.message);
     }finally{
@@ -557,7 +558,8 @@
     try{
       const result=await getJson('/api/media/dismiss',{method:'POST',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({ids})});
-      announce('Dismissed '+result.dismissed+' unwanted OCR entries.');await refreshPending();
+      announce('Dismissed '+result.dismissed+' unwanted OCR entries.');
+      await Promise.all([refreshPending(),refreshJobs()]);
     }catch(e){announce('Could not dismiss entries: '+e.message);}
     finally{savingReview=false;for(const id of ['mediaApprove','mediaApproveClean','mediaDismiss'])$(id).disabled=false;}
   };
@@ -570,14 +572,37 @@
       timer.textContent='Processing '+processingTime(Number(timer.dataset.scanStart));
     }
   }
+  const needsReview=job=>Number(job.pending_count)>0&&!['queued','scanning'].includes(job.status);
+  $('mediaQueueEntries').addEventListener('click',async event=>{
+    const button=event.target.closest('[data-open-scan-review]');
+    if(!button)return;
+    const isVS=button.dataset.reviewDestination==='vs';
+    const jobId=button.dataset.openScanReview;
+    queueDialog.close();
+    $(isVS?'vsPointsTab':'playerListTab').click();
+    await Promise.resolve();
+    if(isVS)await window.vsPointsRefresh?.();
+    else await refreshPending();
+    const panel=$(isVS?'vsPending':'mediaPendingPanel');
+    const job=[...panel.querySelectorAll(isVS?'[data-vs-job]':'[data-media-review-job]')]
+      .find(row=>(isVS?row.dataset.vsJob:row.dataset.mediaReviewJob)===jobId);
+    if(job){
+      job.tabIndex=-1;
+      job.focus();
+    }else{
+      announce('No review rows are available for that scan. Refresh Scan Queue to check its status.');
+      refreshJobs();
+    }
+  });
   function renderScanQueue(jobs){
     const active=jobs.filter(job=>job.status==='scanning')
       .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
     const waiting=jobs.filter(job=>job.status==='queued')
       .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
-    const history=jobs.filter(job=>!['queued','scanning'].includes(job.status))
+    const review=jobs.filter(needsReview);
+    const history=jobs.filter(job=>!needsReview(job)&&!['queued','scanning'].includes(job.status))
       .sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
-    $('mediaQueueSummary').textContent=active.length+' scanning · '+waiting.length+' waiting · '+history.length+' recent results';
+    $('mediaQueueSummary').textContent=active.length+' scanning · '+waiting.length+' waiting · '+review.length+' to review · '+history.length+' recent results';
     const label=job=>destinationLabel(job.destination);
     const statuses={scanning:'Scanning',queued:'Waiting',review:'Awaiting player review',
       ready:'Completed',approved:'Approved',error:'Failed',interrupted:'Interrupted'};
@@ -595,20 +620,24 @@
       const statusText=statuses[job.status]||job.status;
       const position=queueIndex!=null?' · Queue position '+(queueIndex+1):'';
       const count=Number(job.result_count)||0;
-      const countText=['ready','review','approved'].includes(job.status)?' · '+count+' results':'';
+      const countText=needsReview(job)?' · '+job.pending_count+' to review':
+        ['ready','approved'].includes(job.status)?' · '+count+' results':'';
+      const reviewButton=needsReview(job)?'<button type="button" class="btn smallbtn" data-open-scan-review="'+escape(job.id)+
+        '" data-review-destination="'+escape(job.destination)+'">Review in '+escape(label(job))+'</button>':'';
       return '<li class="media-queue-entry"><div class="media-queue-line"><strong>'+
         escape(label(job))+'</strong><span class="media-queue-state">'+escape(statusText+position+countText)+
         '</span></div><small>'+escape(time)+'</small>'+timer+
         (['queued','scanning'].includes(job.status)?'<progress max="100" value="'+pct+
         '" aria-label="'+escape(label(job)+' scanning progress')+'"></progress><small>'+pct+'% completed</small>':'')+
-        '<div class="media-queue-message">'+escape(job.message||'No further details yet.')+'</div></li>';
+        '<div class="media-queue-message">'+escape(job.status==='review'&&needsReview(job)?
+          'Open the review to see the remaining rows.':job.message||'No further details yet.')+'</div>'+reviewButton+'</li>';
     }
     const section=(heading,list,queue=false)=>list.length?
       '<section class="media-queue-section"><h3>'+heading+'</h3><ol class="media-queue-list">'+
       list.map((job,i)=>item(job,queue?i:null)).join('')+'</ol></section>':'';
     $('mediaQueueEntries').innerHTML=
       section('Currently scanning',active)+section('Waiting in queue',waiting,true)+
-      section('Recent results',history.slice(0,15))+
+      section('Needs review',review)+section('Recent results',history.slice(0,15))+
       (!jobs.length?'<p class="media-queue-empty">No scans have been uploaded yet.</p>':'');
   }
   async function refreshJobs(){
@@ -658,8 +687,8 @@
         announce('⌛ '+destinationLabel(j.destination)+
           ' waiting to scan · '+queuedCount+' scan job'+(queuedCount===1?'':'s')+' waiting');
       }else if(!newAlerts.length){
-        const reviews=jobs.filter(j=>j.status==='review').length;
-        if(reviews)announce(reviews+' scan result'+(reviews===1?'':'s')+' awaiting review');
+        const reviews=jobs.filter(needsReview).reduce((total,j)=>total+Number(j.pending_count),0);
+        if(reviews)announce(reviews+' '+(reviews===1?'row':'rows')+' awaiting review');
         else banner.hidden=true;
       }
     }catch(e){
