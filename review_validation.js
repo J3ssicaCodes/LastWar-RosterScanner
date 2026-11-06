@@ -2,7 +2,33 @@
 (() => {
   const key=v=>String(v??'').normalize('NFKC').toLowerCase().replace(/\s/g,'');
   const stats=['power','kills','donations','power_millions','hq_level'];
-  const numberValid=(value,field)=>value!==''&&value!=null&&Number.isFinite(Number(value))&&Number(value)>=0&&(field==='power_millions'||Number.isSafeInteger(Number(value)));
+  const numericText=value=>{
+    const text=String(value??'').trim();
+    return /^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(text)?text.replaceAll(',',''):text;
+  };
+  const numberValue=value=>Number(numericText(value));
+  const numberValid=(value,field)=>{
+    const text=numericText(value);
+    const number=Number(text);
+    return /^\d+(?:\.\d+)?$/.test(text)&&Number.isFinite(number)&&
+      (field==='power_millions'||(/^\d+$/.test(text)&&Number.isSafeInteger(number)));
+  };
+  const formatNumber=value=>{
+    const text=numericText(value);
+    if(!/^\d+(?:\.\d+)?$/.test(text))return text;
+    const [whole,decimal]=text.split('.');
+    return whole.replace(/\B(?=(\d{3})+(?!\d))/g,',')+(decimal===undefined?'':'.'+decimal);
+  };
+  const numberReasons=new Set([
+    'uncertain_stat','conflicting_stat','multi_view_difference','stat_not_descending',
+    'Statistic unreadable','Check power','Check kills','Check donations','Check points',
+    'Points differ between captured views','Points exceed the row above',
+    'Next row has higher points; verify this value',
+    'Statistic needs review: unreadable or low OCR confidence',
+    'Overlapping pages disagree on the statistic',
+    'Adjacent leaderboard statistics conflict with descending order',
+  ]);
+  const numberReason=reason=>reason.startsWith('Number needs verification:')||numberReasons.has(reason);
   function mediaInputIssues(original,values){
     const reasons=[];
     const name=values.name?.trim()||'';
@@ -14,8 +40,8 @@
         if(original.tab===field)reasons.push('Enter '+field.replaceAll('_',' '));
         continue;
       }
-      if(!numberValid(value,field)||(field==='hq_level'&&(Number(value)<1||Number(value)>99))||
-         (field==='power_millions'&&Number(value)>1000000))reasons.push('Check '+field.replaceAll('_',' '));
+      if(!numberValid(value,field)||(field==='hq_level'&&(numberValue(value)<1||numberValue(value)>99))||
+         (field==='power_millions'&&numberValue(value)>1000000))reasons.push('Check '+field.replaceAll('_',' '));
     }
     return reasons;
   }
@@ -25,12 +51,12 @@
     const changed=field=>String(values[field]??'').trim()!==String(original[field]??'').trim();
     const stat=kind==='vs'?'points':original.tab||(['power','kills','donations','power_millions'].find(f=>original[f]!=null)||'power');
     const nameFixed=validName&&(known||changed('name'));
-    const statFixed=numberValid(values[stat],stat)&&changed(stat);
+    const statFixed=numberValid(values[stat],stat)&&numericText(values[stat])!==numericText(original[stat]);
     const rankFixed=/^R[1-5]$/.test(values.rank||'');
     let reasons=(original.review_reasons||[]).filter(reason=>{
       if(reason.startsWith('Number needs verification:'))return true;
       if(/Adjacent frames did not resolve/.test(reason))return false;
-      if(/row above|Next row has higher|out of descending/.test(reason))return false; // Recomputed below.
+      if(/row above|Next row has higher|out of descending/.test(reason))return before==null&&after==null;
       if(/name/i.test(reason))return !nameFixed;
       if(/rank/i.test(reason))return !rankFixed;
       if(/point|stat|value|multi_view_difference/i.test(reason))return !statFixed;
@@ -47,8 +73,8 @@
       if(!stats.some(field=>numberValid(values[field],field)))reasons.push('No statistics captured');
     }
     if(kind==='vs'&&numberValid(values.points,'points')){
-      if(before!==undefined&&before!==''&&before!=null&&Number(values.points)>Number(before))reasons.push('Points exceed the row above');
-      if(after!==undefined&&after!==''&&after!=null&&Number(values.points)<Number(after))reasons.push('Next row has higher points; verify this value');
+      if(before!==undefined&&before!==''&&before!=null&&numberValue(values.points)>numberValue(before))reasons.push('Points exceed the row above');
+      if(after!==undefined&&after!==''&&after!=null&&numberValue(values.points)<numberValue(after))reasons.push('Next row has higher points; verify this value');
     }
     return [...new Set(reasons)];
   }
@@ -69,7 +95,10 @@
       .sort((a,b)=>Number(b.startsWith('Number needs verification:'))-Number(a.startsWith('Number needs verification:')))
       .join(' · ');
   };
-  issues.numberNeedsReview=row=>(row.review_reasons||[]).some(reason=>reason.startsWith('Number needs verification:'));
+  issues.numberNeedsReview=row=>(row.review_reasons||[]).some(numberReason);
+  issues.numberValid=numberValid;
+  issues.numberValue=numberValue;
+  issues.formatNumber=formatNumber;
   issues.nameKey=key;
   issues.scanNames=list=>{
     let roster=[];

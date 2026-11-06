@@ -158,11 +158,12 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         self.assertEqual(confirmed[4],{'name'})
         self.assertEqual(original['name'],'Lady Jess')
         self.assertEqual(original['value'],'123')
-        self.assertIn('Number needs verification: 3/3 frames read 123 / 124 / 124.',original['neighbor_conflicts'])
+        self.assertIn('Number needs verification: frame readings were 123 / 124 / 124.',original['neighbor_conflicts'])
 
-    def test_clean_video_rows_still_need_three_readable_numbers(self):
+    def test_video_number_needs_two_confident_reads_and_no_conflicts(self):
         from vs_points_ocr import recheck_neighbors
-        for neighboring, expected in ([['100','100'],True], [['100',''],False]):
+        for neighboring, expected in [(['100','100'],True), (['100',''],True),
+                                      (['',''],False), (['100','101'],False)]:
             with self.subTest(neighboring=neighboring):
                 row={'internal_position':1,'page':1,'name':'Lady Jess','value':'100',
                      'name_conf':90,'value_conf':90}
@@ -234,7 +235,7 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         db.db.execute("INSERT INTO `player list` (player_name,normalized_name,player_rank) VALUES ('Lady Jess','ladyjess','R4')")
         result=stage_vs_result(db,'job',{'score_date':'2026-11-04','upload_date':'2026-11-05',
             'weekday':'Wed','rows':[{'name':'Lady Jess','points':123,
-                'review_reasons':['Number needs verification: 3/3 frames read 123 / 124 / 124.']}]})
+                'review_reasons':['Number needs verification: frame readings were 123 / 124 / 124.']}]})
         self.assertEqual(result,{'saved':0,'pending':1})
         row={'id':1,'name':'Lady Jess','points':124}
         for auto in (True,False):

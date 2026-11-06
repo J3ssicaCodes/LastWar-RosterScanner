@@ -183,22 +183,28 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
                 if not ok:
                     continue
                 previous_read = adjacent == frame-1
-                readings = read_frame(image,anchors)
-                for reading in readings:
-                    neighbors[reading['matched_position']].append(reading)
+                readings = defaultdict(list)
+                for reading in read_frame(image,anchors):
+                    readings[reading['matched_position']].append(reading)
+                for position, matches in readings.items():
+                    if len(matches) == 1:
+                        neighbors[position].append(matches[0])
             for row in anchors:
                 position = row['internal_position']
                 views = [row,*neighbors[position]]
                 numbers = [view['value'] for view in views]
-                strong = (len(views) == 3 and all(value.isdecimal() for value in numbers)
-                          and len({int(value) for value in numbers}) == 1
-                          and all(view['value_conf'] >= 55 for view in views))
-                if strong:
+                readable = [int(value) for value in numbers if value.isdecimal()]
+                reliable = [view for view in views
+                            if view['value'].isdecimal() and view['value_conf'] >= 55]
+                if len(reliable) >= 2 and len(set(readable)) == 1:
+                    best = max(reliable, key=lambda view: view['value_conf'])
+                    row['value'], row['value_conf'] = best['value'], best['value_conf']
                     confirmed[position].add('value')
                 else:
-                    readings = ' / '.join(value if value.isdecimal() else 'unreadable' for value in numbers)
+                    readings = [f'{int(value):,}' if value.isdecimal() else 'unreadable' for value in numbers]
+                    readings += ['unavailable'] * (3 - len(views))
                     row.setdefault('neighbor_conflicts',[]).append(
-                        f'{NUMBER_REVIEW_PREFIX} {len(views)}/3 frames read {readings}.')
+                        f"{NUMBER_REVIEW_PREFIX} frame readings were {' / '.join(readings)}.")
                 if len(views) != 3 or not row['check_name']:
                     continue
                 keys = [name_key(resolve(view['name'])) for view in views]

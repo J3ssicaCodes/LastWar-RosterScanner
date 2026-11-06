@@ -19,3 +19,16 @@ assert.ok(check.mediaInputIssues(scanned,{...verified,kills:''}).length);
 assert.deepEqual(check({...scanned,review_required:false,review_reasons:[]},verified,['Jess'],'media'),[]);
 assert.ok(check({...scanned,review_reasons:[]},verified,['Jess'],'media').length);
 console.log('5 media approval checks passed');
+
+assert.equal(check.formatNumber('1234567'),'1,234,567');
+assert.equal(check.formatNumber(' 1234.50 '),'1,234.50');
+assert.equal(check.numberValue('1,234,567'),1234567);
+assert.equal(check.numberValid('1,234,567','points'),true);
+assert.equal(check.numberValid('12,34','points'),false);
+assert.equal(check.numberValid('0','points'),true);
+assert.deepEqual(check.mediaInputIssues(scanned,{...verified,kills:'1,300'}),[]);
+assert.deepEqual(check({...original,points:1000},{name:'Jess',points:'1,000'},['Jess'],'vs'),['Check points']);
+assert.equal(check.numberNeedsReview(original),true);
+assert.equal(check.numberNeedsReview({review_reasons:['conflicting_stat']}),true);
+assert.equal(check.numberNeedsReview({review_reasons:['Check player name']}),false);
+console.log('11 number formatting and review guard checks passed');

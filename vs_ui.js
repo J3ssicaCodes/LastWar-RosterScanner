@@ -92,7 +92,7 @@
         '<div class="review-grid">'+rows.map(r=>
           '<article class="review-card" data-vs-row="'+r.id+'"><div class="review-card-head"><label><input type="checkbox" data-vs-use aria-label="Select score for '+esc(r.name)+'"> Select</label></div>'+
           '<div class="review-fields"><label class="review-name">Player name<input data-vs-name list="vsPlayerNames" maxlength="80" value="'+esc(r.name)+'"></label>'+
-          '<label>VS points<input data-vs-points type="number" min="0" step="1" value="'+(r.points??'')+'"></label></div>'+
+          '<label>VS points<input data-vs-points inputmode="numeric" value="'+esc(window.reviewIssues.formatNumber(r.points))+'"></label></div>'+
           '<small data-review-warning '+(r.review_reasons?.length?'':'hidden')+'>'+esc(window.reviewIssues.displayWarnings(r.review_reasons||[]))+'</small>'+
           (r.evidence_base64?'<details><summary>View captured row</summary><img loading="lazy" src="data:image/webp;base64,'+r.evidence_base64+'" alt="Captured score row"></details>':'')+
           (window.reviewIssues.numberNeedsReview(r)?'<label class="review-verify"><input type="checkbox" data-vs-number-checked> I checked the number</label>':'')+
@@ -144,6 +144,7 @@
     const group=event.target.closest('[data-vs-job]');
     const row=event.target.closest('[data-vs-row]');
     if(!group||!row||!event.target.matches('[data-vs-name],[data-vs-points]'))return;
+    if(event.target.matches('[data-vs-points]'))event.target.value=window.reviewIssues.formatNumber(event.target.value);
     validateVSGroup(group);
     if(event.relatedTarget?.closest('[data-vs-approve],[data-vs-dismiss],[data-vs-save-row]'))return;
     autoTail=autoTail.then(()=>autoSaveVS(Number(row.dataset.vsRow)));
@@ -159,12 +160,12 @@
     const player=reviewNames.match(original.job_id,name);
     const points=row.querySelector('[data-vs-points]');
     const date=group.querySelector('[data-vs-date]');
-    if(!player||points.value===''||!points.validity.valid||!Number.isSafeInteger(Number(points.value))||
+    if(!player||!window.reviewIssues.numberValid(points.value,'points')||
        !date.value||!date.validity.valid)return;
     try{
       await api('/api/vs-points/approve',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({auto_match:true,job_id:original.job_id,score_date:date.value,
-          rows:[{id,name:player.name,points:Number(points.value)}]})});
+          rows:[{id,name:player.name,points:window.reviewIssues.numberValue(points.value)}]})});
       reviewNames.mark(original.job_id,[player.id]);
       ++pendingRequest;
       pending=pending.filter(item=>item.id!==id);
@@ -206,12 +207,12 @@
           number_checked:row.querySelector('[data-vs-number-checked]')?.checked||false
         }));
         if(!selected.length)throw Error('Select at least one score.');
-        if(selected.some(r=>r.points===''||!Number.isSafeInteger(Number(r.points))||Number(r.points)<0||r.name.length<2))
+        if(selected.some(r=>!window.reviewIssues.numberValid(r.points,'points')||r.name.length<2))
           throw Error('Check names and enter whole-number points for every selected row.');
         const unverified=selected.find(row=>!row.number_checked&&window.reviewIssues.numberNeedsReview(pending.find(p=>p.id===row.id)));
         if(unverified)throw Error('Compare '+unverified.name+'’s score with the capture and mark it checked.');
         const score_date=group.querySelector('[data-vs-date]').value;
-        await api('/api/vs-points/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:group.dataset.vsJob,score_date,rows:selected.map(r=>({...r,points:Number(r.points)}))})});
+        await api('/api/vs-points/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:group.dataset.vsJob,score_date,rows:selected.map(r=>({...r,points:window.reviewIssues.numberValue(r.points)}))})});
         // Show the week that contains the scores just saved.
         const week=weekBounds(score_date)[0];
         $('vsDate').innerHTML='<option value="'+esc(week)+'">'+esc(week)+'</option>';

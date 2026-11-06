@@ -87,5 +87,17 @@ def record_scan_players(cursor, job_id, player_ids, previous):
 NUMBER_REVIEW_PREFIX = 'Number needs verification:'
 
 
+NUMBER_REVIEW_REASONS = {
+    'uncertain_stat', 'conflicting_stat', 'multi_view_difference', 'stat_not_descending',
+    'Statistic unreadable', 'Check power', 'Check kills', 'Check donations',
+    'Check points', 'Points differ between captured views', 'Points exceed the row above',
+    'Next row has higher points; verify this value',
+    'Statistic needs review: unreadable or low OCR confidence',
+    'Overlapping pages disagree on the statistic',
+    'Adjacent leaderboard statistics conflict with descending order',
+}
+
+
 def number_needs_review(reasons):
-    return any(reason.startswith(NUMBER_REVIEW_PREFIX) for reason in reasons)
+    return any(reason.startswith(NUMBER_REVIEW_PREFIX) or reason in NUMBER_REVIEW_REASONS
+               for reason in reasons)

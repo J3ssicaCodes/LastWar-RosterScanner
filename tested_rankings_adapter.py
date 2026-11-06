@@ -70,6 +70,11 @@ def recheck_ranking_group(records, anchors, sources, tab, period, resolve, progr
             record['name'] = row['name'].strip()
         if 'value' in confirmed[position]:
             record[field] = int(row['value'])
+            record['review_reasons'] = [
+                reason for reason in record['review_reasons']
+                if reason not in ('uncertain_stat', 'Statistic unreadable',
+                                  f'{NUMBER_REVIEW_PREFIX} the scanned number is unclear.')
+            ]
         record['review_reasons'].extend(row.get('neighbor_conflicts',[]))
         record['review_required']=bool(record['review_reasons'])
 
@@ -116,8 +121,8 @@ def _record_from_csv(entry: dict, directory: Path, page_info: dict, tab: str):
         name_score = number_score = 0
     if name_score < 55 or number_score < 60:
         issues.append('OCR confidence below recommended threshold')
-    if number_score<55 or any(reason in ('conflicting_stat','multi_view_difference','stat_not_descending') for reason in issues):
-        issues.append(f'{NUMBER_REVIEW_PREFIX} captured numbers disagree or the number is unclear.')
+    if statistic is None or number_score < 55:
+        issues.append(f'{NUMBER_REVIEW_PREFIX} the scanned number is unclear.')
     page_number = int(entry.get('page') or 0)
     meta = page_info.get(page_number, {})
     src = meta.get('original_filename') or meta.get('source') or 'ranking upload'

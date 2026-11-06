@@ -148,7 +148,7 @@
   const playerView=$('playerListView');
   const pendingPanel=document.createElement('section');
   pendingPanel.id='mediaPendingPanel';pendingPanel.className='panel pl-section media-review';pendingPanel.hidden=true;
-  pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Scan review</div><h2>Player changes to review</h2><p>Correct a name to match the Player List to save it automatically. Compare any flagged number with the capture before saving.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
+  pendingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Scan review</div><h2>Player changes to review</h2><p>Name-only corrections can save automatically. If a number is flagged, check it against the capture and save the row when ready.</p></div><span id="mediaPendingCount" class="pl-count"></span></div>
     <div class="review-toolbar">
       <label><input type="checkbox" id="mediaSelectAll" aria-label="Select all Player List review rows"> Select all</label>
       <span id="mediaSelectedCount"></span>
@@ -325,17 +325,18 @@
           '<details class="media-evidence"><summary>View captured leaderboard row</summary><img loading="lazy" src="data:image/webp;base64,'+
           p.evidence_base64+'" alt="Cropped original leaderboard row for '+escape(p.name||'this player')+'"></details>' : '';
         const requiresCheck=window.reviewIssues.numberNeedsReview(p);
-        const numeric=(field,label,step='1')=>'<label>'+label+'<input data-field="'+field+'" type="number" step="'+step+'" min="0" value="'+(p[field]??'')+'"></label>';
+        const numeric=(field,label)=>'<label>'+label+'<input data-field="'+field+'" data-review-number inputmode="'+
+          (field==='power_millions'?'decimal':'numeric')+'" value="'+escape(window.reviewIssues.formatNumber(p[field]))+'"></label>';
         const type=p.change_kind==='new'?'New player':p.change_kind==='updated'?'Update':'Needs review';
         const fields=[['power','Power'],['kills','Kills'],['donations','Donations'],
-          ['power_millions','Power (millions)','0.1'],['hq_level','HQ level']]
+          ['power_millions','Power (millions)'],['hq_level','HQ level']]
           .filter(([field])=>field===p.tab||p[field]!=null||(!p.tab&&['power_millions','hq_level'].includes(field)));
         return '<article class="review-card" data-pending-id="'+p.id+'"><div class="review-card-head">'+
           '<label><input type="checkbox" data-field="include" aria-label="Select '+escape(p.name||'unrecognized player')+'"> Select</label>'+
           '<span class="pl-status '+(type==='New player'?'new':type==='Update'?'active':'removed')+'">'+type+'</span></div>'+
           '<div class="review-fields"><label class="review-name">Player name<input data-field="name" list="playerMasterNames" value="'+escape(p.name||'')+'" maxlength="80"></label>'+
           '<label>Rank<select data-field="rank">'+['Unknown','R5','R4','R3','R2','R1'].map(rank=>'<option value="'+rank+'" '+(p.rank===rank?'selected':'')+'>'+rank+'</option>').join('')+'</select></label>'+
-          fields.map(([field,label,step])=>numeric(field,label,step)).join('')+'</div>'+
+          fields.map(([field,label])=>numeric(field,label)).join('')+'</div>'+
           '<small data-review-warning '+(flag?'':'hidden')+'>'+escape(flag)+'</small>'+
           (p.source_image?'<small class="pl-source-label">'+escape(p.source_image)+'</small>':'')+
           evidence+(requiresCheck?'<label class="review-verify"><input type="checkbox" data-field="number_checked"> I checked the numbers</label>':'')+
@@ -398,29 +399,27 @@
     const issues=window.reviewIssues(original,values,names,'media');
     const errors=window.reviewIssues.mediaInputIssues(original,values);
     if(window.reviewIssues.numberNeedsReview(original)&&!values.number_checked)errors.push('Check the number against the capture');
-    for(const input of row.querySelectorAll('input[type="number"]')){
-      if(input.validity.badInput)errors.push('Check '+input.dataset.field.replaceAll('_',' '));
-    }
     const warning=row.querySelector('[data-review-warning]');
     warning.textContent=window.reviewIssues.displayWarnings([...issues,...errors]);
     warning.hidden=!issues.length&&!errors.length;
     return {row,original,values,issues,errors};
   }
   pendingPanel.addEventListener('input',event=>{
-    if(!event.target.matches('input[type="number"]'))return;
+    if(!event.target.matches('[data-review-number]'))return;
     const confirmation=event.target.closest('.review-card')?.querySelector('[data-field="number_checked"]');
     if(confirmation)confirmation.checked=false;
   });
   pendingPanel.addEventListener('focusout',event=>{
     const row=event.target.closest('[data-pending-id]');
     if(!row||!event.target.matches('[data-field]:not([data-field="include"])'))return;
+    if(event.target.matches('[data-review-number]'))event.target.value=window.reviewIssues.formatNumber(event.target.value);
     validateMediaRow(row);
     if(event.relatedTarget?.closest('#mediaApprove,#mediaApproveClean,#mediaDismiss,[data-save-media]'))return;
     autoTail=autoTail.then(()=>autoSaveMedia(Number(row.dataset.pendingId)));
   });
   function mediaPayload(original,values){
     const numbers=Object.fromEntries(['power','kills','donations','power_millions','hq_level']
-      .map(field=>[field,values[field]===''||values[field]==null?null:Number(values[field])]));
+      .map(field=>[field,values[field]===''||values[field]==null?null:window.reviewIssues.numberValue(values[field])]));
     return {id:original.id,name:values.name.trim(),rank:values.rank,number_checked:values.number_checked,...numbers};
   }
   function removeSavedMedia(ids){
@@ -444,8 +443,7 @@
     const player=reviewNames.match(item.original.job_id,item.values.name);
     if(!player)return;
     const values={...item.values,name:player.name,rank:item.values.rank==='Unknown'?player.rank:item.values.rank};
-    if(window.reviewIssues.mediaInputIssues(item.original,values).length||
-       [...row.querySelectorAll('input[type="number"]')].some(input=>input.validity.badInput))return;
+    if(window.reviewIssues.mediaInputIssues(item.original,values).length)return;
     try{
       await getJson('/api/media/approve',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({auto_match:true,rows:[mediaPayload(item.original,values)]})});
