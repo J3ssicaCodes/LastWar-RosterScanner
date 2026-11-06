@@ -9,6 +9,9 @@
     #plDirectoryBody tr[data-player-profile]{cursor:pointer}
     #plDirectoryBody tr[data-player-profile]:hover,#plDirectoryBody tr[data-player-profile]:focus-within{background:var(--panel2)}
     #plDirectoryBody button[data-player-profile]{background:none;border:0;box-shadow:none;padding:0;color:inherit;font:inherit;text-align:left}
+    .player-merge-panel{margin:12px 0;padding:12px;border:1px solid var(--stroke);border-radius:10px}
+    .player-merge-panel select{display:block;max-width:100%;margin:8px 0}
+    .player-merge-panel [data-merge-preview]:not([hidden]){display:flex;align-items:center;gap:8px;margin:10px 0}
     .profile-history{margin-top:20px}
     .profile-history figure{margin:12px 0;padding:12px;border:1px solid var(--stroke);border-radius:10px}
     .profile-history svg{display:block;width:100%;height:auto;overflow:visible}
@@ -22,7 +25,7 @@
     .player-profile-name input,[aria-label="Player profile"] select{padding:6px 8px;background:var(--panel2);color:var(--text);border:1px solid var(--stroke);border-radius:6px;font:inherit}
   `;
   document.head.append(styles);
-  let player,request=0,history=null;
+  let player,roster=[],request=0,history=null;
   const editIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v3M7 8h6M7 12h3"/><path d="m18 10 4 4-7 7h-4v-4Z"/></svg>';
   const saveIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v6h8"/></svg>';
   const number=v=>v==null?'—':Number(v).toLocaleString();
@@ -80,8 +83,11 @@
         ['Power',p.power==null?(p.power_millions==null?'—':number(p.power_millions)+'M'):number(p.power)],
         ['Kills',number(p.kills)],['Donations',number(p.donations)],['HQ',number(p.hq_level)],
         ['Birthday',p.birthday||'—'],['Last seen',p.last_seen_at?new Date(p.last_seen_at+'Z').toLocaleDateString():'—']
-      ].map(([label,value])=>'<dt>'+label+'</dt><dd style="margin:0">'+esc(value)+'</dd>').join('')+'</dl><section class="profile-history" data-history></section>';
+      ].map(([label,value])=>'<dt>'+label+'</dt><dd style="margin:0">'+esc(value)+'</dd>').join('')+'</dl>'+
+      (edit?'':'<button type="button" class="btn" data-merge>Merge duplicate</button><p data-merge-message role="status" hidden></p>')+
+      '<section class="profile-history" data-history></section>';
     renderHistory();
+    dialog.querySelector('[data-merge]')?.addEventListener('click',openMerge);
     dialog.querySelector('[data-close]').onclick=()=>dialog.close();
     dialog.querySelector('[data-edit]')?.addEventListener('click',()=>{
       render(true);
@@ -106,16 +112,61 @@
       finally{button.disabled=false;}
     });
   }
+  function openMerge(event){
+    const keep=player;
+    const candidates=roster.filter(p=>p.id!==keep.id).sort((a,b)=>a.name.localeCompare(b.name));
+    const form=document.createElement('form');
+    form.className='player-merge-panel';
+    form.innerHTML='<h3>Keep '+esc(keep.name)+'</h3>'+
+      '<label>Merge this duplicate into '+esc(keep.name)+'<select name="duplicate" required>'+
+      '<option value="">Choose duplicate…</option>'+candidates.map(p=>'<option value="'+p.id+'">'+esc(p.name)+' · '+esc(p.rank)+'</option>').join('')+
+      '</select></label><div data-merge-preview hidden></div>'+
+      '<p>The retained player’s filled-in details and same-day VS scores take priority. Other stats and history carry over, and the duplicate name becomes an OCR alias.</p>'+
+      '<button type="submit" class="btn primary" disabled>Confirm merge</button> <button type="button" class="btn" data-merge-cancel>Cancel</button>'+
+      '<p role="status" data-merge-error></p>';
+    event.currentTarget.replaceWith(form);
+    const select=form.elements.duplicate,preview=form.querySelector('[data-merge-preview]');
+    const submit=form.querySelector('[type="submit"]'),error=form.querySelector('[data-merge-error]');
+    form.querySelector('[data-merge-cancel]').onclick=()=>{render();dialog.querySelector('[data-merge]').focus();};
+    select.onchange=()=>{
+      const duplicate=candidates.find(p=>p.id===Number(select.value));
+      preview.hidden=!duplicate;submit.disabled=!duplicate;
+      preview.innerHTML=duplicate?
+        (duplicate.has_avatar?'<img class="pl-avatar" src="'+esc(duplicate.avatar_url)+'" alt="Duplicate player portrait">':'')+
+        '<strong>'+esc(duplicate.name)+' → '+esc(keep.name)+'</strong>':'';
+    };
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      const duplicate=candidates.find(p=>p.id===Number(select.value));
+      if(!duplicate||submit.disabled)return;
+      submit.disabled=true;select.disabled=true;error.textContent='Merging player records…';
+      try{
+        const response=await fetch('/api/player-list/'+keep.id+'/merge',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({duplicate_id:duplicate.id,expected_name:keep.name,expected_duplicate_name:duplicate.name})});
+        const result=await response.json();
+        if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'Could not merge players.');
+        if(form.isConnected&&dialog.open){
+          const conflicts=result.overlapping_vs_scores;
+          await openProfile(keep.id,'Merged '+result.merged_name+' into '+result.name+'.'+
+            (conflicts?' Kept the retained record’s score on '+conflicts+' overlapping date'+(conflicts===1?'':'s')+'.':''));
+        }
+        await window.playerListRefresh?.();window.vsPointsRefresh?.();
+        window.dispatchEvent(new Event('player-profile-updated'));
+      }catch(err){if(form.isConnected)error.textContent=err.message;}
+      finally{if(form.isConnected){submit.disabled=false;select.disabled=false;}}
+    };
+    select.focus();
+  }
   dialog.addEventListener('click',event=>{const r=dialog.getBoundingClientRect();if(event.target===dialog&&(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom))dialog.close();});
-  directory.addEventListener('click',async event=>{
-    if(event.target.closest('[data-player-birthday]'))return;
-    const row=event.target.closest('tr[data-player-profile]');
-    if(!row)return;
+  async function openProfile(id,notice=''){
     const current=++request;history=null;dialog.innerHTML='<p role="status">Loading player…</p>';if(!dialog.open)dialog.showModal();
     try{
       const response=await fetch('/api/player-list',{cache:'no-store'});if(!response.ok)throw Error('Could not load player profile.');
       const data=await response.json();if(current!==request||!dialog.open)return;
-      player=data.players.find(p=>p.id===Number(row.dataset.playerProfile));if(!player)throw Error('Player not found.');render();
+      roster=data.players;
+      player=roster.find(p=>p.id===id);if(!player)throw Error('Player not found.');render();
+      const message=dialog.querySelector('[data-merge-message]');
+      if(notice&&message){message.hidden=false;message.textContent=notice;}
       try{
         const stats=await fetch('/api/player-list/'+player.id+'/history',{cache:'no-store'});
         if(!stats.ok)throw Error('History unavailable.');
@@ -125,5 +176,10 @@
         if(current===request&&dialog.open){history={error:true};renderHistory();}
       }
     }catch(err){if(current===request&&dialog.open)dialog.textContent=err.message;}
+  }
+  directory.addEventListener('click',event=>{
+    if(event.target.closest('[data-player-birthday]'))return;
+    const row=event.target.closest('tr[data-player-profile]');
+    if(row)openProfile(Number(row.dataset.playerProfile));
   });
 })();

@@ -35,6 +35,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from player_identity import match_master, name_key, corrected_name, load_name_corrections, learn_name_correction
 from player_list_ocr import scan_upload
+from player_merge import PlayerMerge, merge_player_records
+from player_performance import HISTORY_FIELDS, load_performance, stat_series
 from admin_reset import initialize_admin_state, install_admin_reset
 
 BASE = Path(__file__).parent
@@ -499,6 +501,17 @@ class Member(BaseModel):
         return v
 
 
+@app.post('/api/player-list/{player_id}/merge')
+def merge_player(player_id: int, body: PlayerMerge):
+    try:
+        return merge_player_records(db_connect, player_id, body)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logging.exception('Player merge rolled back')
+        raise HTTPException(503, detail='Could not merge these players. Refresh and try again.') from exc
+
+
 class PlayerProfileUpdate(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     rank: str = Field(pattern=r'^R[1-5]$')
@@ -559,41 +572,43 @@ def import_players(body: ImportData):
 
 def merge_players(body: ImportData, connection=None):
     batch_id = str(uuid.uuid4())
-    # Canonicalize against the shared master directory before combining categories.
-    with (nullcontext(connection) if connection is not None else db_connect()) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id,player_name,player_rank,normalized_name FROM `player list`")
-            master=cur.fetchall()
-    unique = {}
-    observed_dates = {}
-    stats = ('power','power_millions','kills','donations')
-    for member in body.players:
-        current=match_master({'name':member.name},master)
-        if current:
-            member=member.model_copy(update={'name':current['player_name']})
-        key=normalize_name(member.name)
-        dates = observed_dates.setdefault(key, {})
-        for field in stats:
-            if getattr(member,field) is not None:
-                dates[field] = member.upload_date
-        if key in unique:
-            other=unique[key]
-            # Power and Kills observations can have different portraits/rank OCR.
-            # Same canonical player, independent fields; retain every known stat.
-            unique[key]=other.model_copy(update={
-                field:getattr(member,field) if getattr(member,field) is not None else getattr(other,field)
-                for field in ('power','kills','donations','power_millions','hq_level','avatar_base64')
-            })
-        else:
-            unique[key]=member
-    if not unique:
-        raise HTTPException(400, detail='No valid players were provided.')
     created = updated = removed = 0
     try:
         with (nullcontext(connection) if connection is not None else db_connect()) as conn:
             try:
                 # One transaction, including new/removed status changes.
                 with conn.cursor() as cur:
+                    # Resolve aliases inside the transaction that saves the player,
+                    # so a concurrent merge cannot recreate the removed record.
+                    cur.execute("SELECT id,player_name,player_rank,normalized_name FROM `player list` ORDER BY id FOR UPDATE")
+                    master=cur.fetchall()
+                    corrections=load_name_corrections(cur)
+                    master_keys = {name_key(row['player_name']) for row in master}
+                    unique = {}
+                    observed_dates = {}
+                    stats = ('power','power_millions','kills','donations')
+                    for member in body.players:
+                        corrected = corrected_name(member.name, corrections, master_keys)
+                        current=match_master({'name':corrected},master)
+                        if current:
+                            member=member.model_copy(update={'name':current['player_name']})
+                        key=normalize_name(member.name)
+                        dates = observed_dates.setdefault(key, {})
+                        for field in stats:
+                            if getattr(member,field) is not None:
+                                dates[field] = member.upload_date
+                        if key in unique:
+                            other=unique[key]
+                            # Power and Kills observations can have different portraits/rank OCR.
+                            # Same canonical player, independent fields; retain every known stat.
+                            unique[key]=other.model_copy(update={
+                                field:getattr(member,field) if getattr(member,field) is not None else getattr(other,field)
+                                for field in ('power','kills','donations','power_millions','hq_level','avatar_base64')
+                            })
+                        else:
+                            unique[key]=member
+                    if not unique:
+                        raise HTTPException(400, detail='No valid players were provided.')
                     cur.execute('UPDATE `player list` SET is_new=FALSE WHERE is_new=TRUE')
                     for key, member in unique.items():
                         portrait=None
@@ -677,9 +692,8 @@ def player_history(player_id: int):
         player = cur.fetchone()
         if not player:
             raise HTTPException(404,detail='Player not found.')
-        cur.execute("""SELECT DATE(recorded_at) AS recorded_date,power,power_millions,kills,donations,
-                       power_upload_date,power_millions_upload_date,kills_upload_date,donations_upload_date
-                       FROM player_stat_history WHERE player_id=%s ORDER BY recorded_at,import_id""",(player_id,))
+        cur.execute(f"""SELECT {HISTORY_FIELDS} FROM player_stat_history h
+                        WHERE player_id=%s ORDER BY recorded_at,import_id""",(player_id,))
         history = cur.fetchall()
         cur.execute("""SELECT score_date,points FROM vs_points
                        WHERE player_id=%s OR (player_id IS NULL AND normalized_name=%s)
@@ -687,26 +701,8 @@ def player_history(player_id: int):
                     (player_id,player['normalized_name']))
         scores = cur.fetchall()
 
-    series = {key:{} for key in ('power','kills','donations','vs')}
-    fields = ('power','power_millions','kills','donations')
-    previous = {}
-    for row in history:
-        legacy = all(row[f'{field}_upload_date'] is None for field in fields)
-        for field in fields:
-            value = row[field]
-            sample_date = row[f'{field}_upload_date']
-            if legacy and value is not None and previous.get(field) != value:
-                sample_date = row['recorded_date']
-            if value is not None:
-                previous[field] = value
-            if value is None or sample_date is None:
-                continue
-            key = 'power' if field == 'power_millions' else field
-            if field == 'power_millions':
-                # Exact power wins when both formats were recorded on the same date.
-                series[key].setdefault(str(sample_date),int(value * 1000000))
-            else:
-                series[key][str(sample_date)] = int(value)
+    series = stat_series(history)
+    series['vs'] = {}
     seen = set()
     for row in scores:
         day = row['score_date']
@@ -717,6 +713,21 @@ def player_history(player_id: int):
         series['vs'][sunday] = series['vs'].get(sunday,0) + int(row['points'])
     return {key:[{'date':day,'value':value} for day,value in sorted(values.items())]
             for key,values in series.items()}
+
+
+@app.get('/api/player-performance')
+def player_performance(week_start: date):
+    try:
+        return load_performance(db_connect, week_start)
+    except Exception as exc:
+        logging.exception('Could not load player performance')
+        raise HTTPException(503,detail='Player performance data is unavailable. Try refreshing.') from exc
+
+
+@app.get('/player_performance.js')
+def player_performance_script():
+    return FileResponse(BASE / 'player_performance.js', media_type='application/javascript',
+                        headers={'Cache-Control':'no-cache'})
 
 
 @app.get('/media_ui.js')

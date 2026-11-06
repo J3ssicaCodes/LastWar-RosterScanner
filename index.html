@@ -255,6 +255,7 @@ th[aria-sort] .sort-column span{opacity:1}
   <button type="button" class="workspace-tab" id="rosterScannerTab" role="tab" aria-controls="rosterScannerView" aria-selected="true" tabindex="0" data-workspace-tab="scanner"><span class="workspace-tab-icon" aria-hidden="true">▦</span><span>Roster Scanner</span></button>
   <button type="button" class="workspace-tab" id="playerListTab" role="tab" aria-controls="playerListView" aria-selected="false" tabindex="-1" data-workspace-tab="players"><span class="workspace-tab-icon" aria-hidden="true">♙</span><span>Player List</span></button>
   <button type="button" class="workspace-tab" id="vsPointsTab" role="tab" aria-controls="vsPointsView" aria-selected="false" tabindex="-1" data-workspace-tab="vs"><span class="workspace-tab-icon" aria-hidden="true">▤</span><span>VS Points</span></button>
+  <button type="button" class="workspace-tab" id="performanceTab" role="tab" aria-controls="performanceView" aria-selected="false" tabindex="-1" data-workspace-tab="performance">Player Performance</button>
   <button type="button" class="workspace-tab" id="adminTab" role="tab" aria-controls="adminView" aria-selected="false" tabindex="-1" data-workspace-tab="admin">Admin</button>
 </nav>
 <section id="rosterScannerView" class="workspace-view" role="tabpanel" aria-labelledby="rosterScannerTab" tabindex="0">
@@ -344,6 +345,28 @@ th[aria-sort] .sort-column span{opacity:1}
   <div class="pl-filters"><input id="vsSearch" type="search" placeholder="Search player names…" aria-label="Search VS players"><a class="btn" id="vsExport" href="/api/vs-points/export.csv">↓ Export CSV</a></div>
   <p id="vsSummary"></p><div class="pl-table-wrap"><table class="pl-table"><thead><tr id="vsWeekColumns"><th scope="col"><button type="button" class="sort-column" data-sort="name">Player <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="0">Mon <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="1">Tue <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="2">Wed <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="3">Thu <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="4">Fri <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="5">Sat <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="total">Total <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="vsRows"><tr><td colspan="8">No scores saved yet.</td></tr></tbody></table></div>
   <datalist id="vsPlayerNames"></datalist>
+  </section>
+</section>
+<section id="performanceView" class="workspace-view" role="tabpanel" aria-labelledby="performanceTab" tabindex="0" hidden>
+  <section class="panel pl-section">
+    <div class="pl-title-row"><div><div class="eyebrow">Alliance leadership</div><h2>Player Performance</h2><p>VS results, participation, and stat changes for the current roster.</p></div>
+      <label>Week <input type="date" id="performanceDate" aria-label="Choose any date in the performance week"></label></div>
+    <p id="performanceStatus" role="status" aria-live="polite"></p>
+    <div id="performanceContent" hidden>
+      <div class="pl-summary" id="performanceSummary"></div>
+      <div class="performance-grid">
+        <section><h3>Daily VS points and coverage</h3><div id="performanceDaily"></div></section>
+        <section><h3>Alliance VS over eight weeks</h3><div id="performanceWeekly"></div></section>
+        <section><h3>Top 10 VS points</h3><div id="performanceTop"></div></section>
+        <section><h3>Lowest recorded VS totals</h3><p>Includes players with a score on every captured day.</p><div id="performanceLow"></div></section>
+        <section><h3>Coverage follow-up</h3><p>Players missing scores on days the alliance captured.</p><div id="performanceFollowUp"></div></section>
+        <section><h3>Biggest VS gains</h3><p>Compares the same recorded weekdays for each player.</p><div id="performanceGains"></div></section>
+        <section><h3>Top 10 stat gains</h3><label>Metric <select id="performanceMetric"><option value="power_change">Power</option><option value="kills_change">Kills</option><option value="donations_change">Donations</option></select></label><div id="performanceGrowth"></div></section>
+      </div>
+      <h3>Roster scorecard</h3><p>Missing scores are shown as a dash. Stat gains use recorded uploads.</p>
+      <input id="performanceSearch" type="search" aria-label="Search performance by player" placeholder="Search players…">
+      <div class="pl-table-wrap"><table class="pl-table"><thead><tr id="performanceColumns"><th scope="col"><button type="button" class="sort-column" data-sort="name">Player <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="rank">Rank <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="vs_points">VS points <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="days_recorded">Days recorded <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="vs_change">VS change <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="power_change">Power change <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="kills_change">Kills change <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="donations_change">Donations change <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="performanceRows"></tbody></table></div>
+    </div>
   </section>
 </section>
 <section id="adminView" class="workspace-view" role="tabpanel" aria-labelledby="adminTab" tabindex="0" hidden>
@@ -2101,7 +2124,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 (() => {
   const storageKey='lastwar.workspaceTab.v1';
   const tabs=[...document.querySelectorAll('[data-workspace-tab]')];
-  const views={scanner:document.getElementById('rosterScannerView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView'),admin:document.getElementById('adminView')};
+  const views={scanner:document.getElementById('rosterScannerView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView'),performance:document.getElementById('performanceView'),admin:document.getElementById('adminView')};
   function selectTab(tabId,focus=false){
     if(!Object.hasOwn(views,tabId))tabId='scanner';
     for(const tab of tabs){
@@ -2495,6 +2518,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 <script defer src="/google_drive_picker.js"></script>
 <script defer src="/media_ui.js"></script>
 <script defer src="/vs_ui.js"></script>
+<script defer src="/player_performance.js"></script>
 <script defer src="/admin_ui.js"></script>
 </body>
 </html>
