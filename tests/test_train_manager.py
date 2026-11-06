@@ -1,9 +1,11 @@
 from datetime import date
+from sqlite3 import IntegrityError as SQLiteIntegrityError
 from unittest import TestCase
 from unittest.mock import Mock
 
 from fastapi import HTTPException
-from train_manager import Assignment, install_train_manager, nominations, parse_train_csv
+from pymysql.err import IntegrityError
+from train_manager import Assignment, HistoryEdit, install_train_manager, nominations, parse_train_csv
 from test_player_merge_vs import Cursor, SQLDatabase
 
 
@@ -22,6 +24,7 @@ class TrainDatabase(SQLDatabase):
                 assignment_date TEXT PRIMARY KEY,conductor_id INTEGER,vip_id INTEGER,
                 conductor_name TEXT,vip_name TEXT,conductor_reason TEXT,vip_reason TEXT,
                 goal TEXT,target INTEGER,conductor_points INTEGER,vip_points INTEGER);
+            CREATE TABLE train_emails (assignment_date TEXT PRIMARY KEY,body TEXT);
             INSERT INTO `player list` (id,player_name,normalized_name,player_rank,possibly_removed)
                 VALUES (1,'Alpha','alpha','R4',0),(2,'Bravo','bravo','R3',0),(3,'Charlie','charlie','R5',0);
             INSERT INTO train_restrictions VALUES (2);
@@ -32,6 +35,12 @@ class TrainDatabase(SQLDatabase):
 
 
 class TrainCursor(Cursor):
+    def execute(self,sql,args=()):
+        try:
+            super().execute(sql,args)
+        except SQLiteIntegrityError as exc:
+            raise IntegrityError(str(exc)) from exc
+
     def fetchall(self):
         rows = super().fetchall()
         for row in rows:
@@ -41,6 +50,35 @@ class TrainCursor(Cursor):
 
 
 class TrainTests(TestCase):
+    def test_history_edits_update_roles_and_move_email_atomically(self):
+        db=TrainDatabase()
+        app=Mock()
+        install_train_manager(app,db)
+        endpoints={(r.path,next(iter(r.methods))):r.endpoint for r in app.include_router.call_args.args[0].routes}
+        historical=endpoints['/api/train/history','POST']
+        edit=endpoints['/api/train/history/{original_day}','PUT']
+        original,occupied,moved=(date(2026,11,d) for d in (5,6,7))
+        historical(Assignment(day=original,conductor_id=1,vip_id=3))
+        historical(Assignment(day=occupied,conductor_id=1,vip_id=3))
+        db.db.execute('INSERT INTO train_emails VALUES (?,?)',(original,'Saved draft'))
+        db.db.commit()
+
+        body=HistoryEdit(day=occupied,conductor_id=1,vip_id=2,original_conductor_id=1,original_vip_id=3)
+        with self.assertRaises(HTTPException) as error:
+            edit(original,body)
+        self.assertEqual(error.exception.status_code,409)
+        edit(original,body.model_copy(update={'day':original}))
+        with self.assertRaises(HTTPException) as error:
+            edit(original,body.model_copy(update={'day':moved}))
+        self.assertEqual(error.exception.status_code,409)
+        edit(original,body.model_copy(update={'day':moved,'original_vip_id':2}))
+
+        history=endpoints['/api/train/history','GET']()
+        self.assertEqual([(row['assignment_date'],row['vip_name']) for row in history['rows']],
+                         [(moved,'Bravo'),(occupied,'Charlie')])
+        self.assertEqual(len(history['players']),3)
+        self.assertEqual(tuple(db.db.execute('SELECT * FROM train_emails').fetchone()),(moved.isoformat(),'Saved draft'))
+
     def test_birthdays_override_cooldown_but_not_restrictions(self):
         day = date(2026,11,6)
         players = [player(1,'Birthday',date(2000,11,7)),player(2,'Disabled',date(2000,11,6),True),

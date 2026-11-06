@@ -194,6 +194,6 @@
     }catch(error){dictionaryMessage.textContent=error.message;}
     finally{dictionaryBusy=false;saveCorrection.disabled=false;}
   });
-  document.getElementById('adminTab').addEventListener('click',loadDictionary);
-  if(document.getElementById('adminTab').getAttribute('aria-selected')==='true')loadDictionary();
+  const dictionary=document.getElementById('adminDictionary');
+  dictionary.addEventListener('toggle',()=>{if(dictionary.open)loadDictionary();});
 })();

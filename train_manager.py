@@ -40,6 +40,14 @@ class Assignment(BaseModel):
     wheel_vip: bool = False
 
 
+class HistoryEdit(BaseModel):
+    day: date
+    conductor_id: int = Field(gt=0)
+    vip_id: int = Field(gt=0)
+    original_conductor_id: int = Field(gt=0)
+    original_vip_id: int = Field(gt=0)
+
+
 class EmailDraft(BaseModel):
     body: str = Field(min_length=1,max_length=12000)
 
@@ -298,7 +306,48 @@ def install_train_manager(app, connect_db):
             cur.execute("""SELECT * FROM train_assignments WHERE (%s IS NULL OR assignment_date<%s)
                            ORDER BY assignment_date DESC LIMIT 51""",(before,before))
             rows = cur.fetchall()
-        return {'rows':rows[:50],'more':len(rows)>50}
+            result = {'rows':rows[:50],'more':len(rows)>50}
+            if before is None:
+                cur.execute('SELECT id,player_name AS name FROM `player list` ORDER BY player_name')
+                result['players'] = cur.fetchall()
+        return result
+
+    @router.put('/history/{original_day}')
+    def edit_history(original_day:date, body:HistoryEdit):
+        if body.conductor_id == body.vip_id:
+            raise HTTPException(422,detail='Choose different players for Conductor and VIP.')
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute('SELECT id,player_name AS name FROM `player list` WHERE id IN (%s,%s) ORDER BY id FOR UPDATE',
+                        tuple(sorted((body.conductor_id,body.vip_id))))
+            players = {row['id']:row['name'] for row in cur.fetchall()}
+            cur.execute('SELECT * FROM train_assignments WHERE assignment_date=%s FOR UPDATE',(original_day,))
+            previous = cur.fetchone()
+            if not previous:
+                raise HTTPException(404,detail='That assignment is no longer on this date. Reopen history to refresh.')
+            if (previous['conductor_id'],previous['vip_id']) != (body.original_conductor_id,body.original_vip_id):
+                raise HTTPException(409,detail='This assignment changed. Reopen history and try again.')
+
+            def values(role, player_id):
+                unchanged = previous[role+'_id'] == player_id
+                if not unchanged and player_id not in players:
+                    raise HTTPException(422,detail='Choose a replacement from the Player List.')
+                name = previous[role+'_name'] if unchanged else players[player_id]
+                if unchanged and body.day == original_day:
+                    return player_id,name,previous[role+'_reason'],previous[role+'_points']
+                return player_id,name,'Manual selection',None
+
+            try:
+                cur.execute("""UPDATE train_assignments SET assignment_date=%s,
+                    conductor_id=%s,conductor_name=%s,conductor_reason=%s,conductor_points=%s,
+                    vip_id=%s,vip_name=%s,vip_reason=%s,vip_points=%s WHERE assignment_date=%s""",
+                    (body.day,*values('conductor',body.conductor_id),*values('vip',body.vip_id),original_day))
+                if body.day != original_day:
+                    cur.execute('UPDATE train_emails SET assignment_date=%s WHERE assignment_date=%s',(body.day,original_day))
+                conn.commit()
+            except IntegrityError as exc:
+                conn.rollback()
+                raise HTTPException(409,detail='That date already has an assignment or saved email.') from exc
+        return {'day':body.day}
 
     @router.post('/import-preview')
     def preview(file:UploadFile=File(...)):

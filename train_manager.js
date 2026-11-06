@@ -10,8 +10,34 @@
   styles.textContent=`
     .train-controls{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:10px 0}
     .train-controls label,.train-field{display:grid;gap:5px}
-    #trainView input,#trainView select,#trainView textarea,#trainAdmin input,#trainAdmin select{color:var(--text);background:var(--panel2);border:1px solid var(--stroke);border-radius:7px;padding:8px;font:inherit;max-width:100%}
-    #trainView .pl-table{min-width:640px}
+    #trainView input,#trainView select,#trainView textarea,#trainAdmin input,#trainAdmin select,#trainHistoryDialog input,#trainHistoryDialog select{color:var(--text);background:var(--panel2);border:1px solid var(--stroke);border-radius:7px;padding:8px;font:inherit;max-width:100%}
+    .train-layout{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);align-items:start;gap:20px}
+    .train-card{min-width:0;border:1px solid var(--stroke);border-radius:12px;padding:14px}
+    .train-card h3,.train-card h4{margin:0 0 6px}
+    .train-picks{position:sticky;top:12px}
+    .train-picks label,.train-history-form label{margin-bottom:10px}
+    #trainView .pl-table{min-width:0}
+    #trainView .pl-table :is(td,th){padding:7px;white-space:normal;overflow-wrap:anywhere}
+    .train-badge{display:block;margin-top:4px;font-size:.85em;color:var(--muted)}
+    .train-nominee-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-top:10px}
+    .train-nominee-actions label{min-width:0}
+    .train-step{display:inline-grid;place-items:center;width:1.65em;height:1.65em;margin-right:.35em;border:1px solid var(--stroke);border-radius:50%;font-size:.8em}
+    .train-summary{cursor:pointer;font-weight:700}
+    .train-hint:empty,#trainStatus:empty,#trainSaveStatus:empty{display:none}
+    #trainHistoryDialog{width:min(720px,96vw);max-height:90vh;overflow:auto}
+    #trainHistoryDialog .pl-table{min-width:0}
+    #trainHistoryDialog .pl-table :is(td,th){padding:8px;white-space:normal;overflow-wrap:anywhere}
+    #trainHistoryDialog [hidden]{display:none!important}
+    .train-history-form{margin-top:12px}
+    @media(max-width:900px){
+      .train-layout{grid-template-columns:1fr}
+      .train-picks{position:static}
+    }
+    @media(max-width:560px){
+      .train-card{padding:10px}
+      #trainView .pl-table :is(td,th){padding:6px}
+      #trainView .pl-table button{white-space:normal;font-size:.8em;padding:6px}
+    }
     #trainView textarea{width:100%;min-height:8em}
     .train-wheel-wrap{width:min(78vw,330px);position:relative;margin:15px auto;text-align:center}
     #trainWheel{display:block;width:100%;height:auto;border-radius:50%;border:4px solid var(--stroke);background:var(--panel2)}
@@ -26,27 +52,38 @@
   document.head.append(styles);
   view.innerHTML=`
     <section class="panel pl-section">
-      <div class="pl-title-row"><div><div class="eyebrow">Alliance awards</div><h2>Train Manager</h2></div></div>
+      <div class="pl-title-row"><div><div class="eyebrow">Alliance awards</div><h2>Train Manager</h2></div><button class="btn" type="button" id="trainEditHistory" aria-haspopup="dialog">Edit train history</button></div>
       <div class="train-controls">
         <label>Assignment date<input id="trainDay" type="date" required></label>
-        <fieldset class="train-controls"><legend>Weekly goal</legend><label><span><input name="trainGoal" type="radio" value="Push" checked> Push</span></label><label><span><input name="trainGoal" type="radio" value="Save"> Save</span></label></fieldset>
+        <fieldset class="train-controls" id="trainGoalControls"><legend>Weekly goal</legend><label><span><input name="trainGoal" type="radio" value="Push" checked> Push</span></label><label><span><input name="trainGoal" type="radio" value="Save"> Save</span></label></fieldset>
         <label id="trainTargetLabel" hidden>Save goal<input id="trainTarget" type="number" min="1" max="9007199254740991" value="7200000"></label>
       </div>
       <p id="trainStatus" role="status" aria-live="polite"></p>
       <p class="train-hint" id="trainContext"></p>
       <div id="trainBoard" hidden>
-        <h3>Eligible nominees</h3>
-        <p class="train-hint">Checked nominees are automatically on the VIP wheel. Uncheck a player to leave them out of Conductor and VIP selection.</p>
-        <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Include</th><th>Player</th><th>VS points</th><th>Nomination</th><th>Conductor</th></tr></thead><tbody id="trainRows"></tbody></table></div>
-        <button id="trainMore" type="button" class="btn smallbtn" hidden>Show all nominees</button>
-        <div class="train-controls"><label>Add a player<select id="trainManual"></select></label><button class="btn" type="button" id="trainAppend">Add to table</button></div>
-        <h3>Train assignment</h3>
-        <label class="train-field">Conductor<select id="trainConductor"></select></label>
-        <div class="train-controls"><button class="btn primary" type="button" id="trainSpin" disabled>Spin the wheel</button></div>
-        <p id="trainWheelStatus" role="status" aria-live="polite"></p>
-        <div class="train-wheel-wrap"><span class="train-pointer" aria-hidden="true">▼</span><canvas id="trainWheel" width="480" height="480" aria-label="VIP randomizer wheel"></canvas></div>
-        <label class="train-field">VIP<select id="trainVip"></select></label>
-        <div class="train-controls"><button class="btn primary" type="button" id="trainSave">Save train assignment</button><button class="btn" type="button" id="trainOpenEmail" hidden>Generate Alliance Email</button></div>
+        <div id="trainWorkflow" class="train-layout">
+          <section class="train-card" aria-labelledby="trainNomineeTitle">
+            <h3 id="trainNomineeTitle"><span class="train-step" aria-hidden="true">1</span> Choose a Conductor</h3>
+            <p class="train-hint">Pick a nominee or use the Conductor menu. Checked nominees go on the VIP wheel once you pick a Conductor.</p>
+            <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Include</th><th scope="col">Player</th><th scope="col">VS points</th><th scope="col">Assign</th></tr></thead><tbody id="trainRows"></tbody></table></div>
+            <div class="train-nominee-actions"><button id="trainMore" type="button" class="btn smallbtn" hidden>Show all nominees</button><label class="train-field">Add a player<select id="trainManual"></select></label><button class="btn" type="button" id="trainAppend">Add nominee</button></div>
+          </section>
+          <section class="train-card train-picks" aria-labelledby="trainPickTitle">
+            <h3 id="trainPickTitle"><span class="train-step" aria-hidden="true">2</span> Pick a VIP</h3>
+            <label class="train-field">Conductor<select id="trainConductor"></select></label>
+            <p class="train-hint" id="trainWheelStatus" role="status" aria-live="polite"></p>
+            <div class="train-wheel-wrap" id="trainWheelWrap" hidden><span class="train-pointer" aria-hidden="true">▼</span><canvas id="trainWheel" width="480" height="480" aria-label="VIP randomizer wheel"></canvas></div>
+            <div class="train-controls"><button class="btn" type="button" id="trainSpin" disabled>Spin for VIP</button></div>
+            <label class="train-field">VIP<select id="trainVip"></select></label>
+            <button class="btn primary" type="button" id="trainSave">Save train assignment</button>
+            <p id="trainSaveStatus" role="status" aria-live="polite"></p>
+          </section>
+        </div>
+        <section class="train-card" id="trainSavedAssignment" hidden>
+          <h3>Saved train assignment</h3>
+          <p id="trainSavedNames"></p>
+          <button class="btn primary" type="button" id="trainOpenEmail">Generate Alliance Email</button>
+        </section>
       </div>
     </section>
     <section class="panel pl-section" id="trainEmailEditor" hidden>
@@ -64,16 +101,32 @@
       <div id="trainDraftActions" class="train-controls" hidden><button class="btn" type="button" id="trainCopy">Copy email</button><button class="btn primary" type="button" id="trainSaveEmail">Save email</button></div>
       <p id="trainEmailStatus" role="status" aria-live="polite"></p>
     </section>
-    <section class="panel pl-section"><h3>Saved alliance emails</h3>
+    <details class="panel pl-section"><summary class="train-summary">Saved alliance emails</summary>
       <div class="train-controls"><button class="btn" type="button" id="trainOlderEmail">‹ Older</button><strong id="trainEmailDate"></strong><button class="btn" type="button" id="trainNewerEmail">Newer ›</button></div>
       <label id="trainSavedEmailField" class="train-field" hidden>Saved email<textarea id="trainSavedEmail" readonly></textarea></label>
       <button id="trainCopySaved" class="btn" type="button" hidden>Copy saved email</button>
       <p id="trainArchiveStatus" role="status" aria-live="polite"></p>
-    </section>
-    <section class="panel pl-section"><h3>Train assignment history</h3>
-      <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Date</th><th>Conductor</th><th>VIP</th></tr></thead><tbody id="trainHistory"></tbody></table></div>
+    </details>`;
+  const historyDialog=document.createElement('dialog');
+  historyDialog.id='trainHistoryDialog';
+  historyDialog.setAttribute('aria-labelledby','trainHistoryTitle');
+  historyDialog.innerHTML=`
+    <div class="pl-title-row"><h3 id="trainHistoryTitle">Edit train history</h3><form method="dialog"><button class="btn" type="submit">Close</button></form></div>
+    <p id="trainHistoryStatus" role="status" aria-live="polite"></p>
+    <div id="trainHistoryList">
+      <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Date</th><th scope="col">Conductor</th><th scope="col">VIP</th><th scope="col">Edit</th></tr></thead><tbody id="trainHistory"></tbody></table></div>
       <button id="trainOlderHistory" class="btn" type="button" hidden>Load older assignments</button>
-    </section>`;
+    </div>
+    <form class="train-history-form" id="trainHistoryForm" hidden>
+      <h4 id="trainHistoryEditTitle"></h4>
+      <label class="train-field">Assignment date<input name="day" type="date" required></label>
+      <label class="train-field">Conductor<select name="conductor_id" required></select></label>
+      <label class="train-field">VIP<select name="vip_id" required></select></label>
+      <p class="train-hint">Changes update the assignment record. Review any saved alliance email separately.</p>
+      <button class="btn primary" type="submit">Save changes</button>
+      <button class="btn" type="button" id="trainHistoryCancel">Back to history</button>
+    </form>`;
+  document.body.append(historyDialog);
   $('trainAdmin').innerHTML=`
     <h3>Train Manager settings</h3>
     <form id="trainSettingsForm" class="train-controls">
@@ -83,7 +136,8 @@
       <button type="submit" class="btn primary">Save train settings</button>
     </form>
     <p id="trainSettingsStatus" role="status"></p>
-    <h3>Import historical train assignments</h3>
+    <div class="pl-title-row"><h3>Train assignment history</h3><button class="btn" type="button" id="trainAdminHistory" aria-haspopup="dialog">Edit train history</button></div>
+    <h4>Import historical train assignments</h4>
     <p>Use a CSV with Date, Conductor Player, and VIP Player columns. Review the name matches and save each row individually.</p>
     <form id="trainImportForm" class="train-controls"><label>Assignment CSV<input name="file" type="file" accept=".csv,text/csv" required></label><button class="btn" type="submit">Review CSV</button></form>
     <p id="trainImportStatus" role="status"></p><div id="trainImportRows" class="train-import-list"></div>
@@ -102,8 +156,8 @@
   const day=()=>$('trainDay').value;
   const target=()=>goal()==='Save'?Number($('trainTarget').value):defaultTarget;
   const option=(p,selected,disabled=false)=>'<option value="'+p.id+'" '+(p.id===selected?'selected ':'')+(disabled?'disabled':'')+'>'+esc(p.name+(p.blocked?' · '+p.blocked:''))+'</option>';
-  let board,request=0,loading=false,manual=[],excluded=new Set(),showAll=false,spin=false,rotation=0,wheel=[],wheelWinner=0;
-  let events=[],emailRows=[],emailIndex=0,historyRows=[];
+  let board,request=0,loading=false,saving=false,manual=[],excluded=new Set(),showAll=false,spin=false,rotation=0,wheel=[],wheelWinner=0;
+  let events=[],emailRows=[],emailIndex=0,historyRows=[],historyPlayers=[],editingHistory,historyRequest=0;
   const getPlayer=id=>board?.players.find(p=>p.id===id);
   const conductor=()=>Number($('trainConductor').value);
   const vip=()=>Number($('trainVip').value);
@@ -136,7 +190,6 @@
     canvas.style.transition='none';
     canvas.style.transform='rotate(0deg)';
     drawWheel();
-    message('trainWheelStatus',wheel.length?wheel.length+' on the VIP wheel.':'No eligible players on the VIP wheel.');
   }
   function render(){
     const assigned=board.assignment;
@@ -147,30 +200,38 @@
     const remaining=ids.filter(id=>id!==selectedConductor);
     $('trainRows').innerHTML=remaining.map(id=>{
       const p=getPlayer(id);
-      const birthday=p.birthday_offset>=7?' · Birthday '+p.birthday+' in '+Math.floor(p.birthday_offset/7)+' week(s)':'';
+      const birthday=p.birthday_offset>=7?' <span class="train-badge">Upcoming birthday '+esc(p.birthday)+'</span>':'';
       return '<tr><td><input type="checkbox" data-train-include="'+id+'" aria-label="Include '+esc(p.name)+'" '+(excluded.has(id)?'':'checked ')+(assigned||spin?'disabled':'')+'></td>'+
-        '<th scope="row">'+esc(p.name)+'</th><td>'+(p.points==null?'—':num(p.points))+'</td><td>'+esc(p.reason+birthday)+'</td>'+
+        '<th scope="row">'+esc(p.name)+'<span class="train-badge">'+esc(p.reason)+'</span>'+birthday+'</th><td>'+(p.points==null?'—':num(p.points))+'</td>'+
         '<td><button class="btn smallbtn" type="button" data-train-conductor="'+id+'" '+(assigned||excluded.has(id)||spin?'disabled':'')+'>Assign as Conductor</button></td></tr>';
-    }).join('')||'<tr><td colspan="5">No remaining nominees. Add an eligible player below.</td></tr>';
+    }).join('')||'<tr><td colspan="4">No remaining nominees. You can still choose an eligible player from the Conductor menu.</td></tr>';
     $('trainMore').hidden=board.nominees.length<=20;
     $('trainMore').textContent=showAll?'Show top 20':'Show all '+board.nominees.length+' nominees';
     $('trainManual').innerHTML='<option value="">Choose player…</option>'+board.players.map(p=>option(p,0,!!p.blocked||ids.includes(p.id))).join('');
     for(const [id,chosen,other] of [['trainConductor',selectedConductor,0],['trainVip',oldVip,selectedConductor]]){
       const select=$(id);
-      if(assigned){
-        select.innerHTML='<option>'+esc(assigned[id==='trainConductor'?'conductor_name':'vip_name'])+'</option>';
-      }else{
-        select.innerHTML='<option value="">Choose player…</option>'+choices.filter(p=>p.id!==other).map(p=>option(p,chosen)).join('');
-      }
-      select.disabled=!!assigned||spin;
+      select.innerHTML='<option value="">Choose player…</option>'+
+        (assigned?'':choices.filter(p=>p.id!==other).map(p=>option(p,chosen)).join(''));
+      select.disabled=!!assigned||spin||(id==='trainVip'&&!selectedConductor);
     }
     if(vip()!==wheelWinner)wheelWinner=0;
     syncWheel(assigned?[]:remaining);
-    if(assigned)message('trainWheelStatus','');
-    $('trainOpenEmail').hidden=!assigned;
-    $('trainAppend').disabled=!!assigned||spin;
+    $('trainWheelWrap').hidden=!selectedConductor||!wheel.length;
+    if(!spin){
+      message('trainWheelStatus',!selectedConductor?'Choose a Conductor to enable the VIP wheel.':wheelWinner?
+        getPlayer(wheelWinner).name+' selected as VIP.':wheel.length?
+        wheel.length+' on the VIP wheel. You can also choose a VIP below.':'No checked nominees on the wheel. Choose a VIP below or check a nominee.');
+      $('trainSpin').textContent=wheelWinner?'Respin for VIP':'Spin for VIP';
+    }
+    $('trainWorkflow').hidden=!!assigned;
+    $('trainSavedAssignment').hidden=!assigned;
+    $('trainGoalControls').disabled=!!assigned;
+    $('trainTarget').disabled=!!assigned||spin;
+    if(assigned)message('trainSavedNames','Conductor · '+assigned.conductor_name+'   |   VIP · '+assigned.vip_name);
+    $('trainManual').disabled=!!assigned||spin;
+    $('trainAppend').disabled=true;
     $('trainSpin').disabled=!!assigned||spin||!conductor()||!wheel.length;
-    $('trainSave').disabled=!!assigned||spin||!conductor()||!vip();
+    $('trainSave').disabled=!!assigned||spin||saving||!conductor()||!vip();
   }
 
   async function loadBoard(reset=false){
@@ -186,8 +247,9 @@
       board=result;
       if(reset){manual=[];excluded.clear();showAll=false;$('trainConductor').value='';$('trainVip').value='';}
       else manual=manual.filter(id=>getPlayer(id)&&!getPlayer(id).blocked);
-      message('trainContext','VS score date '+board.score_date+' · '+board.settings.cooldown_weeks+'-week cooldown');
-      message('trainStatus',board.assignment?'Train assignment saved for '+day()+'.':'');
+      const goalHint=goal()==='Push'?'Push ranks the highest scores.':'Save prioritizes exact matches, then scores closest above the goal.';
+      message('trainContext',board.assignment?'':goalHint+' VS scores from '+board.score_date+'. '+board.settings.cooldown_weeks+'-week cooldown.');
+      message('trainStatus','');
       $('trainBoard').hidden=false;render();
     }catch(error){if(current===request)message('trainStatus',error.message);}
     finally{if(current===request)loading=false;}
@@ -201,7 +263,10 @@
   }
   $('trainRows').onclick=event=>{
     const button=event.target.closest('[data-train-conductor]');
-    if(button)selectConductor(Number(button.dataset.trainConductor));
+    if(button){
+      selectConductor(Number(button.dataset.trainConductor));
+      $('trainConductor').focus();
+    }
   };
   $('trainRows').onchange=event=>{
     const id=Number(event.target.dataset.trainInclude);
@@ -209,17 +274,23 @@
     if(event.target.checked)excluded.delete(id);
     else excluded.add(id);
     render();
+    $('trainRows').querySelector('[data-train-include="'+id+'"]').focus();
   };
   $('trainMore').onclick=()=>{showAll=!showAll;render();};
   $('trainAppend').onclick=()=>{
     const id=Number($('trainManual').value);
     if(id&&!getPlayer(id).blocked){manual.push(id);render();}
   };
+  $('trainManual').onchange=()=>{$('trainAppend').disabled=!$('trainManual').value;};
   $('trainConductor').onchange=()=>selectConductor(conductor());
   $('trainVip').onchange=()=>{wheelWinner=0;render();};
-  $('trainDay').onchange=()=>{
+  function resetEmailEditor(){
     $('trainEmailEditor').hidden=true;events=[];$('trainNotes').value='';$('trainDraft').value='';
     $('trainDraftField').hidden=true;$('trainDraftActions').hidden=true;
+    message('trainSaveStatus','');
+  }
+  $('trainDay').onchange=()=>{
+    resetEmailEditor();
     if(day())loadGoal();
     loadBoard(true);
   };
@@ -264,29 +335,102 @@
     setTimeout(()=>{
       spin=false;$('trainVip').value=winner;wheelWinner=winner;render();
       for(const input of view.querySelectorAll('[name="trainGoal"],#trainDay,#trainTarget,[data-train-include],#trainMore'))input.disabled=false;
-      message('trainWheelStatus',getPlayer(winner).name+' selected as VIP.');
     },duration*1000);
   };
   $('trainSave').onclick=async()=>{
-    const button=$('trainSave');button.disabled=true;
+    if(saving)return;
+    saving=true;$('trainSave').disabled=true;
     const date=day();
+    message('trainSaveStatus','Saving assignment…');
     try{
       await api('/assignments',json('POST',{day:date,conductor_id:conductor(),vip_id:vip(),goal:goal(),target:target(),wheel_vip:wheelWinner===vip()}));
-      await Promise.all([loadBoard(),loadHistory()]);
-    }catch(error){message('trainStatus',error.message);if(day()===date)render();}
+      if(day()===date){
+        await loadBoard();
+        if(day()===date&&board?.assignment)$('trainOpenEmail').focus();
+      }
+    }catch(error){if(day()===date)message('trainSaveStatus',error.message);}
+    finally{saving=false;if(board&&!loading)render();}
   };
 
   async function loadHistory(older=false){
+    const request=++historyRequest;
+    const button=$('trainOlderHistory');button.disabled=true;
+    message('trainHistoryStatus','Loading assignments…');
     try{
       const before=older&&historyRows.length?'?before='+encodeURIComponent(historyRows.at(-1).assignment_date):'';
-      const {rows,more}=await api('/history'+before);
+      const {rows,more,players}=await api('/history'+before);
+      if(request!==historyRequest)return;
+      if(players)historyPlayers=players;
       historyRows=older?[...historyRows,...rows]:rows;
-      $('trainHistory').innerHTML=historyRows.map(row=>'<tr><td>'+esc(row.assignment_date)+'</td><td>'+esc(row.conductor_name)+'</td><td>'+esc(row.vip_name)+'</td></tr>').join('')||
-        '<tr><td colspan="3">No assignments saved yet.</td></tr>';
-      $('trainOlderHistory').hidden=!more;
-    }catch(error){message('trainStatus',error.message);}
+      $('trainHistory').innerHTML=historyRows.map(row=>'<tr><td>'+esc(row.assignment_date)+'</td><td>'+esc(row.conductor_name)+'</td><td>'+esc(row.vip_name)+'</td>'+
+        '<td><button class="btn smallbtn" type="button" data-history-date="'+esc(row.assignment_date)+'" aria-label="Edit assignment for '+esc(row.assignment_date)+'">Edit</button></td></tr>').join('')||
+        '<tr><td colspan="4">No assignments saved yet.</td></tr>';
+      button.hidden=!more;
+      message('trainHistoryStatus','');
+    }catch(error){if(request===historyRequest)message('trainHistoryStatus',error.message);}
+    finally{if(request===historyRequest)button.disabled=false;}
   }
   $('trainOlderHistory').onclick=()=>loadHistory(true);
+  const historyForm=$('trainHistoryForm');
+  function showHistoryList(){
+    historyForm.hidden=true;
+    $('trainHistoryList').hidden=false;
+  }
+  function openHistory(){
+    showHistoryList();
+    $('trainHistory').replaceChildren();
+    $('trainOlderHistory').hidden=true;
+    historyDialog.showModal();
+    loadHistory();
+  }
+  $('trainEditHistory').onclick=openHistory;
+  $('trainAdminHistory').onclick=openHistory;
+  historyDialog.addEventListener('click',event=>{
+    if(event.target!==historyDialog)return;
+    const bounds=historyDialog.getBoundingClientRect();
+    if(event.clientX<bounds.left||event.clientX>bounds.right||event.clientY<bounds.top||event.clientY>bounds.bottom)historyDialog.close();
+  });
+  $('trainHistory').onclick=event=>{
+    const button=event.target.closest('[data-history-date]');
+    if(!button)return;
+    editingHistory=historyRows.find(row=>row.assignment_date===button.dataset.historyDate);
+    historyForm.elements.day.value=editingHistory.assignment_date;
+    for(const role of ['conductor','vip']){
+      const id=editingHistory[role+'_id'];
+      const players=historyPlayers.some(p=>p.id===id)?historyPlayers:
+        [{id,name:editingHistory[role+'_name']+' (saved player)'},...historyPlayers];
+      historyForm.elements[role+'_id'].innerHTML=players.map(p=>option(p,id)).join('');
+    }
+    message('trainHistoryEditTitle','Edit assignment for '+editingHistory.assignment_date);
+    message('trainHistoryStatus','');
+    $('trainHistoryList').hidden=true;
+    historyForm.hidden=false;
+    historyForm.elements.day.focus();
+  };
+  $('trainHistoryCancel').onclick=()=>{
+    showHistoryList();
+    message('trainHistoryStatus','');
+    $('trainHistory').querySelector('[data-history-date="'+editingHistory.assignment_date+'"]')?.focus();
+  };
+  historyForm.onsubmit=async event=>{
+    event.preventDefault();
+    const original=editingHistory,form=historyForm.elements;
+    const body={day:form.day.value,conductor_id:Number(form.conductor_id.value),vip_id:Number(form.vip_id.value),
+      original_conductor_id:original.conductor_id,original_vip_id:original.vip_id};
+    if(body.conductor_id===body.vip_id){message('trainHistoryStatus','Choose different players for Conductor and VIP.');return;}
+    const submit=historyForm.querySelector('[type="submit"]');submit.disabled=true;
+    try{
+      await api('/history/'+original.assignment_date,json('PUT',body));
+      showHistoryList();
+      await loadHistory();
+      if(!$('trainHistoryStatus').textContent)message('trainHistoryStatus','Assignment updated.');
+      if(!view.hidden){
+        if([original.assignment_date,body.day].includes(day())){resetEmailEditor();await loadBoard();}
+        await loadEmails();
+      }
+    }catch(error){message('trainHistoryStatus',error.message);}
+    finally{submit.disabled=false;}
+  };
 
   function renderEvents(){
     $('trainEventList').innerHTML=events.map((event,index)=>'<li>'+esc(event.name+' · '+event.time+' '+event.zone)+
@@ -460,7 +604,7 @@
     }catch(error){message('trainImportStatus',error.message);}
     finally{button.disabled=false;}
   };
-  function openTrain(){if(!view.hidden&&!loading&&!spin){loadBoard();loadEmails();loadHistory();}}
+  function openTrain(){if(!view.hidden&&!loading&&!spin){loadBoard();loadEmails();}}
   new MutationObserver(openTrain).observe(view,{attributes:true,attributeFilter:['hidden']});
   new MutationObserver(()=>{if(!$('adminView').hidden)loadSettings();}).observe($('adminView'),{attributes:true,attributeFilter:['hidden']});
   if(!$('adminView').hidden)loadSettings();
