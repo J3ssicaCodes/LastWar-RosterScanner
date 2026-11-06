@@ -1,13 +1,14 @@
 from datetime import date
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi import HTTPException
 
 import app
 from player_merge import PlayerMerge, merge_player_records
 from test_player_merge_vs import Cursor, SQLDatabase
+from vs_points import VSClaim, claim_vs_scores, install_vs_points, stage_vs_result
 
 
 class PerformanceDB(SQLDatabase):
@@ -78,6 +79,40 @@ class PerformanceTests(unittest.TestCase):
             merge_player_records(self.db,keep,PlayerMerge(duplicate_id=duplicate,expected_name='DonPepon',expected_duplicate_name='Changed'))
         self.assertEqual(failure.exception.status_code,409)
         self.assertEqual(self.db.db.execute('SELECT COUNT(*) FROM `player list`').fetchone()[0],2)
+
+    def test_claim_moves_unmatched_scores_and_keeps_existing_daily_score(self):
+        keep, other = self.add_players()
+        self.db.db.executemany('INSERT INTO vs_points (score_date,player_id,player_name,normalized_name,points) VALUES (?,?,?,?,?)',[
+            ('2026-11-02',keep,'DonPepon','donpepon',100),
+            ('2026-11-02',None,'DonPepon OCR','donpeponocr',300),
+            ('2026-11-03',None,'DonPepon OCR','donpeponocr',400),
+            ('2026-10-26',None,'DonPepon OCR','donpeponocr',500),
+            ('2026-11-02',None,'ep','ep',600),
+        ])
+        web=Mock()
+        install_vs_points(web,self.db)
+        routes={route.path:route.endpoint for route in web.include_router.call_args.args[0].routes
+                if 'GET' in route.methods}
+        options=routes['/api/vs-points/claims/{player_id}'](keep)['options']
+        self.assertEqual([(row['name_key'],row['score_days']) for row in options],[('donpeponocr',3)])
+        weekly=routes['/api/vs-points/weekly'](date(2026,11,2))['rows']
+        self.assertEqual({row['name']:row['roster_id'] for row in weekly},
+                         {'DonPepon':keep,'DonPepon OCR':None,'ep':other})
+        claim=VSClaim(name_key='donpeponocr',expected_player_name='DonPepon')
+        result=claim_vs_scores(self.db,keep,claim)
+        self.assertEqual(result,{'claimed_name':'DonPepon OCR','score_days':3,'overlapping_vs_scores':1})
+        self.assertEqual([tuple(row) for row in self.db.db.execute(
+            'SELECT player_id,points FROM vs_points WHERE normalized_name=? ORDER BY score_date',('donpepon',))],
+            [(keep,500),(keep,100),(keep,400)])
+        self.assertEqual(routes['/api/vs-points/claims/{player_id}'](keep)['options'],[])
+        self.assertEqual(stage_vs_result(self.db,'later',{'score_date':'2026-11-04','upload_date':'2026-11-05',
+            'weekday':'Wed','rows':[{'name':'DonPepon OCR','points':800,'review_reasons':[]}]}),{'saved':1,'pending':0})
+        with self.assertRaises(HTTPException) as failure:
+            claim_vs_scores(self.db,keep,claim)
+        self.assertEqual(failure.exception.status_code,409)
+        with self.assertRaises(HTTPException) as failure:
+            claim_vs_scores(self.db,keep,VSClaim(name_key='ep',expected_player_name='DonPepon'))
+        self.assertEqual(failure.exception.status_code,409)
 
     def test_dashboard_distinguishes_zero_missing_and_comparable_weekdays(self):
         keep, duplicate = self.add_players()

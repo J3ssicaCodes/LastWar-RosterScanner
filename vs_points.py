@@ -1,6 +1,7 @@
 """Persistent VS daily scores and review, keyed by player and earned date."""
 from datetime import date, timedelta
 from collections import defaultdict
+from difflib import SequenceMatcher
 import csv
 import io
 import json
@@ -14,6 +15,7 @@ from player_identity import (match_master, name_key, learn_name_correction, exac
                              corrected_name, load_name_corrections, scan_player_ids, record_scan_players,
                              number_needs_review, NUMBER_REVIEW_PREFIX)
 from vs_points_ocr import roster_portrait_match, score_date_for_day
+from player_merge import merge_vs_rows
 
 
 class VSRow(BaseModel):
@@ -29,6 +31,62 @@ class VSApproval(BaseModel):
     job_id: str
     score_date: date
     rows: list[VSRow] = Field(min_length=1,max_length=200)
+
+
+class VSClaim(BaseModel):
+    name_key: str = Field(min_length=1,max_length=255)
+    expected_player_name: str
+
+
+def claimable_vs_names(connect_db, player_id):
+    with connect_db() as conn, conn.cursor() as cur:
+        cur.execute('SELECT player_name FROM `player list` WHERE id=%s',(player_id,))
+        player = cur.fetchone()
+        if not player:
+            raise HTTPException(404,detail='Player not found.')
+        cur.execute("""SELECT v.normalized_name AS name_key,MAX(v.player_name) AS name,COUNT(*) AS score_days
+                       FROM vs_points v
+                       LEFT JOIN `player list` linked ON linked.id=v.player_id
+                       LEFT JOIN `player list` named ON named.normalized_name=v.normalized_name
+                       WHERE linked.id IS NULL AND named.id IS NULL GROUP BY v.normalized_name""")
+        options = cur.fetchall()
+    key = name_key(player['player_name'])
+    return sorted(options,key=lambda row: (-SequenceMatcher(None,key,row['name_key']).ratio(),row['name'].casefold()))
+
+
+def claim_vs_scores(connect_db, player_id, body):
+    source_key = name_key(body.name_key)
+    with connect_db() as conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute('SELECT id,player_name,normalized_name FROM `player list` ORDER BY id FOR UPDATE')
+                players = cur.fetchall()
+                target = next((p for p in players if p['id']==player_id),None)
+                if not target or target['player_name'] != body.expected_player_name:
+                    raise HTTPException(409,detail='The player changed. Reopen the profile and try again.')
+                if any(p['normalized_name']==source_key for p in players):
+                    raise HTTPException(409,detail='That name belongs to a player. Use Merge duplicate in the player profile.')
+                cur.execute("""SELECT id,score_date,player_id,normalized_name,player_name FROM vs_points
+                               WHERE player_id=%s OR normalized_name IN (%s,%s)
+                               ORDER BY score_date,id FOR UPDATE""",
+                            (player_id,target['normalized_name'],source_key))
+                rows = cur.fetchall()
+                roster_ids = {p['id'] for p in players}
+                if any(r['player_id'] in roster_ids and r['player_id']!=player_id for r in rows):
+                    raise HTTPException(409,detail='A VS score is linked to another player. Refresh and check the selected name.')
+                source = [r for r in rows if r['normalized_name']==source_key and r['player_id']!=player_id]
+                if not source:
+                    raise HTTPException(409,detail='This VS name has already been claimed or removed. Refresh and try again.')
+                target_name = target['player_name']
+                overlapping = merge_vs_rows(cur,rows,player_id,target_name)
+                learn_name_correction(cur,source[0]['player_name'],target_name)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return {'claimed_name':source[0]['player_name'],'score_days':len(source),
+            'overlapping_vs_scores':overlapping}
+
 
 
 def upsert_vs_score(cursor, date, player_id, name, points, job_id):
@@ -53,9 +111,9 @@ def stage_vs_result(connect_db, job_id, result):
     with connect_db() as conn:
         try:
             with conn.cursor() as cur:
-                updated=scan_player_ids(cur,job_id,lock=True)
-                cur.execute('SELECT id,player_name FROM `player list`')
+                cur.execute('SELECT id,player_name FROM `player list` ORDER BY id FOR UPDATE')
                 master = exact_player_index(cur.fetchall())
+                updated=scan_player_ids(cur,job_id,lock=True)
                 corrections = load_name_corrections(cur)
                 portraits = None
                 candidates = []
@@ -171,9 +229,12 @@ def install_vs_points(app, connect_db):
                 cur.execute('SELECT DISTINCT score_date FROM vs_points')
                 dates = [row['score_date'] for row in cur.fetchall()]
                 cur.execute('''SELECT v.score_date,v.points,
-                    COALESCE(p.player_name,v.player_name) AS name,
-                    COALESCE(p.normalized_name,v.normalized_name) AS player_key
-                    FROM vs_points v LEFT JOIN `player list` p ON p.id=v.player_id
+                    COALESCE(linked.player_name,named.player_name,v.player_name) AS name,
+                    COALESCE(linked.normalized_name,named.normalized_name,v.normalized_name) AS player_key,
+                    COALESCE(linked.id,named.id) AS roster_id
+                    FROM vs_points v
+                    LEFT JOIN `player list` linked ON linked.id=v.player_id
+                    LEFT JOIN `player list` named ON named.normalized_name=v.normalized_name
                     WHERE v.score_date BETWEEN %s AND %s
                     ORDER BY v.player_id IS NULL,v.updated_at DESC''',(days[0],days[-1]))
                 rows = cur.fetchall()
@@ -191,6 +252,14 @@ def install_vs_points(app, connect_db):
         buf=io.StringIO();writer=csv.writer(buf);writer.writerow(['Date','Player Name','VS Points'])
         for row in result['rows']:writer.writerow([row['score_date'],row['name'],row['points']])
         return Response(buf.getvalue(),media_type='text/csv',headers={'Content-Disposition':'attachment; filename="vs_points.csv"'})
+
+    @router.get('/claims/{player_id}')
+    def list_claims(player_id: int):
+        return {'options':claimable_vs_names(connect_db,player_id)}
+
+    @router.post('/claims/{player_id}')
+    def claim_scores(player_id: int, body: VSClaim):
+        return claim_vs_scores(connect_db,player_id,body)
 
     @router.get('/pending')
     def pending_scores():
@@ -217,6 +286,10 @@ def install_vs_points(app, connect_db):
         with connect_db() as conn:
             try:
                 with conn.cursor() as cur:
+                    cur.execute('SELECT id,player_name,player_rank,normalized_name FROM `player list` ORDER BY id FOR UPDATE')
+                    master=cur.fetchall()
+                    exact=exact_player_index(master)
+                    corrections=load_name_corrections(cur)
                     marks=','.join(['%s']*len(ids))
                     cur.execute(f'SELECT id,upload_date,COALESCE(ocr_name,player_name) AS original_name,review_reasons FROM vs_scan_rows WHERE job_id=%s AND id IN ({marks}) FOR UPDATE', (body.job_id,*ids))
                     staged=cur.fetchall()
@@ -228,16 +301,14 @@ def install_vs_points(app, connect_db):
                         if not monday<=body.score_date<=min(saturday,source['upload_date']):
                             raise HTTPException(400,detail='Choose an elapsed day, Monday through Saturday, in this upload’s game week.')
                     updated=vs_scan_player_ids(cur,body.job_id,lock=True)
-                    cur.execute('SELECT id,player_name,player_rank,normalized_name FROM `player list`')
-                    master=cur.fetchall()
-                    exact=exact_player_index(master)
                     seen=set()
                     saved_ids=set()
                     for row in selected:
                         source=staged_by_id[row.id]
                         if number_needs_review(json.loads(source['review_reasons'] or '[]')) and (body.auto_match or not row.number_checked):
                             raise HTTPException(422,detail='Compare the score with the capture and mark it checked before saving.')
-                        player=exact.get(name_key(row.name)) if body.auto_match else match_master({'name':row.name},master)
+                        resolved=corrected_name(row.name,corrections,exact.keys())
+                        player=exact.get(name_key(row.name)) if body.auto_match else match_master({'name':resolved},master)
                         if body.auto_match:
                             if not player:
                                 raise HTTPException(409,detail='Choose an exact name from the Player List.')

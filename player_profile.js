@@ -9,6 +9,8 @@
     #plDirectoryBody tr[data-player-profile]{cursor:pointer}
     #plDirectoryBody tr[data-player-profile]:hover,#plDirectoryBody tr[data-player-profile]:focus-within{background:var(--panel2)}
     #plDirectoryBody button[data-player-profile]{background:none;border:0;box-shadow:none;padding:0;color:inherit;font:inherit;text-align:left}
+    .player-profile-link{border:0;background:none;color:inherit;font:inherit;font-weight:inherit;text-align:left;padding:0;cursor:pointer}
+    .player-profile-link:hover,.player-profile-link:focus-visible{text-decoration:underline}
     .player-merge-panel{margin:12px 0;padding:12px;border:1px solid var(--stroke);border-radius:10px}
     .player-merge-panel select{display:block;max-width:100%;margin:8px 0}
     .player-merge-panel [data-merge-preview]:not([hidden]){display:flex;align-items:center;gap:8px;margin:10px 0}
@@ -84,10 +86,11 @@
         ['Kills',number(p.kills)],['Donations',number(p.donations)],['HQ',number(p.hq_level)],
         ['Birthday',p.birthday||'—'],['Last seen',p.last_seen_at?new Date(p.last_seen_at+'Z').toLocaleDateString():'—']
       ].map(([label,value])=>'<dt>'+label+'</dt><dd style="margin:0">'+esc(value)+'</dd>').join('')+'</dl>'+
-      (edit?'':'<button type="button" class="btn" data-merge>Merge duplicate</button><p data-merge-message role="status" hidden></p>')+
+      (edit?'':'<button type="button" class="btn" data-merge>Merge duplicate</button> <button type="button" class="btn" data-claim-vs>Claim VS entry</button><p data-merge-message role="status" hidden></p>')+
       '<section class="profile-history" data-history></section>';
     renderHistory();
     dialog.querySelector('[data-merge]')?.addEventListener('click',openMerge);
+    dialog.querySelector('[data-claim-vs]')?.addEventListener('click',openVSClaim);
     dialog.querySelector('[data-close]').onclick=()=>dialog.close();
     dialog.querySelector('[data-edit]')?.addEventListener('click',()=>{
       render(true);
@@ -113,6 +116,7 @@
     });
   }
   function openMerge(event){
+    dialog.querySelector('[data-claim-vs]').disabled=true;
     const keep=player;
     const candidates=roster.filter(p=>p.id!==keep.id).sort((a,b)=>a.name.localeCompare(b.name));
     const form=document.createElement('form');
@@ -157,6 +161,53 @@
     };
     select.focus();
   }
+  async function openVSClaim(event){
+    dialog.querySelector('[data-merge]').disabled=true;
+    const keep=player;
+    const button=event.currentTarget;
+    const form=document.createElement('form');
+    form.className='player-merge-panel';
+    form.innerHTML='<h3>Claim VS scores for '+esc(keep.name)+'</h3>'+
+      '<label>Unmatched VS name <select name="claim" required disabled><option value="">Loading names…</option></select></label>'+
+      '<p>All saved dates under the selected name will move here. Where both names have a score on the same day, this player’s score takes priority.</p>'+
+      '<button type="submit" class="btn primary" disabled>Confirm VS claim</button> <button type="button" class="btn" data-claim-cancel>Cancel</button>'+
+      '<p data-claim-status role="status"></p>';
+    button.replaceWith(form);
+    const select=form.elements.claim,submit=form.querySelector('[type="submit"]');
+    const status=form.querySelector('[data-claim-status]');
+    const endpoint='/api/vs-points/claims/'+keep.id;
+    form.querySelector('[data-claim-cancel]').onclick=()=>{render();dialog.querySelector('[data-claim-vs]').focus();};
+    select.onchange=()=>{submit.disabled=!select.value;};
+    try{
+      const response=await fetch(endpoint,{cache:'no-store'});
+      if(!response.ok)throw Error('Could not load unmatched VS names.');
+      const {options}=await response.json();
+      if(!form.isConnected||!dialog.open)return;
+      select.innerHTML='<option value="">'+(options.length?'Choose a VS name…':'No unmatched VS names')+'</option>'+
+        options.map(row=>'<option value="'+esc(row.name_key)+'">'+esc(row.name)+' · '+row.score_days+' day'+(row.score_days===1?'':'s')+'</option>').join('');
+      select.disabled=!options.length;
+      if(options.length)select.focus();
+    }catch(error){if(form.isConnected)status.textContent=error.message;}
+    form.onsubmit=async event=>{
+      event.preventDefault();
+      if(!select.value||submit.disabled)return;
+      submit.disabled=true;select.disabled=true;status.textContent='Claiming VS scores…';
+      try{
+        const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({name_key:select.value,expected_player_name:keep.name})});
+        const result=await response.json();
+        if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'Could not claim these VS scores.');
+        if(form.isConnected&&dialog.open){
+          const overlap=result.overlapping_vs_scores;
+          await openProfile(keep.id,'Claimed '+result.claimed_name+' for '+keep.name+'.'+
+            (overlap?' Kept the existing score on '+overlap+' overlapping date'+(overlap===1?'':'s')+'.':''));
+        }
+        window.vsPointsRefresh?.();
+        window.dispatchEvent(new Event('player-profile-updated'));
+      }catch(error){if(form.isConnected)status.textContent=error.message;}
+      finally{if(form.isConnected){submit.disabled=false;select.disabled=false;}}
+    };
+  }
   dialog.addEventListener('click',event=>{const r=dialog.getBoundingClientRect();if(event.target===dialog&&(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom))dialog.close();});
   async function openProfile(id,notice=''){
     const current=++request;history=null;dialog.innerHTML='<p role="status">Loading player…</p>';if(!dialog.open)dialog.showModal();
@@ -177,6 +228,10 @@
       }
     }catch(err){if(current===request&&dialog.open)dialog.textContent=err.message;}
   }
+  document.addEventListener('click',event=>{
+    const link=event.target.closest('[data-open-player-profile]');
+    if(link)openProfile(Number(link.dataset.openPlayerProfile));
+  });
   directory.addEventListener('click',event=>{
     if(event.target.closest('[data-player-birthday]'))return;
     const row=event.target.closest('tr[data-player-profile]');

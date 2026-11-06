@@ -14,6 +14,27 @@ class PlayerMerge(BaseModel):
     expected_duplicate_name: str
 
 
+def merge_vs_rows(cursor, scores, keep_id, keep, duplicate_id=None):
+    """Consolidate locked score rows, preferring the retained player's score."""
+    keep_key = name_key(keep)
+    ordered = sorted(scores, key=lambda row: (
+        row['player_id'] != keep_id,
+        row['normalized_name'] != keep_key,
+        row['player_id'] != duplicate_id,
+        row['id'],
+    ))
+    by_day, redundant = {}, []
+    for row in ordered:
+        if row['score_date'] in by_day:
+            redundant.append(row['id'])
+        else:
+            by_day[row['score_date']] = row['id']
+    cursor.executemany('DELETE FROM vs_points WHERE id=%s', [(id_,) for id_ in redundant])
+    cursor.executemany('UPDATE vs_points SET player_id=%s,player_name=%s,normalized_name=%s WHERE id=%s',
+                       [(keep_id,keep,keep_key,id_) for id_ in by_day.values()])
+    return len(redundant)
+
+
 def merge_player_records(connect_db, keep_id, body):
     if keep_id == body.duplicate_id:
         raise HTTPException(422, detail='Choose two different players.')
@@ -39,22 +60,7 @@ def merge_player_records(connect_db, keep_id, body):
                                WHERE player_id IN (%s,%s) OR
                                    (player_id IS NULL AND normalized_name IN (%s,%s))
                                ORDER BY score_date,id FOR UPDATE""", (*ids,keep_key,duplicate_key))
-                scores = sorted(cur.fetchall(), key=lambda row: (
-                    row['player_id'] != keep_id,
-                    row['normalized_name'] != keep_key,
-                    row['player_id'] != body.duplicate_id,
-                    row['id'],
-                ))
-                by_day = {}
-                redundant = []
-                for row in scores:
-                    if row['score_date'] in by_day:
-                        redundant.append(row['id'])
-                    else:
-                        by_day[row['score_date']] = row['id']
-                cur.executemany('DELETE FROM vs_points WHERE id=%s', [(id_,) for id_ in redundant])
-                cur.executemany('UPDATE vs_points SET player_id=%s,player_name=%s,normalized_name=%s WHERE id=%s',
-                                [(keep_id,keep,keep_key,id_) for id_ in by_day.values()])
+                overlapping = merge_vs_rows(cur, cur.fetchall(), keep_id, keep, body.duplicate_id)
 
                 cur.execute("""SELECT player_id,import_id FROM player_stat_history
                                WHERE player_id IN (%s,%s) FOR UPDATE""", ids)
@@ -96,4 +102,4 @@ def merge_player_records(connect_db, keep_id, body):
         except Exception:
             conn.rollback()
             raise
-    return {'id':keep_id,'name':keep,'merged_name':duplicate,'overlapping_vs_scores':len(redundant)}
+    return {'id':keep_id,'name':keep,'merged_name':duplicate,'overlapping_vs_scores':overlapping}

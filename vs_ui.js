@@ -3,6 +3,9 @@
   'use strict';
   const $=id=>document.getElementById(id);
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const style=document.createElement('style');
+  style.textContent='#vsRows .vs-unmatched{color:var(--red);color:color-mix(in srgb,var(--red) 80%,var(--text))}';
+  document.head.append(style);
   let saved=[],pending=[],days=[],weekRequest=0;
   const localDate=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),
     String(d.getDate()).padStart(2,'0')].join('-');
@@ -25,18 +28,23 @@
     const query=$('vsSearch').value.trim().toLocaleLowerCase();
     const players=new Map();
     for(const row of saved){
-      if(!players.has(row.player_key))players.set(row.player_key,{name:row.name,scores:new Map()});
+      if(!players.has(row.player_key))players.set(row.player_key,{name:row.name,rosterId:row.roster_id,scores:new Map()});
       const player=players.get(row.player_key);
+      player.rosterId??=row.roster_id;
       if(!player.scores.has(row.score_date))player.scores.set(row.score_date,BigInt(row.points));
     }
     const rows=sortScores([...players.values()]
       .filter(row=>row.name.toLocaleLowerCase().includes(query))
       .map(row=>({...row,total:[...row.scores.values()].reduce((sum,value)=>sum+value,0n)})),
       (row,key)=>key==null?row.total:key==='name'||key==='total'?row[key]:row.scores.get(days[Number(key)]));
-    $('vsRows').innerHTML=rows.map(row=>'<tr><th scope="row">'+esc(row.name)+'</th>'+
+    $('vsRows').innerHTML=rows.map(row=>'<tr><th scope="row">'+(row.rosterId?
+      '<button type="button" class="player-profile-link" data-open-player-profile="'+Number(row.rosterId)+'">'+esc(row.name)+'</button>':
+      '<span class="vs-unmatched" title="Not on the Player List">'+esc(row.name)+'<span class="sr-only"> (not on the Player List)</span></span>')+'</th>'+
       days.map(day=>'<td>'+(row.scores.has(day)?row.scores.get(day).toLocaleString():'—')+'</td>').join('')+
       '<td>'+row.total.toLocaleString()+'</td></tr>').join('')||'<tr><td colspan="8">No scores for this week.</td></tr>';
-    $('vsSummary').textContent=rows.length+' players · '+rows.reduce((sum,row)=>sum+row.total,0n).toLocaleString()+' points shown';
+    const unmatched=rows.filter(row=>!row.rosterId).length;
+    $('vsSummary').textContent=rows.length+' players · '+rows.reduce((sum,row)=>sum+row.total,0n).toLocaleString()+' points shown'+
+      (unmatched?' · '+unmatched+' unmatched '+(unmatched===1?'name':'names')+' in red':'');
     $('vsExport').href='/api/vs-points/export.csv?week_start='+encodeURIComponent(selectedWeek);
   }
   async function load(){

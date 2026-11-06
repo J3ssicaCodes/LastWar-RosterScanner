@@ -64,7 +64,7 @@
       return value==null?null:BigInt(value);
     });
     const captured=model.daily.filter(day=>day.players).length;
-    $('performanceRows').innerHTML=rows.map(p=>'<tr><th scope="row">'+esc(p.name)+'</th><td>'+esc(p.rank)+'</td>'+
+    $('performanceRows').innerHTML=rows.map(p=>'<tr><th scope="row"><button type="button" class="player-profile-link" data-open-player-profile="'+p.id+'">'+esc(p.name)+'</button></th><td>'+esc(p.rank)+'</td>'+
       '<td>'+(p.vs_points==null?'<span class="performance-missing">—</span>':count(p.vs_points))+'</td>'+
       '<td>'+p.days_recorded+' / '+captured+'</td><td>'+change(p.vs_change)+
       (p.days_compared?'<small class="performance-bar-detail">'+p.days_compared+' comparable days</small>':'')+'</td>'+
