@@ -278,7 +278,7 @@ class VSDateAndPersistenceTests(unittest.TestCase):
                 {'name':'Someone New','points':100,'review_reasons':[]},
                 {'name':'Lady Jess','points':None,'review_reasons':[]},
             ]})
-        self.assertEqual(result,{'saved':2,'pending':2})
+        self.assertEqual(result,{'saved':2,'pending':2,'skipped':0})
         rows=db.db.execute('SELECT player_name,score_date,points FROM vs_points ORDER BY id')
         self.assertEqual([tuple(r) for r in rows],[('Lady Jess','2026-11-04',13624900),('Other Player','2026-11-04',0)])
         rows=db.db.execute('SELECT player_name,upload_date,points FROM vs_scan_rows ORDER BY id')
@@ -292,7 +292,7 @@ class VSDateAndPersistenceTests(unittest.TestCase):
                 {'name':'Lady Jess','points':100,'review_reasons':[]},
                 {'name':'Lady Jess','points':200,'review_reasons':[]},
             ]})
-        self.assertEqual(result,{'saved':0,'pending':2})
+        self.assertEqual(result,{'saved':0,'pending':2,'skipped':0})
         self.assertEqual(db.db.execute('SELECT count(*) FROM vs_points').fetchone()[0],0)
 
     def test_flagged_number_requires_explicit_verification(self):
@@ -304,7 +304,7 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         result=stage_vs_result(db,'job',{'score_date':'2026-11-04','upload_date':'2026-11-05',
             'weekday':'Wed','rows':[{'name':'Lady Jess','points':123,
                 'review_reasons':['Number needs verification: frame readings were 123 / 124 / 124.']}]})
-        self.assertEqual(result,{'saved':0,'pending':1})
+        self.assertEqual(result,{'saved':0,'pending':1,'skipped':0})
         row={'id':1,'name':'Lady Jess','points':124}
         for auto in (True,False):
             with self.assertRaises(HTTPException) as failure:

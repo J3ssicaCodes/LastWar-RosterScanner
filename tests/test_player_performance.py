@@ -106,13 +106,36 @@ class PerformanceTests(unittest.TestCase):
             [(keep,500),(keep,100),(keep,400)])
         self.assertEqual(routes['/api/vs-points/claims/{player_id}'](keep)['options'],[])
         self.assertEqual(stage_vs_result(self.db,'later',{'score_date':'2026-11-04','upload_date':'2026-11-05',
-            'weekday':'Wed','rows':[{'name':'DonPepon OCR','points':800,'review_reasons':[]}]}),{'saved':1,'pending':0})
+            'weekday':'Wed','rows':[{'name':'DonPepon OCR','points':800,'review_reasons':[]}]}),{'saved':1,'pending':0,'skipped':0})
         with self.assertRaises(HTTPException) as failure:
             claim_vs_scores(self.db,keep,claim)
         self.assertEqual(failure.exception.status_code,409)
         with self.assertRaises(HTTPException) as failure:
             claim_vs_scores(self.db,keep,VSClaim(name_key='ep',expected_player_name='DonPepon'))
         self.assertEqual(failure.exception.status_code,409)
+
+    def test_repeat_upload_skips_flagged_rows_matching_saved_readings(self):
+        keep, other = self.add_players()
+        self.db.db.executemany('INSERT INTO vs_points (score_date,player_id,player_name,normalized_name,points) VALUES (?,?,?,?,?)',[
+            ('2026-11-02',keep,'DonPepon','donpepon',100),
+            ('2026-11-02',other,'ep','ep',200),
+        ])
+        self.db.db.execute("INSERT INTO media_scan_jobs (id,updated_player_ids) VALUES ('repeat','[]')")
+        rows = [
+            {'name':'DonPepon','points':111,'point_readings':[100,111],'review_reasons':['Check points']},
+            {'name':'Unknown','name_readings':['ep'],'points':222,'point_readings':[200,222],'review_reasons':['Check points']},
+            {'name':'DonPepon','points':130,'point_readings':[130],'review_reasons':[]},
+            {'name':'ep','points':203,'point_readings':[203,204],'review_reasons':['Check points']},
+            {'name':'Other OCR','name_readings':['donpepon','ep'],'points':200,'review_reasons':['Check points']},
+        ]
+        result=stage_vs_result(self.db,'repeat',{'score_date':'2026-11-02','upload_date':'2026-11-05','weekday':'Mon','rows':rows})
+        self.assertEqual(result,{'saved':1,'pending':2,'skipped':2})
+        self.assertEqual([tuple(row) for row in self.db.db.execute('SELECT player_id,points FROM vs_points ORDER BY player_id')],
+                         [(keep,130),(other,200)])
+        self.assertEqual([row[0] for row in self.db.db.execute('SELECT player_name FROM vs_scan_rows ORDER BY id')],
+                         ['ep','Other OCR'])
+        self.assertEqual(json.loads(self.db.db.execute('SELECT updated_player_ids FROM media_scan_jobs').fetchone()[0]),
+                         [keep,other])
 
     def test_dashboard_distinguishes_zero_missing_and_comparable_weekdays(self):
         keep, duplicate = self.add_players()

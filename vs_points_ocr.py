@@ -16,6 +16,7 @@ from player_identity import corrected_name, compact_key, name_key, NUMBER_REVIEW
 from vs_rank_reader import read_rank
 
 DAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
+VIDEO_EXTENSIONS = {'.mp4', '.mov', '.m4v', '.webm'}
 
 
 def score_date_for_day(upload_date: date, day: int) -> date:
@@ -174,7 +175,7 @@ def roster_portrait_match(row, name, portraits):
 
 
 def read_page(image, page, period, upper, targets=None, anchors=None, *, resolve=str, master_keys=None,
-              gap_neighbors=None):
+              gap_neighbors=None, missing_names=None, protected_positions=()):
     h,w=image.shape[:2]; scale=w/1080
     bottom=pinned_top(image)
     rows=[]
@@ -226,10 +227,14 @@ def read_page(image, page, period, upper, targets=None, anchors=None, *, resolve
                        and cv2.absdiff(signature_at(center), neighbor['signature']).mean() < 12
                        for center,neighbor in zip((before,after),gap_neighbors)):
                 continue
+        if missing_names is not None and (position is None or pc < 70 or position in protected_positions):
+            continue
         name_crop=crop(350,808,-50,-8)
         check_name=anchor is None or anchor.get('check_name',True)
         name,nc=read_player_name(name_crop,resolve,master_keys) if check_name else ('',0)
         name=re.sub(r'\s+',' ',name).strip()
+        if missing_names is not None and (nc < 55 or name_key(resolve(name)) not in missing_names):
+            continue
         val,vc=read_score(crop(750,1035,-25,44))
         ok=ok_avatar=False
         if anchors is None:
@@ -335,9 +340,10 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
                     row.setdefault('neighbor_conflicts',[]).append(
                         f"{NUMBER_REVIEW_PREFIX} frame readings were {' / '.join(readings)}.")
                 views = [view for view in views if view]
+                keys = [name_key(resolve(view.get('name',''))) for view in views]
+                row['name_readings'] = sorted(set(keys)-{''})
                 if len(views) < 3 or not row['check_name']:
                     continue
-                keys = [name_key(resolve(view['name'])) for view in views]
                 votes = Counter(key for key in keys if key)
                 if not votes:
                     continue
@@ -385,16 +391,102 @@ def include_readable_opening(path, detection):
     return detection
 
 
-def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_keys=None):
+def missing_player_frames(detection, used_frames):
+    """Sample the edges of pauses and the scrolls between them once."""
+    _, count, _, _, pauses = detection
+    frames = {0, count-1}
+    for start,end in pauses:
+        frames.add((start+3*end)//4)
+    for (_,end),(start,_) in zip(pauses,pauses[1:]):
+        if start > end+1:
+            frames.add((end+start)//2)
+    return sorted(frame for frame in frames-used_frames if 0 <= frame < count)
+
+
+def recheck_missing_players(observations, variants, score_variants, page_sources,
+                            videos, roster_keys, master_keys, resolve, day, progress):
+    known_by_position = {position:name_key(resolve(row['name'])) for position,row in observations.items()}
+    missing = roster_keys-set(known_by_position.values())
+    if not missing or not videos:
+        return 0, 0
+
+    checked = len(missing)
+    found = 0
+    protected = {pos for pos,key in known_by_position.items() if key in master_keys}
+    used = defaultdict(set)
+    for path,frame in page_sources.values():
+        used[path].add(frame)
+    page = min([0,*page_sources])-1
+    progress(95,100,f'Rechecking the video once for {checked} missing roster players…')
+    for path,detection in videos:
+        if not missing:
+            break
+        cap = cv2.VideoCapture(str(path))
+        try:
+            for frame in missing_player_frames(detection,used[path]):
+                if not missing:
+                    break
+                if not cap.set(cv2.CAP_PROP_POS_FRAMES,frame):
+                    continue
+                ok,image = cap.read()
+                if not ok:
+                    continue
+                try:
+                    if selected_weekday(image,False) != day:
+                        continue
+                except ValueError:
+                    continue
+                try:
+                    period = estimate_row_height(image)
+                except ValueError:
+                    period = 189*image.shape[1]/1080
+                candidates = read_page(image,page,period,round(.225*image.shape[0]),
+                                       resolve=resolve,master_keys=master_keys,
+                                       missing_names=missing,protected_positions=protected)
+                for row in candidates:
+                    position = row['position_read']
+                    key = name_key(resolve(row['name']))
+                    known_alternates = variants.get(position,set()) & master_keys
+                    if position in protected or key not in missing or known_alternates-{key}:
+                        continue
+                    old = observations.get(position)
+                    if old and cv2.absdiff(old['signature'],row['signature']).mean() >= 18:
+                        # A disputed rank must not replace a different visible player.
+                        continue
+                    variants[position] = {key}
+                    for view in (old,row):
+                        if view and view['value'].isdigit():
+                            score_variants.setdefault(position,set()).add(int(view['value']))
+                    if old and old['value'].isdigit():
+                        # Keep the original frame and score when only the name
+                        # was missing; its score still gets the normal cross-check.
+                        old['name'], old['name_conf'] = row['name'], row['name_conf']
+                    else:
+                        row['internal_position'] = position
+                        observations[position] = row
+                        page_sources[page] = (path,frame)
+                    protected.add(position)
+                    missing.remove(key)
+                    found += 1
+                page -= 1
+        finally:
+            cap.release()
+    return checked, found
+
+
+
+def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_keys=None, *, recheck_keys=None):
     corrections = corrections or {}
     resolve = lambda name: corrected_name(name, corrections, master_keys or set())
     observations={}; days=set(); total_pages=0; page_sources={}; recovered=[]; variants={}; score_variants={}
+    videos = []
     with tempfile.TemporaryDirectory(prefix='vs_pages_',dir=str(Path(paths[0]).parent)) as tmp:
         for index,path in enumerate(paths):
             path=Path(path)
-            if path.suffix.lower() in ('.mp4','.mov','.m4v','.webm'):
-                info=detect(path,progress=progress)
-                manifest=extract(path,Path(tmp)/str(index),*include_readable_opening(path,info))
+            if path.suffix.lower() in VIDEO_EXTENSIONS:
+                info=include_readable_opening(path,detect(path,progress=progress))
+                manifest=extract(path,Path(tmp)/str(index),*info)
+                videos.append((path,info))
                 pages=[Path(tmp)/str(index)/p['image'] for p in manifest['kept']]
             else:
                 pages=[path]
@@ -422,7 +514,7 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
                     row['internal_position']=position
                     if old is None or row['name_conf']+row['value_conf']>old['name_conf']+old['value_conf']:
                         observations[position]=row
-                if path.suffix.lower() in ('.mp4','.mov','.m4v','.webm'):
+                if path.suffix.lower() in VIDEO_EXTENSIONS:
                     page_sources[total_pages+1]=(path,manifest['kept'][number-1]['frame'])
                 total_pages+=1
                 progress(28+round(65*number/len(pages)),100,f'Reading VS page {number}/{len(pages)} · {len(observations)} scores')
@@ -447,11 +539,18 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
                         recovered.append(gap)
                         break
             finally:cap.release()
+        rechecked, found = recheck_missing_players(
+            observations, variants, score_variants, page_sources, videos,
+            (master_keys or set()) if recheck_keys is None else recheck_keys,
+            master_keys or set(), resolve, next(iter(days)), progress)
         reasons = review_flags(observations, variants, score_variants, resolve, master_keys)
         name_warnings = {pos: any('name' in flag.lower() for flag in flags) for pos,flags in reasons.items()}
         confirmed = recheck_neighbors(
             observations, page_sources, name_warnings, resolve, progress,
             lambda image,anchors: read_vs_neighbor(image,anchors,next(iter(days)),resolve,master_keys))
+        for position,row in observations.items():
+            row['name_readings'] = sorted(set(row.get('name_readings',[])) | variants.get(position,set()))
+            row['point_readings'] = sorted(set(row.get('point_readings',[])) | score_variants.get(position,set()))
         for position, fields in confirmed.items():
             if 'name' in fields:
                 variants.pop(position,None)
@@ -478,4 +577,5 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
                      'review_reasons':reasons[pos],'score_date':earned.isoformat()})
     return {'rows':rows,'weekday':DAYS[day],'score_date':earned.isoformat(),
             'upload_date':upload_date.isoformat(),'pages':total_pages,'recovered_positions':recovered,
+            'rechecked_missing_players':rechecked,'found_missing_players':found,
             'missing_positions':[p for p in range(1,max(observations)+1) if p not in observations]}

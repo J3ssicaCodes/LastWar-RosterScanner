@@ -232,17 +232,25 @@ def install_media_upload(app, connect_db, import_players, import_model):
             with connect_db() as conn:
                 with conn.cursor() as cur:
                     corrections = load_name_corrections(cur)
-                    cur.execute('SELECT player_name FROM `player list`')
-                    master_keys = {name_key(row['player_name']) for row in cur.fetchall()}
+                    cur.execute('SELECT player_name,possibly_removed FROM `player list`')
+                    roster = cur.fetchall()
+                    master_keys = {name_key(row['player_name']) for row in roster}
             if destination == 'vs':
                 if upload_date is None:raise ValueError('Upload date is missing. Select the file again.')
-                result=scan_vs_upload(paths,report,upload_date,corrections,master_keys)
+                recheck_keys = {name_key(row['player_name']) for row in roster if not row['possibly_removed']}
+                result=scan_vs_upload(paths,report,upload_date,corrections,master_keys,recheck_keys=recheck_keys)
                 recheck_vs_rows(result,os.getenv('GOOGLE_VISION_API_KEY'),connect_db,corrections,master_keys,report)
                 counts=stage_vs_result(connect_db,job_id,result)
                 saved,pending=counts['saved'],counts['pending']
                 gaps = result.get('missing_positions', [])
                 coverage = f" · {len(gaps)} ranks not captured" if gaps else ''
-                set_job(job_id,status='review' if pending else 'ready',progress=100,count=saved+pending,
+                skipped = counts['skipped']
+                if skipped:
+                    coverage += f" · {skipped} unchanged"
+                found = result.get('found_missing_players',0)
+                if found:
+                    coverage += f" · {found} found on recheck"
+                set_job(job_id,status='review' if pending else 'ready',progress=100,count=saved+pending+skipped,
                         message=f"{result['weekday']} · {result['score_date']} · {saved} VS scores saved · {pending} to review{coverage}")
                 finished_successfully=True
                 return

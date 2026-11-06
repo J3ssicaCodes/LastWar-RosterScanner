@@ -107,7 +107,7 @@ def vs_scan_player_ids(cursor, job_id, lock=False):
 
 
 def stage_vs_result(connect_db, job_id, result):
-    saved = pending = 0
+    saved = pending = skipped = 0
     with connect_db() as conn:
         try:
             with conn.cursor() as cur:
@@ -115,13 +115,27 @@ def stage_vs_result(connect_db, job_id, result):
                 master = exact_player_index(cur.fetchall())
                 updated=scan_player_ids(cur,job_id,lock=True)
                 corrections = load_name_corrections(cur)
+                cur.execute("""SELECT player_id,normalized_name,points FROM vs_points
+                               WHERE score_date=%s ORDER BY player_id IS NULL,id FOR UPDATE""",
+                            (result['score_date'],))
+                existing_scores = {}
+                roster_ids = {player['id'] for player in master.values() if player}
+                for entry in cur.fetchall():
+                    pid = entry['player_id']
+                    if pid not in roster_ids:
+                        known = master.get(entry['normalized_name'])
+                        if not known:
+                            continue
+                        pid = known['id']
+                    existing_scores.setdefault(pid,int(entry['points']))
                 portraits = None
                 candidates = []
                 scores = defaultdict(set)
                 for row in result['rows']:
                     raw = row.get('ocr_name', row['name'])
                     name = corrected_name(row['name'], corrections, master.keys())
-                    player = master.get(name_key(name))
+                    exact = master.get(name_key(name))
+                    player = exact
                     if not player and row.get('avatar_base64'):
                         if portraits is None:
                             cur.execute('SELECT player_name,avatar_image FROM `player list` WHERE avatar_image IS NOT NULL')
@@ -138,9 +152,34 @@ def stage_vs_result(connect_db, job_id, result):
                     valid = type(points) is int and 0 <= points <= 9007199254740991
                     if player and valid:
                         scores[player['id']].add(points)
-                    candidates.append((row, raw, name, player, valid))
+                    candidates.append((row, raw, name, player, valid, exact))
+                retained, retained_scores, skipped_ids = [], defaultdict(set), set()
+                for row, raw, name, player, valid, exact in candidates:
+                    pid = player['id'] if player else None
+                    concerned = row['review_reasons'] or not valid or pid is None or len(scores[pid]) > 1
+                    if concerned and existing_scores:
+                        readings = set(row.get('point_readings',[]))
+                        if valid:
+                            readings.add(row['points'])
+                        # An exact selected name wins. Otherwise require one unambiguous
+                        # roster name from the alternate frame readings.
+                        if exact:
+                            matching_ids = {exact['id']}
+                        else:
+                            names = [master.get(name_key(corrected_name(key,corrections,master.keys())))
+                                     for key in (raw,*row.get('name_readings',[]))]
+                            matching_ids = {candidate['id'] for candidate in names if candidate}
+                        if (len(matching_ids)==1 and (not player or pid in matching_ids)
+                                and existing_scores.get(next(iter(matching_ids))) in readings):
+                            skipped_ids.update(matching_ids)
+                            skipped += 1
+                            continue
+                    retained.append((row,raw,name,player,valid))
+                    if player and valid:
+                        retained_scores[pid].add(row['points'])
+                scores = retained_scores
                 saved_ids = set()
-                for row, raw, name, player, valid in candidates:
+                for row, raw, name, player, valid in retained:
                     points = row['points']
                     if player and valid and len(scores[player['id']]) == 1 and not number_needs_review(row['review_reasons']):
                         if player['id'] not in saved_ids:
@@ -160,12 +199,12 @@ def stage_vs_result(connect_db, job_id, result):
                          player['player_name'] if player else name, points if valid else None,
                          json.dumps(reasons),row.get('evidence_base64'),raw[:255]))
                     pending += 1
-                record_scan_players(cur,job_id,saved_ids,updated)
+                record_scan_players(cur,job_id,saved_ids | skipped_ids,updated)
             conn.commit()
         except Exception:
             conn.rollback()
             raise
-    return {'saved':saved,'pending':pending}
+    return {'saved':saved,'pending':pending,'skipped':skipped}
 
 
 def install_vs_points(app, connect_db):
