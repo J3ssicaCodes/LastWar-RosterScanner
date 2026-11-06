@@ -9,7 +9,8 @@
   const styles=document.createElement('style');
   styles.textContent=`
     .train-controls{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:10px 0}
-    .train-controls label,.train-field{display:grid;gap:5px}
+    .train-controls label,.train-field{display:grid;grid-template-columns:minmax(0,1fr);gap:5px;min-width:0;max-width:100%}
+    .train-field select{width:100%;min-width:0}
     #trainView input,#trainView select,#trainView textarea,#trainAdmin input,#trainAdmin select,#trainHistoryDialog input,#trainHistoryDialog select{color:var(--text);background:var(--panel2);border:1px solid var(--stroke);border-radius:7px;padding:8px;font:inherit;max-width:100%}
     .train-layout{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);align-items:start;gap:20px}
     .train-card{min-width:0;border:1px solid var(--stroke);border-radius:12px;padding:14px}
@@ -39,7 +40,7 @@
       #trainView .pl-table button{white-space:normal;font-size:.8em;padding:6px}
     }
     #trainView textarea{width:100%;min-height:8em}
-    .train-wheel-wrap{width:min(78vw,330px);position:relative;margin:15px auto;text-align:center}
+    .train-wheel-wrap{width:min(100%,330px);position:relative;margin:15px auto;text-align:center}
     #trainWheel{display:block;width:100%;height:auto;border-radius:50%;border:4px solid var(--stroke);background:var(--panel2)}
     .train-pointer{position:absolute;z-index:1;left:50%;top:-12px;transform:translateX(-50%);color:var(--amber);font-size:25px}
     .train-import-row{border:1px solid var(--stroke);border-radius:9px;padding:10px;margin:8px 0}
