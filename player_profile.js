@@ -24,10 +24,6 @@
     .profile-vs-legend span{display:inline-flex;align-items:center;gap:6px}
     .profile-vs-legend i{display:inline-block;width:18px;border-top:3px solid var(--cyan)}
     .profile-vs-legend .previous{border-top:3px dashed var(--violet)}
-    .profile-vs-values{margin-top:8px}
-    .profile-vs-values summary{cursor:pointer;font-size:.85rem}
-    .profile-vs-values table{width:100%;font-size:.82rem;text-align:right}
-    .profile-vs-values th:first-child{text-align:left}
     .player-profile-name{display:flex;align-items:center;gap:8px;margin-top:10px}
     .player-profile-name h2{margin:0;min-width:0;overflow-wrap:anywhere}
     .player-profile-name input{flex:1;min-width:0}
@@ -61,13 +57,9 @@
       }
       return '<path d="'+path+'" fill="none" stroke="'+color+'" stroke-width="2"'+(dashed?' stroke-dasharray="5 4"':'')+'/>'+dots;
     }
-    const exact=days.map((day,i)=>'<tr><th scope="row">'+day+'</th><td>'+esc(number(current[i]))+
-      '</td><td>'+esc(number(previous[i]))+'</td></tr>').join('');
     return '<figure>'+caption+'<div class="profile-vs-legend"><span><i aria-hidden="true"></i>This week</span><span><i class="previous" aria-hidden="true"></i>Last week</span></div>'+
       '<svg viewBox="0 0 370 136" role="img" aria-label="Daily VS points for this week and last week, Monday through Saturday">'+
-      grid+plot(previous,'Last week','var(--violet)',true)+plot(current,'This week','var(--cyan)')+ticks+'</svg>'+
-      '<details class="profile-vs-values"><summary>View daily scores</summary><table><thead><tr><th scope="col">Day</th><th scope="col">This week</th><th scope="col">Last week</th></tr></thead><tbody>'+
-      exact+'</tbody></table></details></figure>';
+      grid+plot(previous,'Last week','var(--violet)',true)+plot(current,'This week','var(--cyan)')+ticks+'</svg></figure>';
   }
   function historyChart(label,axis,rows){
     const caption='<figcaption>'+label+'</figcaption><small>'+axis+'</small>';
