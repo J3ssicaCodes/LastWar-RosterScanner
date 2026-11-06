@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from sqlite3 import IntegrityError as SQLiteIntegrityError
 from unittest import TestCase
 from unittest.mock import Mock
@@ -50,6 +50,32 @@ class TrainCursor(Cursor):
 
 
 class TrainTests(TestCase):
+    def test_redo_clears_only_todays_unchanged_assignment(self):
+        db=TrainDatabase()
+        app=Mock()
+        install_train_manager(app,db)
+        endpoints={(r.path,next(iter(r.methods))):r.endpoint for r in app.include_router.call_args.args[0].routes}
+        save=endpoints['/api/train/history','POST']
+        clear=endpoints['/api/train/assignments/{day}','DELETE']
+        today=datetime.now(timezone.utc).date()
+        yesterday=today-timedelta(days=1)
+        for day in (yesterday,today):
+            save(Assignment(day=day,conductor_id=1,vip_id=3))
+        db.db.execute('INSERT INTO train_emails VALUES (?,?)',(today.isoformat(),'Saved draft'))
+        db.db.commit()
+
+        with self.assertRaises(HTTPException) as error:
+            clear(yesterday,'UTC',1,3)
+        self.assertEqual(error.exception.status_code,422)
+        with self.assertRaises(HTTPException) as error:
+            clear(today,'UTC',1,2)
+        self.assertEqual(error.exception.status_code,409)
+        clear(today,'UTC',1,3)
+        self.assertEqual(db.db.execute('SELECT assignment_date FROM train_assignments').fetchone()[0],
+                         yesterday.isoformat())
+        self.assertEqual(db.db.execute('SELECT body FROM train_emails').fetchone()[0],'Saved draft')
+        save(Assignment(day=today,conductor_id=3,vip_id=2))
+
     def test_history_edits_update_roles_and_move_email_atomically(self):
         db=TrainDatabase()
         app=Mock()

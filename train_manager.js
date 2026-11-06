@@ -23,7 +23,8 @@
     .train-nominee-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-top:10px}
     .train-nominee-actions label{min-width:0}
     .train-step{display:inline-grid;place-items:center;width:1.65em;height:1.65em;margin-right:.35em;border:1px solid var(--stroke);border-radius:50%;font-size:.8em}
-    .train-summary{cursor:pointer;font-weight:700}
+    .train-summary,.admin-tool-summary{cursor:pointer;font-weight:700}
+    .admin-tool-summary+form,.admin-tool-summary+.train-controls{margin-top:12px}
     .train-hint:empty,#trainStatus:empty,#trainSaveStatus:empty{display:none}
     #trainHistoryDialog{width:min(720px,96vw);max-height:90vh;overflow:auto}
     #trainHistoryDialog .pl-table{min-width:0}
@@ -83,7 +84,11 @@
         <section class="train-card" id="trainSavedAssignment" hidden>
           <h3>Saved train assignment</h3>
           <p id="trainSavedNames"></p>
-          <button class="btn primary" type="button" id="trainOpenEmail">Generate Alliance Email</button>
+          <div class="train-controls">
+            <button class="btn primary" type="button" id="trainOpenEmail">Generate Alliance Email</button>
+            <button class="btn" type="button" id="trainRedo" hidden>Clear today’s picks and redo</button>
+          </div>
+          <p id="trainRedoStatus" role="status" aria-live="polite" hidden></p>
         </section>
       </div>
     </section>
@@ -129,7 +134,8 @@
     </form>`;
   document.body.append(historyDialog);
   $('trainAdmin').innerHTML=`
-    <h3>Train Manager settings</h3>
+    <details class="panel pl-section" id="trainSettingsSection">
+    <summary class="admin-tool-summary">Train Manager settings</summary>
     <form id="trainSettingsForm" class="train-controls">
       <label>Alliance name<input name="alliance_name" maxlength="80" required></label>
       <label>Cooldown (weeks)<input name="cooldown_weeks" type="number" min="0" max="52" required></label>
@@ -137,13 +143,19 @@
       <button type="submit" class="btn primary">Save train settings</button>
     </form>
     <p id="trainSettingsStatus" role="status"></p>
-    <div class="pl-title-row"><h3>Train assignment history</h3><button class="btn" type="button" id="trainAdminHistory" aria-haspopup="dialog">Edit train history</button></div>
-    <h4>Import historical train assignments</h4>
+    </details>
+    <details class="panel pl-section">
+    <summary class="admin-tool-summary">Train assignment history</summary>
+    <div class="train-controls"><button class="btn" type="button" id="trainAdminHistory" aria-haspopup="dialog">Edit train history</button></div>
+    </details>
+    <details class="panel pl-section">
+    <summary class="admin-tool-summary">Import historical train assignments</summary>
     <p>Use a CSV with Date, Conductor Player, and VIP Player columns. Review the name matches and save each row individually.</p>
     <form id="trainImportForm" class="train-controls"><label>Assignment CSV<input name="file" type="file" accept=".csv,text/csv" required></label><button class="btn" type="submit">Review CSV</button></form>
     <p id="trainImportStatus" role="status"></p><div id="trainImportRows" class="train-import-list"></div>
     <div class="train-controls" id="trainImportPages" hidden><button type="button" class="btn" id="trainImportPrevious">‹ Previous rows</button>
-    <span id="trainImportPage"></span><button type="button" class="btn" id="trainImportNext">Next rows ›</button></div>`;
+    <span id="trainImportPage"></span><button type="button" class="btn" id="trainImportNext">Next rows ›</button></div>
+    </details>`;
 
   async function api(path,options){
     const response=await fetch('/api/train'+path,{cache:'no-store',...options});
@@ -226,6 +238,7 @@
     }
     $('trainWorkflow').hidden=!!assigned;
     $('trainSavedAssignment').hidden=!assigned;
+    $('trainRedo').hidden=assigned?.assignment_date!==localDate(new Date());
     $('trainGoalControls').disabled=!!assigned;
     $('trainTarget').disabled=!!assigned||spin;
     if(assigned)message('trainSavedNames','Conductor · '+assigned.conductor_name+'   |   VIP · '+assigned.vip_name);
@@ -289,6 +302,7 @@
     $('trainEmailEditor').hidden=true;events=[];$('trainNotes').value='';$('trainDraft').value='';
     $('trainDraftField').hidden=true;$('trainDraftActions').hidden=true;
     message('trainSaveStatus','');
+    $('trainRedoStatus').hidden=true;
   }
   $('trainDay').onchange=()=>{
     resetEmailEditor();
@@ -351,6 +365,33 @@
       }
     }catch(error){if(day()===date)message('trainSaveStatus',error.message);}
     finally{saving=false;if(board&&!loading)render();}
+  };
+
+  $('trainRedo').onclick=async()=>{
+    const button=$('trainRedo'), assignment=board?.assignment;
+    if(!assignment||assignment.assignment_date!==localDate(new Date()))return;
+    if(!window.confirm('Clear today’s saved Conductor and VIP and choose again? Any saved alliance email will stay in the archive until you update it.'))return;
+    const date=assignment.assignment_date;
+    button.disabled=true;
+    $('trainRedoStatus').hidden=true;
+    try{
+      const query=new URLSearchParams({timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC',
+        conductor_id:assignment.conductor_id,vip_id:assignment.vip_id});
+      await api('/assignments/'+date+'?'+query,{method:'DELETE'});
+      if(day()===date){
+        resetEmailEditor();
+        await loadBoard(true);
+        if(day()===date&&!board?.assignment){
+          message('trainStatus','Today’s picks cleared. Choose a new Conductor and VIP.');
+          $('trainConductor').focus();
+        }
+      }
+    }catch(error){
+      if(day()===date){
+        message('trainRedoStatus',error.message);
+        $('trainRedoStatus').hidden=false;
+      }
+    }finally{button.disabled=false;}
   };
 
   async function loadHistory(older=false){
@@ -607,8 +648,8 @@
   };
   function openTrain(){if(!view.hidden&&!loading&&!spin){loadBoard();loadEmails();}}
   new MutationObserver(openTrain).observe(view,{attributes:true,attributeFilter:['hidden']});
-  new MutationObserver(()=>{if(!$('adminView').hidden)loadSettings();}).observe($('adminView'),{attributes:true,attributeFilter:['hidden']});
-  if(!$('adminView').hidden)loadSettings();
+  const settingsSection=$('trainSettingsSection');
+  settingsSection.addEventListener('toggle',()=>{if(settingsSection.open)loadSettings();});
   window.addEventListener('train-restriction-changed',()=>{if(!view.hidden)loadBoard(true);});
   openTrain();
 })();

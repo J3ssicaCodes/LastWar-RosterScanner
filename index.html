@@ -372,9 +372,10 @@ th[aria-sort] .sort-column span{opacity:1}
 </section>
 <section id="trainView" class="workspace-view" role="tabpanel" aria-labelledby="trainTab" tabindex="0" hidden></section>
 <section id="adminView" class="workspace-view" role="tabpanel" aria-labelledby="adminTab" tabindex="0" hidden>
-  <section class="panel pl-section" aria-labelledby="adminTitle">
-    <h2 id="adminTitle">Admin</h2>
-    <h3>Clear Data</h3>
+  <h2 id="adminTitle">Admin</h2>
+  <p id="adminCompletionMessage" role="status" hidden></p>
+  <details class="panel pl-section" id="adminClearSection">
+    <summary class="admin-tool-summary">Clear Data</summary>
     <p>Choose which tables to clear for everyone. The OCR dictionary and browser settings are kept.</p>
     <fieldset style="display:grid;gap:6px;margin:12px 0">
       <legend>Tables to clear</legend>
@@ -391,9 +392,9 @@ th[aria-sort] .sort-column span{opacity:1}
       </form>
     </dialog>
     <p id="adminClearMessage" role="status" aria-live="polite"></p>
-  </section>
+  </details>
   <details class="panel pl-section" id="adminDictionary">
-    <summary style="cursor:pointer;font-weight:700">Player name dictionary</summary>
+    <summary class="admin-tool-summary">Player name dictionary</summary>
     <p>Saved corrections apply to future imports, including VS. OCR spellings are shown without spaces or capitalization.</p>
     <form id="adminDictionaryForm" style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
       <label>OCR spelling <input name="original" required maxlength="255"></label>
@@ -407,7 +408,7 @@ th[aria-sort] .sort-column span{opacity:1}
       <tbody id="adminDictionaryRows"></tbody>
     </table></div>
   </details>
-  <section class="panel pl-section" id="trainAdmin" aria-label="Train administration"></section>
+  <div id="trainAdmin"></div>
 </section>
 <footer class="app-footer"><strong>This app was created by Lady Jess</strong></footer>
 </main>

@@ -102,15 +102,17 @@
     if(completed){
       sessionStorage.removeItem(completedKey);
       document.getElementById('adminTab').click();
-      message.textContent=completed;
+      const completion=document.getElementById('adminCompletionMessage');
+      completion.textContent=completed;
+      completion.hidden=false;
     }
   }catch{}
   window.addEventListener('storage',event=>{
     if(event.key===resetKey&&event.newValue)location.reload();
   });
   window.addEventListener('focus',refresh);
-  document.getElementById('adminTab').addEventListener('click',loadTables);
-  if(document.getElementById('adminTab').getAttribute('aria-selected')==='true')loadTables();
+  const clearSection=document.getElementById('adminClearSection');
+  clearSection.addEventListener('toggle',()=>{if(clearSection.open)loadTables();});
   refresh();
 
   const dictionaryForm=document.getElementById('adminDictionaryForm');

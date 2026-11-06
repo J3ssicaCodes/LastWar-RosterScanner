@@ -5,6 +5,7 @@ import logging
 from datetime import date, datetime, timedelta
 from threading import Event, Thread
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
@@ -295,6 +296,23 @@ def install_train_manager(app, connect_db):
     @router.post('/assignments')
     def assign(body:Assignment):
         return save_assignment(body)
+
+    @router.delete('/assignments/{day}')
+    def clear_today(day:date, timezone:str, conductor_id:int, vip_id:int):
+        try:
+            today = datetime.now(ZoneInfo(timezone)).date()
+        except (ValueError, ZoneInfoNotFoundError) as exc:
+            raise HTTPException(422,detail='Choose a valid time zone.') from exc
+        if day != today:
+            raise HTTPException(422,detail='Only today’s assignment can be cleared.')
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute('SELECT conductor_id,vip_id FROM train_assignments WHERE assignment_date=%s FOR UPDATE',(day,))
+            current = cur.fetchone()
+            if not current or (current['conductor_id'],current['vip_id']) != (conductor_id,vip_id):
+                raise HTTPException(409,detail='Today’s assignment changed. Refresh it and try again.')
+            cur.execute('DELETE FROM train_assignments WHERE assignment_date=%s',(day,))
+            conn.commit()
+        return {'day':day}
 
     @router.post('/history')
     def import_assignment(body:Assignment):
