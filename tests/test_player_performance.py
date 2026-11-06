@@ -19,7 +19,7 @@ class PerformanceDB(SQLDatabase):
         self.db.create_function('GREATEST',2,lambda a,b: max(a,b) if a and b else a or b)
         self.db.executescript('''CREATE TABLE `roster upload` (player_name TEXT,ocr_name TEXT);
             CREATE TABLE train_assignments (conductor_id INTEGER,vip_id INTEGER);
-            CREATE TABLE train_restrictions (player_id INTEGER PRIMARY KEY);''')
+            CREATE TABLE train_restrictions (player_id INTEGER PRIMARY KEY,reason TEXT);''')
 
     def cursor(self):
         return MergeCursor(self.db)
@@ -51,6 +51,7 @@ class PerformanceTests(unittest.TestCase):
     def test_merge_transfers_history_pending_rows_and_ocr_alias(self):
         keep, duplicate = self.add_players()
         self.db.db.execute("INSERT INTO player_name_dictionary VALUES ('oldocr','ep')")
+        self.db.db.execute('INSERT INTO train_restrictions VALUES (?,?)',(duplicate,'Carry over this reason'))
         self.db.db.execute("INSERT INTO media_scan_jobs (id,updated_player_ids) VALUES ('job',?)",(json.dumps([duplicate]),))
         self.db.db.execute("INSERT INTO `roster upload` (player_name) VALUES ('ep')")
         self.db.db.execute("INSERT INTO vs_scan_rows (job_id,player_name) VALUES ('job','ep')")
@@ -62,6 +63,8 @@ class PerformanceTests(unittest.TestCase):
         ])
         result = merge_player_records(self.db,keep,PlayerMerge(duplicate_id=duplicate,expected_name='DonPepon',expected_duplicate_name='ep'))
         self.assertEqual(result['overlapping_vs_scores'],1)
+        self.assertEqual(tuple(self.db.db.execute('SELECT * FROM train_restrictions').fetchone()),
+                         (keep,'Carry over this reason'))
         self.assertEqual([tuple(row) for row in self.db.db.execute('SELECT id,player_name,power,kills FROM `player list`')],
                          [(keep,'DonPepon',200,100)])
         self.assertEqual([tuple(row) for row in self.db.db.execute('SELECT player_id,points FROM vs_points ORDER BY score_date')],

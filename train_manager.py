@@ -104,6 +104,7 @@ class TrainSettings(BaseModel):
 
 class Restriction(BaseModel):
     disabled: bool
+    reason: str | None = Field(default=None,max_length=160)
 
 
 class Assignment(BaseModel):
@@ -277,7 +278,8 @@ def install_train_manager(app, connect_db):
                     cooldown_weeks TINYINT UNSIGNED NOT NULL, spin_seconds TINYINT UNSIGNED NOT NULL
                 ) ENGINE=InnoDB COMMENT='alliance_tools:user_data'""",
                 """CREATE TABLE IF NOT EXISTS train_restrictions (
-                    player_id BIGINT UNSIGNED PRIMARY KEY
+                    player_id BIGINT UNSIGNED PRIMARY KEY,
+                    reason VARCHAR(160) CHARACTER SET utf8mb4 NULL
                 ) ENGINE=InnoDB COMMENT='alliance_tools:user_data'""",
                 """CREATE TABLE IF NOT EXISTS train_assignments (
                     assignment_date DATE PRIMARY KEY,
@@ -303,6 +305,9 @@ def install_train_manager(app, connect_db):
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='alliance_tools:user_data'""",
             ):
                 cur.execute(sql)
+            cur.execute("SHOW COLUMNS FROM train_restrictions LIKE 'reason'")
+            if not cur.fetchone():
+                cur.execute('ALTER TABLE train_restrictions ADD reason VARCHAR(160) CHARACTER SET utf8mb4 NULL')
             cur.execute("SHOW COLUMNS FROM train_assignments LIKE 'vip_method'")
             if not cur.fetchone():
                 cur.execute("""ALTER TABLE train_assignments MODIFY vip_id BIGINT UNSIGNED NULL,
@@ -341,6 +346,14 @@ def install_train_manager(app, connect_db):
             conn.commit()
         return body
 
+    @router.get('/restrictions')
+    def restrictions():
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute("""SELECT p.id,p.player_name AS name,r.player_id IS NOT NULL AS disabled,r.reason
+                           FROM `player list` p LEFT JOIN train_restrictions r ON r.player_id=p.id
+                           ORDER BY p.player_name,p.id""")
+            return {'players':cur.fetchall()}
+
     @router.get('/restriction/{player_id}')
     def restriction(player_id:int):
         with connect_db() as conn, conn.cursor() as cur:
@@ -353,11 +366,16 @@ def install_train_manager(app, connect_db):
             cur.execute('SELECT id FROM `player list` WHERE id=%s FOR UPDATE',(player_id,))
             if not cur.fetchone():
                 raise HTTPException(404,detail='Player not found.')
-            sql = ('INSERT IGNORE INTO train_restrictions (player_id) VALUES (%s)' if body.disabled
-                   else 'DELETE FROM train_restrictions WHERE player_id=%s')
-            cur.execute(sql,(player_id,))
+            if not body.disabled:
+                cur.execute('DELETE FROM train_restrictions WHERE player_id=%s',(player_id,))
+            elif body.reason is not None:
+                cur.execute("""INSERT INTO train_restrictions (player_id,reason) VALUES (%s,%s)
+                               ON DUPLICATE KEY UPDATE reason=VALUES(reason)""",
+                            (player_id,body.reason.strip() or None))
+            else:
+                cur.execute('INSERT IGNORE INTO train_restrictions (player_id) VALUES (%s)',(player_id,))
             conn.commit()
-        return body
+        return {'disabled':body.disabled}
 
     @router.get('/board')
     def board(day:date,goal:Literal['Push','Save']='Push',target:int=7200000):

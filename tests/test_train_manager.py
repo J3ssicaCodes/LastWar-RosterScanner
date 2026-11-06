@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 from fastapi import HTTPException
 from pymysql.err import IntegrityError
-from train_manager import Assignment, DiceWinner, EmailTemplate, HistoryEdit, install_train_manager, nominations, parse_train_csv, validate_template
+from train_manager import Assignment, DiceWinner, EmailTemplate, HistoryEdit, Restriction, install_train_manager, nominations, parse_train_csv, validate_template
 from test_player_merge_vs import Cursor, SQLDatabase
 
 
@@ -19,7 +19,7 @@ class TrainDatabase(SQLDatabase):
         self.db.executescript('''
             CREATE TABLE train_settings (id INTEGER PRIMARY KEY,alliance_name TEXT,cooldown_weeks INT,spin_seconds INT);
             CREATE TABLE train_event_names (name TEXT PRIMARY KEY);
-            CREATE TABLE train_restrictions (player_id INTEGER PRIMARY KEY);
+            CREATE TABLE train_restrictions (player_id INTEGER PRIMARY KEY,reason TEXT);
             CREATE TABLE train_assignments (
                 assignment_date TEXT PRIMARY KEY,conductor_id INTEGER,vip_id INTEGER,
                 conductor_name TEXT,vip_name TEXT,conductor_reason TEXT,vip_reason TEXT,
@@ -28,7 +28,7 @@ class TrainDatabase(SQLDatabase):
             CREATE TABLE train_email_templates (id TEXT PRIMARY KEY,name TEXT,body TEXT,deleted INTEGER DEFAULT 0);
             INSERT INTO `player list` (id,player_name,normalized_name,player_rank,possibly_removed)
                 VALUES (1,'Alpha','alpha','R4',0),(2,'Bravo','bravo','R3',0),(3,'Charlie','charlie','R5',0);
-            INSERT INTO train_restrictions VALUES (2);
+            INSERT INTO train_restrictions (player_id) VALUES (2);
         ''')
 
     def cursor(self):
@@ -38,7 +38,7 @@ class TrainDatabase(SQLDatabase):
 class TrainCursor(Cursor):
     def execute(self,sql,args=()):
         try:
-            super().execute(sql,args)
+            super().execute(sql.replace('INSERT IGNORE','INSERT OR IGNORE'),args)
         except SQLiteIntegrityError as exc:
             raise IntegrityError(str(exc)) from exc
 
@@ -51,6 +51,24 @@ class TrainCursor(Cursor):
 
 
 class TrainTests(TestCase):
+    def test_admin_restrictions_share_the_profile_toggle_and_preserve_notes(self):
+        db=TrainDatabase()
+        app=Mock()
+        install_train_manager(app,db)
+        endpoints={(r.path,next(iter(r.methods))):r.endpoint for r in app.include_router.call_args.args[0].routes}
+        listing=endpoints['/api/train/restrictions','GET']
+        update=endpoints['/api/train/restriction/{player_id}','PUT']
+        get=endpoints['/api/train/restriction/{player_id}','GET']
+        self.assertEqual([row['id'] for row in listing()['players'] if row['disabled']],[2])
+        update(1,Restriction(disabled=True,reason=' Initial note '))
+        update(1,Restriction(disabled=True,reason='Updated note'))
+        update(1,Restriction(disabled=True))
+        self.assertEqual(listing()['players'][0]['reason'],'Updated note')
+        self.assertEqual(get(1),{'disabled':True})
+        update(1,Restriction(disabled=False))
+        self.assertEqual(get(1),{'disabled':False})
+        self.assertIsNone(listing()['players'][0]['reason'])
+
     def test_dice_roll_persists_pending_vip_then_records_winner_once(self):
         db=TrainDatabase()
         app=Mock()

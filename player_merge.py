@@ -100,10 +100,13 @@ def merge_player_records(connect_db, keep_id, body):
                 for field in ('conductor_id','vip_id'):
                     cur.execute(f'UPDATE train_assignments SET {field}=%s WHERE {field}=%s',
                                 (keep_id,body.duplicate_id))
-                cur.execute('SELECT player_id FROM train_restrictions WHERE player_id=%s FOR UPDATE',
+                cur.execute('SELECT reason FROM train_restrictions WHERE player_id=%s FOR UPDATE',
                             (body.duplicate_id,))
-                if cur.fetchone():
-                    cur.execute('INSERT IGNORE INTO train_restrictions (player_id) VALUES (%s)',(keep_id,))
+                restriction = cur.fetchone()
+                if restriction:
+                    cur.execute("""INSERT INTO train_restrictions (player_id,reason) VALUES (%s,%s)
+                                   ON DUPLICATE KEY UPDATE reason=COALESCE(reason,VALUES(reason))""",
+                                (keep_id,restriction['reason']))
                     cur.execute('DELETE FROM train_restrictions WHERE player_id=%s',(body.duplicate_id,))
                 cur.execute('DELETE FROM `player list` WHERE id=%s',(body.duplicate_id,))
             conn.commit()

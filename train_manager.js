@@ -170,6 +170,18 @@
     </form>
     <p id="trainTemplateStatus" role="status" aria-live="polite"></p>`);
   $('trainAdmin').innerHTML=`
+    <details class="panel pl-section" id="trainNaughtyList">
+    <summary class="admin-tool-summary">Naughty List</summary>
+    <p class="train-hint">Listed players are blocked from new train assignments. Removing someone restores their normal eligibility.</p>
+    <form id="trainRestrictionForm" class="train-controls">
+      <label>Player<select name="player" required disabled></select></label>
+      <label>Reason (optional)<input name="reason" maxlength="160" disabled></label>
+      <button type="submit" class="btn primary" disabled>Add to Naughty List</button>
+      <button type="button" class="btn" id="trainRestrictionCancel" hidden>Cancel edit</button>
+    </form>
+    <p id="trainRestrictionStatus" role="status" aria-live="polite"></p>
+    <div id="trainRestrictionEntries"></div>
+    </details>
     <details class="panel pl-section" id="trainSettingsSection">
     <summary class="admin-tool-summary">Train Manager settings</summary>
     <form id="trainSettingsForm" class="train-controls">
@@ -201,6 +213,79 @@
   }
   const json=(method,data)=>({method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
   const message=(id,text)=>{$(id).textContent=text;};
+  const restrictionSection=$('trainNaughtyList'),restrictionForm=$('trainRestrictionForm');
+  const restrictionPlayer=restrictionForm.elements.player,restrictionReason=restrictionForm.elements.reason;
+  const restrictionSubmit=restrictionForm.querySelector('[type="submit"]'),restrictionEntries=$('trainRestrictionEntries');
+  let restrictionPlayers=[],editingRestriction=null,restrictionBusy=false;
+
+  function renderRestrictions(){
+    const available=restrictionPlayers.filter(p=>!p.disabled);
+    const selected=editingRestriction?.id||Number(restrictionPlayer.value);
+    restrictionPlayer.innerHTML='<option value="">Choose a player…</option>'+
+      (editingRestriction?[editingRestriction]:available).map(p=>option(p,selected)).join('');
+    restrictionPlayer.disabled=restrictionBusy||!!editingRestriction||!available.length;
+    restrictionReason.disabled=restrictionBusy;
+    restrictionSubmit.disabled=restrictionBusy||(!editingRestriction&&!available.length);
+    restrictionSubmit.textContent=editingRestriction?'Save changes':'Add to Naughty List';
+    $('trainRestrictionCancel').hidden=!editingRestriction;
+    $('trainRestrictionCancel').disabled=restrictionBusy;
+    restrictionEntries.innerHTML=restrictionPlayers.filter(p=>p.disabled).map(p=>
+      '<div class="train-card"><strong>'+esc(p.name)+'</strong>'+
+      (p.reason?'<p class="train-hint" style="overflow-wrap:anywhere">'+esc(p.reason)+'</p>':'')+
+      '<div class="train-controls"><button type="button" class="btn smallbtn" data-restriction-edit="'+p.id+'"'+(restrictionBusy?' disabled':'')+'>Edit reason</button>'+
+      '<button type="button" class="btn smallbtn" data-restriction-remove="'+p.id+'"'+(restrictionBusy?' disabled':'')+'>Remove</button></div></div>'
+    ).join('')||'<p class="train-hint">No players are on the Naughty List.</p>';
+  }
+  async function refreshRestrictions(){
+    if(restrictionBusy)return;
+    restrictionBusy=true;
+    try{
+      const {players}=await api('/restrictions');
+      restrictionPlayers=players;
+      const updated=players.find(p=>p.id===editingRestriction?.id&&p.disabled);
+      if(editingRestriction&&!updated)restrictionReason.value='';
+      editingRestriction=updated||null;
+    }catch(error){message('trainRestrictionStatus',error.message);}
+    finally{restrictionBusy=false;renderRestrictions();}
+  }
+  async function saveRestriction(player,body){
+    if(!player||restrictionBusy)return;
+    restrictionBusy=true;
+    renderRestrictions();
+    try{
+      await api('/restriction/'+player.id,json('PUT',body));
+      player.disabled=body.disabled;
+      player.reason=body.disabled?body.reason:'';
+      editingRestriction=null;
+      restrictionForm.reset();
+      message('trainRestrictionStatus',body.disabled?'Naughty List saved for '+player.name+'.':player.name+' removed from the Naughty List.');
+      window.dispatchEvent(new Event('train-restriction-changed'));
+    }catch(error){message('trainRestrictionStatus',error.message);}
+    finally{restrictionBusy=false;renderRestrictions();}
+  }
+  restrictionForm.onsubmit=event=>{
+    event.preventDefault();
+    const player=editingRestriction||restrictionPlayers.find(p=>p.id===Number(restrictionPlayer.value));
+    saveRestriction(player,{disabled:true,reason:restrictionReason.value.trim()});
+  };
+  $('trainRestrictionCancel').onclick=()=>{
+    editingRestriction=null;
+    restrictionForm.reset();
+    renderRestrictions();
+  };
+  restrictionEntries.onclick=event=>{
+    const button=event.target.closest('[data-restriction-edit],[data-restriction-remove]');
+    if(!button||restrictionBusy)return;
+    const player=restrictionPlayers.find(p=>p.id===Number(button.dataset.restrictionEdit||button.dataset.restrictionRemove));
+    if(!player)return;
+    if(button.dataset.restrictionEdit){
+      editingRestriction=player;
+      restrictionReason.value=player.reason||'';
+      renderRestrictions();
+      restrictionReason.focus();
+    }else if(window.confirm('Remove '+player.name+' from the Naughty List?'))saveRestriction(player,{disabled:false});
+  };
+  restrictionSection.addEventListener('toggle',()=>{if(restrictionSection.open)refreshRestrictions();});
   const templateUrl='/email-templates';
   const newTemplateBody='Good morning, {alliance}! 🚂\n\n{conductor} is today’s Conductor and {vip} is our VIP.\n\n{reasons}\n\n{events}\n\n{notes}\n\nBest regards,\n{author}';
   const templateForm=$('trainTemplateForm'),templateList=$('trainTemplateList');
@@ -825,6 +910,9 @@
   new MutationObserver(openTrain).observe(view,{attributes:true,attributeFilter:['hidden']});
   const settingsSection=$('trainSettingsSection');
   settingsSection.addEventListener('toggle',()=>{if(settingsSection.open)loadSettings();});
-  window.addEventListener('train-restriction-changed',()=>{if(!view.hidden)loadBoard(true);});
+  window.addEventListener('train-restriction-changed',()=>{
+    if(!view.hidden)loadBoard(true);
+    if(restrictionSection.open)refreshRestrictions();
+  });
   openTrain();
 })();
