@@ -176,6 +176,16 @@ class VSDateAndPersistenceTests(unittest.TestCase):
                 self.assertEqual('value' in confirmed[1],expected)
                 self.assertEqual(bool(row.get('neighbor_conflicts')),not expected)
 
+    def test_sort_warning_stays_on_the_unverified_score(self):
+        from vs_points_ocr import review_flags
+        rows = {
+            1: {'name':'First Player','name_conf':90,'value':'100','value_conf':90},
+            2: {'name':'Second Player','name_conf':90,'value':'200','value_conf':90},
+        }
+        reasons = review_flags(rows, {}, {}, str, None, {1})
+        self.assertEqual(reasons[1], [])
+        self.assertIn('Points exceed the row above', reasons[2])
+
     def test_weekly_scores_keep_dates_and_learn_reviewed_names(self):
         from player_identity import corrected_name, load_name_corrections
         db=SQLDatabase(); web=Mock(); install_vs_points(web,db)

@@ -124,13 +124,13 @@ def read_page(image, page, period, upper, targets=None, anchors=None):
             ok_avatar, encoded_avatar=cv2.imencode('.webp',avatar,[cv2.IMWRITE_WEBP_QUALITY,80])
         rows.append({'name':name,'value':val,'name_conf':nc,'value_conf':vc,
                      'position_read':position,'position_conf':pc,'page':page,
-                     'center':cy,'signature':signature,'matched_position':matched,
+                     'center':cy,'signature':signature,'matched_position':matched,'period':period,
                      'avatar_base64':base64.b64encode(encoded_avatar).decode() if ok_avatar else None,
                      'evidence_base64':base64.b64encode(encoded).decode() if ok else None})
     return rows
 
 
-def review_flags(observations, names, scores, resolve, master_keys):
+def review_flags(observations, names, scores, resolve, master_keys, verified_numbers=()):
     reasons = defaultdict(list)
     previous = None
     for position, row in sorted(observations.items()):
@@ -148,8 +148,12 @@ def review_flags(observations, names, scores, resolve, master_keys):
             flags.append('Check points')
         points = int(row['value']) if row['value'].isdigit() else None
         if points is not None and previous is not None and points > previous[1]:
-            flags.append('Points exceed the row above')
-            reasons[previous[0]].append('Next row has higher points; verify this value')
+            previous_verified = previous[0] in verified_numbers
+            current_verified = position in verified_numbers
+            if not current_verified or previous_verified:
+                flags.append('Points exceed the row above')
+            if not previous_verified or current_verified:
+                reasons[previous[0]].append('Next row has higher points; verify this value')
         previous = (position, points) if points is not None else None
     return reasons
 
@@ -232,7 +236,7 @@ def read_vs_neighbor(image, anchors, day):
             return []
     except ValueError:
         return []
-    return read_page(image,0,189*image.shape[1]/1080,
+    return read_page(image,0,anchors[0]['period'],
                      round(.225*image.shape[0]),anchors=anchors)
 
 
@@ -309,14 +313,16 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
     day=next(iter(days)); earned=score_date_for_day(upload_date,day)
     if earned>upload_date:
         raise ValueError('The selected VS day is later than the upload date. Check the daily tab and your local date.')
-    reasons = review_flags(observations, variants, score_variants, resolve, master_keys)
+    verified_numbers = {pos for pos, fields in confirmed.items()
+                        if 'value' in fields and len(score_variants.get(pos, set())) <= 1}
+    reasons = review_flags(observations, variants, score_variants, resolve, master_keys, verified_numbers)
     rows=[]
     for pos,row in sorted(observations.items()):
         if len(score_variants.get(pos,set()))>1 or row['value_conf']<55:
             reasons[pos].append(f'{NUMBER_REVIEW_PREFIX} captured scores disagree or the number is unclear.')
         if reasons[pos] and row['page'] in page_sources:
             reasons[pos].append('Adjacent frames did not resolve all review flags')
-        rows.append({**{k:v for k,v in row.items() if k not in ('signature','center','matched_position')},
+        rows.append({**{k:v for k,v in row.items() if k not in ('signature','center','matched_position','period')},
                      'name':resolve(row['name']),'ocr_name':row['name'],
                      'points':int(row['value']) if row['value'].isdigit() else None,
                      'review_reasons':reasons[pos],'score_date':earned.isoformat()})
