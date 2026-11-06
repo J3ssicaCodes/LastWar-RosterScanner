@@ -88,7 +88,7 @@
       return '<section class="panel" style="padding:16px;margin:14px 0" data-vs-job="'+esc(job)+'"><h4>'+esc(first.weekday)+' · '+rows.length+' scores to review</h4>'+
         '<label>Score date <input data-vs-date type="date" value="'+esc(dates.get(job)||first.score_date)+'" min="'+min+'" max="'+max+'"></label>'+
         '<div class="review-toolbar"><label><input type="checkbox" data-vs-select-all aria-label="Select all scores in this batch"> Select all</label>'+
-        '<span data-vs-selected></span><button class="btn" data-vs-dismiss type="button">Dismiss selected</button><button class="btn primary" data-vs-approve type="button">Save selected</button></div><p data-vs-feedback role="status" hidden></p>'+
+        '<span data-vs-selected></span><button class="btn" data-vs-select-clear type="button">Select clear rows</button><button class="btn" data-vs-dismiss type="button">Dismiss selected</button><button class="btn primary" data-vs-approve type="button">Save selected</button></div><p data-vs-feedback role="status" hidden></p>'+
         '<div class="review-grid">'+rows.map(r=>
           '<article class="review-card" data-vs-row="'+r.id+'"><div class="review-card-head"><label><input type="checkbox" data-vs-use aria-label="Select score for '+esc(r.name)+'"> Select</label></div>'+
           '<div class="review-fields"><label class="review-name">Player name<input data-vs-name list="vsPlayerNames" maxlength="80" value="'+esc(r.name)+'"></label>'+
@@ -184,6 +184,28 @@
     }catch(err){$('vsMessage').textContent=err.message;}
   }
   $('vsReviewJobs').addEventListener('click',async event=>{
+    const clear=event.target.closest('[data-vs-select-clear]');
+    if(clear){
+      const group=clear.closest('[data-vs-job]');
+      const candidates=[...group.querySelectorAll('[data-vs-row]')].map(row=>{
+        const original=pending.find(item=>item.id===Number(row.dataset.vsRow));
+        const name=row.querySelector('[data-vs-name]').value.trim();
+        const points=row.querySelector('[data-vs-points]').value;
+        const player=reviewNames.match(group.dataset.vsJob,name);
+        const eligible=original&&player&&!original.review_reasons?.length&&name===original.name&&
+          window.reviewIssues.numberValid(points,'points')&&window.reviewIssues.numberValue(points)===original.points;
+        return {row,player,eligible};
+      });
+      const counts=new Map();
+      for(const item of candidates)if(item.eligible)counts.set(item.player.id,1+(counts.get(item.player.id)||0));
+      for(const item of candidates)item.row.querySelector('[data-vs-use]').checked=item.eligible&&counts.get(item.player.id)===1;
+      updateVSSelection(group);
+      const feedback=group.querySelector('[data-vs-feedback]');
+      const selected=[...counts.values()].some(count=>count===1);
+      feedback.hidden=selected;
+      feedback.textContent=selected?'':'No unedited scores without warnings match the Player List in this batch.';
+      return;
+    }
     const action=event.target.closest('[data-vs-approve],[data-vs-dismiss],[data-vs-save-row]');if(!action)return;
     await autoTail;
     if(!action.isConnected||action.disabled)return;

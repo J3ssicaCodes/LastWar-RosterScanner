@@ -176,6 +176,44 @@ class VSDateAndPersistenceTests(unittest.TestCase):
                 self.assertEqual('value' in confirmed[1],expected)
                 self.assertEqual(bool(row.get('neighbor_conflicts')),not expected)
 
+    def test_score_reader_rejects_truncated_numbers(self):
+        import numpy as np
+        from vs_points_ocr import read_score
+
+        crop = np.full((69,285,3), 255, dtype=np.uint8)
+        line = crop[:,:,0]
+        with patch('vs_points_ocr.score_line', return_value=(8,line,line)), \
+             patch('vs_points_ocr.text_with_conf', side_effect=[
+                 ('35',95), ('25,160,590',0), ('25,160,590',0), ('',0),
+             ]):
+            self.assertEqual(read_score(crop), ('25160590',65))
+
+    def test_score_reader_keeps_conflicting_full_readings_uncertain(self):
+        import numpy as np
+        from vs_points_ocr import read_score
+
+        crop = np.full((69,285,3), 255, dtype=np.uint8)
+        line = crop[:,:,0]
+        with patch('vs_points_ocr.score_line', return_value=(8,line,line)), \
+             patch('vs_points_ocr.text_with_conf', side_effect=[
+                 ('35',95), ('25,160,590',93), ('25,760,590',93), ('',0),
+             ]):
+            self.assertLess(read_score(crop)[1],55)
+
+    def test_portrait_match_requires_text_and_a_unique_image(self):
+        import base64
+        import cv2
+        import numpy as np
+        from vs_points_ocr import roster_portrait_match
+
+        image = np.random.default_rng(1).integers(0,256,(96,96),dtype=np.uint8)
+        ok, data = cv2.imencode('.png', image)
+        self.assertTrue(ok)
+        row = {'avatar_base64':base64.b64encode(data).decode()}
+        self.assertEqual(roster_portrait_match(row,'Lady Jes5',{'ladyjess':image}), 'ladyjess')
+        self.assertIsNone(roster_portrait_match(row,'Different name',{'ladyjess':image}))
+        self.assertIsNone(roster_portrait_match(row,'Lady Jes5',{'ladyjess':image,'differentname':image}))
+
     def test_sort_warning_stays_on_the_unverified_score(self):
         from vs_points_ocr import review_flags
         rows = {

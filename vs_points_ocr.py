@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from collections import Counter, defaultdict
 import re
+from difflib import SequenceMatcher
 from datetime import date, timedelta
 from pathlib import Path
 import tempfile
@@ -11,7 +12,7 @@ import numpy as np
 from extract_ranking_pages import detect, extract
 from scan_rankings import card_borders, pinned_top, estimate_row_height, text_with_conf, enlarge, best_start, retry_name_crop
 
-from player_identity import corrected_name, name_key, NUMBER_REVIEW_PREFIX
+from player_identity import corrected_name, compact_key, name_key, NUMBER_REVIEW_PREFIX
 
 DAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
 
@@ -66,57 +67,169 @@ def isolated_zero(crop):
             and abs((hx+hw/2)-(x+w/2))<.20*w)
 
 
-def read_page(image, page, period, upper, targets=None, anchors=None):
+def score_line(crop):
+    """Separate the score's printed digits from touch indicators and card edges."""
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    scale = w / 285
+    mask = (gray < float(np.median(gray)) - 38).astype('uint8')
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask)
+    glyphs = [i for i, (x, y, width, height, area) in enumerate(stats[1:], 1)
+              if 7*scale <= width <= 28*scale and 16*scale <= height <= 31*scale
+              and .20*h <= y + height/2 <= .72*h and area >= 65*scale**2]
+    if not glyphs:
+        return None, None, None
+    glyphs.sort(key=lambda i: stats[i][0])
+    # Scores are right-aligned. A missing glyph leaves a gap wider than
+    # the game's comma spacing, so a short reading cannot pass validation.
+    gaps = [stats[b][0] - (stats[a][0] + stats[a][2]) for a,b in zip(glyphs,glyphs[1:])]
+    if max(gaps, default=0) > 21*scale or w-(stats[glyphs[-1]][0]+stats[glyphs[-1]][2]) > 43*scale:
+        return None, None, None
+    first = stats[glyphs[0]][0]
+    right = max(stats[i][0] + stats[i][2] for i in glyphs)
+    top = min(stats[i][1] for i in glyphs)
+    baseline = max(stats[i][1] + stats[i][3] for i in glyphs)
+    bottom = baseline
+    keep = np.zeros(count, np.uint8)
+    keep[glyphs] = 255
+    for i, (x, y, width, height, area) in enumerate(stats[1:], 1):
+        if first < x < right and 3*scale <= width <= 12*scale and 5*scale <= height <= 14*scale and baseline-8*scale <= y <= baseline:
+            keep[i] = 255
+            bottom = max(bottom, y + height)
+    ink = keep[labels][top:bottom,first:right]
+    return len(glyphs), gray[top:bottom,first:right], 255-ink
+
+
+def read_score(crop):
+    digits, gray, ink = score_line(crop)
+    if digits == 1 and isolated_zero(crop):
+        return '0', 98.
+
+    def read(image, psm):
+        text, confidence = text_with_conf(image, psm, '0123456789,')
+        if not re.fullmatch(r'[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+', text):
+            return '', 0.
+        return text.replace(',',''), confidence
+
+    value, confidence = read(enlarge(crop), 7)
+    if digits is None:
+        return value, min(confidence, 54)
+    if len(value) == digits and confidence >= 55:
+        return value, confidence
+    candidates = defaultdict(list)
+    if len(value) == digits:
+        candidates[value].append(confidence)
+    for line, psm in ((gray, 7), (ink, 13), (ink, 7)):
+        padded = cv2.copyMakeBorder(enlarge(line,3),24,24,24,24,cv2.BORDER_CONSTANT,value=255)
+        alternate, score = read(padded, psm)
+        if len(alternate) == digits:
+            candidates[alternate].append(score)
+    if len(candidates) == 1:
+        chosen, scores = next(iter(candidates.items()))
+        # A correctly segmented full score, read consistently in multiple
+        # image treatments, can corroborate an otherwise low-confidence read.
+        return chosen, max(max(scores), 65 if len(scores) > 1 else 0)
+    if candidates:
+        chosen = max(candidates, key=lambda k: (len(candidates[k]), max(candidates[k])))
+        return chosen, min(max(candidates[chosen]), 54)
+    return '', 0.
+
+
+def read_player_name(crop, resolve, master_keys):
+    name, confidence = text_with_conf(enlarge(crop), 7)
+    if master_keys and name_key(resolve(name)) in master_keys:
+        return name, confidence
+    alternate, score = text_with_conf(enlarge(crop,3), 13)
+    if master_keys and name_key(resolve(alternate)) in master_keys:
+        return alternate, score
+    if alternate and (not name or score > confidence):
+        name, confidence = alternate, score
+    return retry_name_crop(crop,name,confidence)
+
+
+def roster_portrait_match(row, name, portraits):
+    """Require matching artwork and supporting text before linking a fuzzy name."""
+    if not row.get('avatar_base64'):
+        return None
+    avatar = cv2.imdecode(np.frombuffer(base64.b64decode(row['avatar_base64']), np.uint8), cv2.IMREAD_GRAYSCALE)
+    if avatar is None:
+        return None
+    center = cv2.resize(avatar, (96,96), interpolation=cv2.INTER_AREA)[23:73,23:73]
+    if center.std() < 12:
+        return None
+    templates = [cv2.resize(center,(size,size)) for size in (45,50,55)]
+    scores = sorted(((max(float(cv2.matchTemplate(portrait, template, cv2.TM_CCOEFF_NORMED).max())
+                          for template in templates), key) for key, portrait in portraits.items()), reverse=True)
+    if not scores:
+        return None
+    best, key = scores[0]
+    runner_up = scores[1][0] if len(scores) > 1 else 0
+    text = compact_key(name)
+    target = compact_key(key)
+    similarity = SequenceMatcher(None, text, target, autojunk=False).ratio()
+    if best >= .86 and best-runner_up >= .14 and similarity >= .52:
+        return key
+    return None
+
+
+def read_page(image, page, period, upper, targets=None, anchors=None, *, resolve=str, master_keys=None,
+              gap_neighbors=None):
     h,w=image.shape[:2]; scale=w/1080
     bottom=pinned_top(image)
-    borders=card_borders(image,bottom)
     rows=[]
-    for top, end in zip(borders,borders[1:]):
-        if not (.90*period <= end-top <= 1.12*period and top >= upper-8*scale and end <= bottom-4*scale):
-            continue
+
+    def avatar_at(center):
+        return image[round(center-52*scale):round(center+53*scale),round(240*scale):round(347*scale)]
+
+    def signature_at(center):
+        return cv2.resize(cv2.cvtColor(avatar_at(center),cv2.COLOR_BGR2GRAY),(24,24))
+
+    if anchors is None:
+        borders=card_borders(image,bottom)
+        intervals = [(top, end, None) for top, end in zip(borders,borders[1:])
+                     if .90*period <= end-top <= 1.12*period and top >= upper-8*scale and end <= bottom-4*scale]
+    else:
+        # A moving border or touch overlay can defeat row detection even
+        # though the same avatar and score are still fully visible.
+        intervals = []
+        for anchor in anchors:
+            expected = anchor['center']
+            def distance(center):
+                return cv2.absdiff(signature_at(center),anchor['signature']).mean()
+            centers = range(expected-round(.29*period),expected+round(.29*period)+1,max(1,round(3*scale)))
+            centers = [cy for cy in centers if upper+50*scale <= cy <= bottom-55*scale]
+            if upper+50*scale <= expected <= bottom-55*scale:
+                centers.append(expected)
+            if not centers:
+                continue
+            cy = min(centers,key=distance)
+            if distance(cy) < 13:
+                half = round(66*scale)
+                intervals.append((cy-half,cy+half,anchor))
+    for index, (top, end, anchor) in enumerate(intervals):
         cy=round((top+end)/2)
         def crop(x0,x1,y0,y1):
             return image[max(top,round(cy+y0*scale)):min(end,round(cy+y1*scale)),round(x0*scale):round(x1*scale)]
-        avatar=crop(240,347,-52,53)
-        signature=cv2.resize(cv2.cvtColor(avatar,cv2.COLOR_BGR2GRAY),(24,24))
-        matched = None
-        if anchors is not None:
-            matches = [anchor for anchor in anchors
-                       if abs(cy-anchor['center']) < period*.30
-                       and cv2.absdiff(signature,anchor['signature']).mean() < 14]
-            if len(matches) != 1:
-                continue
-            matched = matches[0]['internal_position']
+        avatar=avatar_at(cy)
+        signature=signature_at(cy)
+        matched = anchor['internal_position'] if anchor is not None else None
         position, pc=text_with_conf(enlarge(crop(92,185,-35,39)),7,'0123456789') if anchors is None else ('',0)
         position=re.sub(r'\D','',position)
         position=int(position) if position.isdigit() and 1<=int(position)<=100 else None
-        if targets is not None and position not in targets:continue
-        name_crop=crop(350,808,-57,-5)
-        check_name=anchors is None or matches[0].get('check_name',True)
-        name, nc=text_with_conf(enlarge(name_crop),7) if check_name else ('',0)
-        if check_name and (not name or nc<55):
-            alternate,confidence=text_with_conf(enlarge(name_crop,3),13)
-            if alternate and (not name or confidence>nc):name,nc=alternate,confidence
-            name,nc=retry_name_crop(name_crop,name,nc)
+        if targets is not None and position not in targets:
+            if gap_neighbors is None or not 0 < index < len(intervals)-1:
+                continue
+            before = round(sum(intervals[index-1][:2])/2)
+            after = round(sum(intervals[index+1][:2])/2)
+            if not all(.85*period < abs(center-cy) < 1.15*period
+                       and cv2.absdiff(signature_at(center), neighbor['signature']).mean() < 12
+                       for center,neighbor in zip((before,after),gap_neighbors)):
+                continue
+        name_crop=crop(350,808,-50,-8)
+        check_name=anchor is None or anchor.get('check_name',True)
+        name,nc=read_player_name(name_crop,resolve,master_keys) if check_name else ('',0)
         name=re.sub(r'\s+',' ',name).strip()
-        zero=isolated_zero(crop(806,1035,-25,44))
-        val,vc=('0',98.) if zero else text_with_conf(enlarge(crop(806,1035,-25,44)),7,'0123456789,')
-        val=re.sub(r'\D','',val)
-        if not val or vc<55:
-            # Tighten the actual ink and add a white border. A tiny single zero
-            # in a wide stat cell is otherwise often rejected by Tesseract.
-            gray=cv2.cvtColor(crop(806,1035,-25,44),cv2.COLOR_BGR2GRAY)
-            ys,xs=np.where(gray<min(180,float(np.median(gray))-30))
-            if len(xs):
-                tight=gray[max(0,int(ys.min())-5):int(ys.max())+6,max(0,int(xs.min())-5):int(xs.max())+6]
-                tight=cv2.copyMakeBorder(enlarge(tight,4),30,30,30,30,cv2.BORDER_CONSTANT,value=255)
-                retry,confidence=text_with_conf(tight,7)
-                if re.fullmatch(r'[Oo]',retry.strip()):retry='0'
-                retry=re.sub(r'\D','',retry)
-                if retry and (not val or confidence>vc):val,vc=retry,confidence
-        if not val:
-            retry,confidence=text_with_conf(enlarge(crop(806,1035,-25,44),3),13,'0123456789,')
-            val,vc=re.sub(r'\D','',retry),confidence
+        val,vc=read_score(crop(750,1035,-25,44))
         ok=ok_avatar=False
         if anchors is None:
             evidence=image[top:end,round(45*scale):round(1040*scale)]
@@ -230,14 +343,14 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
     return confirmed
 
 
-def read_vs_neighbor(image, anchors, day):
+def read_vs_neighbor(image, anchors, day, resolve, master_keys):
     try:
         if selected_weekday(image,False) != day:
             return []
     except ValueError:
         return []
     return read_page(image,0,anchors[0]['period'],
-                     round(.225*image.shape[0]),anchors=anchors)
+                     round(.225*image.shape[0]),anchors=anchors,resolve=resolve,master_keys=master_keys)
 
 
 def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_keys=None):
@@ -265,7 +378,7 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
                     raise ValueError('The selected VS day changed during the recording. Upload one day at a time.')
                 try:period=estimate_row_height(image)
                 except ValueError:period=189*image.shape[1]/1080
-                rows=read_page(image,total_pages+1,period,round(.225*image.shape[0]))
+                rows=read_page(image,total_pages+1,period,round(.225*image.shape[0]),resolve=resolve,master_keys=master_keys)
                 start=best_start(rows,observations)
                 for offset,row in enumerate(rows):
                     position=start+offset
@@ -293,8 +406,9 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
                 for frame in np.linspace(left[1],right[1],14,dtype=int)[1:-1]:
                     cap.set(cv2.CAP_PROP_POS_FRAMES,int(frame));ok,image=cap.read()
                     if not ok:continue
-                    candidates=read_page(image,-gap,189*image.shape[1]/1080,round(.225*image.shape[0]),{gap})
-                    if candidates:
+                    candidates=read_page(image,-gap,previous['period'],round(.225*image.shape[0]),{gap},
+                                         resolve=resolve,master_keys=master_keys,gap_neighbors=(previous,following))
+                    if len(candidates) == 1:
                         row=candidates[0];row['internal_position']=gap
                         observations[gap]=row
                         page_sources[-gap]=(left[0],int(frame))
@@ -302,9 +416,10 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
                         break
             finally:cap.release()
         reasons = review_flags(observations, variants, score_variants, resolve, master_keys)
+        name_warnings = {pos: any('name' in flag.lower() for flag in flags) for pos,flags in reasons.items()}
         confirmed = recheck_neighbors(
-            observations, page_sources, reasons, resolve, progress,
-            lambda image,anchors: read_vs_neighbor(image,anchors,next(iter(days))))
+            observations, page_sources, name_warnings, resolve, progress,
+            lambda image,anchors: read_vs_neighbor(image,anchors,next(iter(days)),resolve,master_keys))
         for position, fields in confirmed.items():
             if 'name' in fields:
                 variants.pop(position,None)

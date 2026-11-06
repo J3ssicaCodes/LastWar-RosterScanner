@@ -4,13 +4,16 @@ from collections import defaultdict
 import csv
 import io
 import json
+
+import cv2
+import numpy as np
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from player_identity import (match_master, name_key, learn_name_correction, exact_player_index,
                              corrected_name, load_name_corrections, scan_player_ids, record_scan_players,
                              number_needs_review, NUMBER_REVIEW_PREFIX)
-from vs_points_ocr import score_date_for_day
+from vs_points_ocr import roster_portrait_match, score_date_for_day
 
 
 class VSRow(BaseModel):
@@ -54,12 +57,25 @@ def stage_vs_result(connect_db, job_id, result):
                 cur.execute('SELECT id,player_name FROM `player list`')
                 master = exact_player_index(cur.fetchall())
                 corrections = load_name_corrections(cur)
+                portraits = None
                 candidates = []
                 scores = defaultdict(set)
                 for row in result['rows']:
                     raw = row.get('ocr_name', row['name'])
                     name = corrected_name(raw, corrections, master.keys())
                     player = master.get(name_key(name))
+                    if not player and row.get('avatar_base64'):
+                        if portraits is None:
+                            cur.execute('SELECT player_name,avatar_image FROM `player list` WHERE avatar_image IS NOT NULL')
+                            portraits = {}
+                            for entry in cur.fetchall():
+                                key = name_key(entry['player_name'])
+                                if not master.get(key) or not entry['avatar_image']:
+                                    continue
+                                image = cv2.imdecode(np.frombuffer(entry['avatar_image'], np.uint8), cv2.IMREAD_GRAYSCALE)
+                                if image is not None:
+                                    portraits[key] = cv2.resize(image,(96,96),interpolation=cv2.INTER_AREA)
+                        player = master.get(roster_portrait_match(row,name,portraits))
                     points = row['points']
                     valid = type(points) is int and 0 <= points <= 9007199254740991
                     if player and valid:
