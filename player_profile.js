@@ -86,9 +86,10 @@
         ['Kills',number(p.kills)],['Donations',number(p.donations)],['HQ',number(p.hq_level)],
         ['Birthday',p.birthday||'—'],['Last seen',p.last_seen_at?new Date(p.last_seen_at+'Z').toLocaleDateString():'—']
       ].map(([label,value])=>'<dt>'+label+'</dt><dd style="margin:0">'+esc(value)+'</dd>').join('')+'</dl>'+
-      (edit?'':'<button type="button" class="btn" data-merge>Merge duplicate</button> <button type="button" class="btn" data-claim-vs>Claim VS entry</button><p data-merge-message role="status" hidden></p>')+
+      (edit?'':'<p><label><input type="checkbox" data-train-restriction disabled> Disable train assignments</label> <span data-train-restriction-status role="status"></span></p><button type="button" class="btn" data-merge>Merge duplicate</button> <button type="button" class="btn" data-claim-vs>Claim VS entry</button><p data-merge-message role="status" hidden></p>')+
       '<section class="profile-history" data-history></section>';
     renderHistory();
+    loadTrainRestriction(p);
     dialog.querySelector('[data-merge]')?.addEventListener('click',openMerge);
     dialog.querySelector('[data-claim-vs]')?.addEventListener('click',openVSClaim);
     dialog.querySelector('[data-close]').onclick=()=>dialog.close();
@@ -114,6 +115,33 @@
       }catch(err){if(form.isConnected)form.querySelector('[data-error]').textContent=err.message;}
       finally{button.disabled=false;}
     });
+  }
+  async function loadTrainRestriction(p){
+    const toggle=dialog.querySelector('[data-train-restriction]');
+    if(!toggle)return;
+    const status=dialog.querySelector('[data-train-restriction-status]');
+    const path='/api/train/restriction/'+p.id;
+    try{
+      const response=await fetch(path,{cache:'no-store'});
+      if(!response.ok)throw Error();
+      const data=await response.json();
+      if(!toggle.isConnected)return;
+      toggle.checked=data.disabled;toggle.disabled=false;
+    }catch{if(toggle.isConnected)status.textContent='Could not load train eligibility.';return;}
+    toggle.onchange=async()=>{
+      const disabled=toggle.checked;
+      if(!window.confirm((disabled?'Disallow ':'Allow ')+p.name+' to be awarded a train?')){
+        toggle.checked=!disabled;return;
+      }
+      toggle.disabled=true;
+      try{
+        const response=await fetch(path,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({disabled})});
+        if(!response.ok)throw Error();
+        status.textContent=disabled?'Train awards disabled.':'Train awards allowed.';
+        window.dispatchEvent(new Event('train-restriction-changed'));
+      }catch{toggle.checked=!disabled;status.textContent='Could not update train eligibility.';}
+      finally{toggle.disabled=false;}
+    };
   }
   function openMerge(event){
     dialog.querySelector('[data-claim-vs]').disabled=true;

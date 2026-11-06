@@ -253,6 +253,7 @@ th[aria-sort] .sort-column span{opacity:1}
 <header class="top"><div><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch appearance" aria-pressed="false">☀️ Light mode</button></div></header>
 <nav class="workspace-tabs" role="tablist" aria-label="Alliance workspace sections">
   <button type="button" class="workspace-tab" id="rosterScannerTab" role="tab" aria-controls="rosterScannerView" aria-selected="true" tabindex="0" data-workspace-tab="scanner"><span class="workspace-tab-icon" aria-hidden="true">▦</span><span>Roster Scanner</span></button>
+  <button type="button" class="workspace-tab" id="trainTab" role="tab" aria-controls="trainView" aria-selected="false" tabindex="-1" data-workspace-tab="train">Train Manager</button>
   <button type="button" class="workspace-tab" id="playerListTab" role="tab" aria-controls="playerListView" aria-selected="false" tabindex="-1" data-workspace-tab="players"><span class="workspace-tab-icon" aria-hidden="true">♙</span><span>Player List</span></button>
   <button type="button" class="workspace-tab" id="vsPointsTab" role="tab" aria-controls="vsPointsView" aria-selected="false" tabindex="-1" data-workspace-tab="vs"><span class="workspace-tab-icon" aria-hidden="true">▤</span><span>VS Points</span></button>
   <button type="button" class="workspace-tab" id="performanceTab" role="tab" aria-controls="performanceView" aria-selected="false" tabindex="-1" data-workspace-tab="performance">Player Performance</button>
@@ -369,6 +370,7 @@ th[aria-sort] .sort-column span{opacity:1}
     </div>
   </section>
 </section>
+<section id="trainView" class="workspace-view" role="tabpanel" aria-labelledby="trainTab" tabindex="0" hidden></section>
 <section id="adminView" class="workspace-view" role="tabpanel" aria-labelledby="adminTab" tabindex="0" hidden>
   <section class="panel pl-section" aria-labelledby="adminTitle">
     <h2 id="adminTitle">Admin</h2>
@@ -405,6 +407,7 @@ th[aria-sort] .sort-column span{opacity:1}
       <tbody id="adminDictionaryRows"></tbody>
     </table></div>
   </section>
+  <section class="panel pl-section" id="trainAdmin" aria-label="Train administration"></section>
 </section>
 <footer class="app-footer"><strong>This app was created by Lady Jess</strong></footer>
 </main>
@@ -2124,7 +2127,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 (() => {
   const storageKey='lastwar.workspaceTab.v1';
   const tabs=[...document.querySelectorAll('[data-workspace-tab]')];
-  const views={scanner:document.getElementById('rosterScannerView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView'),performance:document.getElementById('performanceView'),admin:document.getElementById('adminView')};
+  const views={scanner:document.getElementById('rosterScannerView'),train:document.getElementById('trainView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView'),performance:document.getElementById('performanceView'),admin:document.getElementById('adminView')};
   function selectTab(tabId,focus=false){
     if(!Object.hasOwn(views,tabId))tabId='scanner';
     for(const tab of tabs){
@@ -2520,5 +2523,6 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 <script defer src="/vs_ui.js"></script>
 <script defer src="/player_performance.js"></script>
 <script defer src="/admin_ui.js"></script>
+<script defer src="/train_manager.js"></script>
 </body>
 </html>

@@ -16,8 +16,13 @@ USER_TABLES = {
     'player_stat_history': 'Player Stat History',
     'media_scan_audit': 'Scan Diagnostics',
     'media_scan_jobs': 'Scan Queue and History',
+    'train_settings': 'Train Manager Settings',
+    'train_restrictions': 'Train Award Restrictions',
+    'train_assignments': 'Train Assignment History',
+    'train_event_names': 'Custom Alliance Event Names',
+    'train_emails': 'Saved Alliance Emails',
 }
-PRESERVED_TABLES = {'player_name_dictionary', 'alliance_admin_state'}
+PRESERVED_TABLES = {'player_name_dictionary', 'alliance_admin_state', 'vs_vision_usage'}
 USER_DATA_MARKER = 'alliance_tools:user_data'
 CLEAR_PATH = '/api/admin/clear-data'
 

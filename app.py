@@ -766,3 +766,13 @@ install_admin_reset(app, db_connect, jobs, job_lock)
 @app.get('/admin_ui.js')
 def admin_ui_script():
     return FileResponse(BASE / 'admin_ui.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})
+
+
+from train_manager import install_train_manager
+install_train_manager(app, db_connect)
+
+
+@app.get('/train_manager.js')
+def train_manager_script():
+    return FileResponse(BASE / 'train_manager.js', media_type='application/javascript',
+                        headers={'Cache-Control':'no-cache'})

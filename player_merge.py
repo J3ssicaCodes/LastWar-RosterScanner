@@ -97,6 +97,14 @@ def merge_player_records(connect_db, keep_id, body):
                                updated_at=UTC_TIMESTAMP(6) WHERE id=%s""",
                             (*combined,portrait['avatar_mime'],portrait['avatar_updated_at'],portrait['avatar_image'],
                              source['first_seen_at'],source['last_seen_at'],source['is_new'],source['possibly_removed'],keep_id))
+                for field in ('conductor_id','vip_id'):
+                    cur.execute(f'UPDATE train_assignments SET {field}=%s WHERE {field}=%s',
+                                (keep_id,body.duplicate_id))
+                cur.execute('SELECT player_id FROM train_restrictions WHERE player_id=%s FOR UPDATE',
+                            (body.duplicate_id,))
+                if cur.fetchone():
+                    cur.execute('INSERT IGNORE INTO train_restrictions (player_id) VALUES (%s)',(keep_id,))
+                    cur.execute('DELETE FROM train_restrictions WHERE player_id=%s',(body.duplicate_id,))
                 cur.execute('DELETE FROM `player list` WHERE id=%s',(body.duplicate_id,))
             conn.commit()
         except Exception:
