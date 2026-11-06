@@ -13,6 +13,7 @@ from extract_ranking_pages import detect, extract
 from scan_rankings import card_borders, pinned_top, estimate_row_height, text_with_conf, enlarge, best_start, retry_name_crop
 
 from player_identity import corrected_name, compact_key, name_key, NUMBER_REVIEW_PREFIX
+from vs_rank_reader import read_rank
 
 DAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
 
@@ -213,7 +214,7 @@ def read_page(image, page, period, upper, targets=None, anchors=None, *, resolve
         avatar=avatar_at(cy)
         signature=signature_at(cy)
         matched = anchor['internal_position'] if anchor is not None else None
-        position, pc=text_with_conf(enlarge(crop(92,185,-35,39)),7,'0123456789') if anchors is None else ('',0)
+        position, pc=read_rank(crop(92,185,-35,39)) if anchors is None else ('',0)
         position=re.sub(r'\D','',position)
         position=int(position) if position.isdigit() and 1<=int(position)<=100 else None
         if targets is not None and position not in targets:
@@ -311,6 +312,7 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
                 views = [row,*neighbors[position]]
                 numbers = [view['value'] for view in views]
                 readable = [int(value) for value in numbers if value.isdecimal()]
+                row['point_readings'] = sorted(set(readable))
                 reliable = [view for view in views
                             if view['value'].isdecimal() and view['value_conf'] >= 55]
                 if len(reliable) >= 2 and len(set(readable)) == 1:
@@ -353,6 +355,25 @@ def read_vs_neighbor(image, anchors, day, resolve, master_keys):
                      round(.225*image.shape[0]),anchors=anchors,resolve=resolve,master_keys=master_keys)
 
 
+def include_readable_opening(path, detection):
+    fps, count, top, bottom, runs = detection
+    if not runs or runs[0][0] <= fps/3:
+        return detection
+    cap = cv2.VideoCapture(str(path))
+    try:
+        ok, opening = cap.read()
+        if not ok or not cap.set(cv2.CAP_PROP_POS_FRAMES, sum(runs[0])//2):
+            return detection
+        ok, paused = cap.read()
+        if ok and selected_weekday(opening) == selected_weekday(paused, False):
+            return fps, count, top, bottom, [(0,0), *runs]
+    except ValueError:
+        pass
+    finally:
+        cap.release()
+    return detection
+
+
 def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_keys=None):
     corrections = corrections or {}
     resolve = lambda name: corrected_name(name, corrections, master_keys or set())
@@ -362,7 +383,7 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
             path=Path(path)
             if path.suffix.lower() in ('.mp4','.mov','.m4v','.webm'):
                 info=detect(path,progress=progress)
-                manifest=extract(path,Path(tmp)/str(index),*info)
+                manifest=extract(path,Path(tmp)/str(index),*include_readable_opening(path,info))
                 pages=[Path(tmp)/str(index)/p['image'] for p in manifest['kept']]
             else:
                 pages=[path]
@@ -439,6 +460,7 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
             reasons[pos].append('Adjacent frames did not resolve all review flags')
         rows.append({**{k:v for k,v in row.items() if k not in ('signature','center','matched_position','period')},
                      'name':resolve(row['name']),'ocr_name':row['name'],
+                     'point_readings':sorted(set(row.get('point_readings',[])) | score_variants.get(pos,set())),
                      'points':int(row['value']) if row['value'].isdigit() else None,
                      'review_reasons':reasons[pos],'score_date':earned.isoformat()})
     return {'rows':rows,'weekday':DAYS[day],'score_date':earned.isoformat(),

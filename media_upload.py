@@ -26,6 +26,7 @@ from player_identity import (match_master, name_key, corrected_name,
                              load_name_corrections, learn_name_correction, exact_player_index, scan_player_ids, record_scan_players,
                              number_needs_review, NUMBER_REVIEW_PREFIX)
 from vs_points_ocr import scan_vs_upload
+from google_vision_ocr import recheck_vs_rows
 from vs_points import stage_vs_result
 from tested_rankings_adapter import scan_tested_rankings_upload
 from storm_roster_ocr import scan_storm_upload
@@ -235,10 +236,13 @@ def install_media_upload(app, connect_db, import_players, import_model):
             if destination == 'vs':
                 if upload_date is None:raise ValueError('Upload date is missing. Select the file again.')
                 result=scan_vs_upload(paths,report,upload_date,corrections,master_keys)
+                recheck_vs_rows(result,os.getenv('GOOGLE_VISION_API_KEY'),connect_db,corrections,master_keys,report)
                 counts=stage_vs_result(connect_db,job_id,result)
                 saved,pending=counts['saved'],counts['pending']
+                gaps = result.get('missing_positions', [])
+                coverage = f" · {len(gaps)} ranks not captured" if gaps else ''
                 set_job(job_id,status='review' if pending else 'ready',progress=100,count=saved+pending,
-                        message=f"{result['weekday']} · {result['score_date']} · {saved} VS scores saved · {pending} to review")
+                        message=f"{result['weekday']} · {result['score_date']} · {saved} VS scores saved · {pending} to review{coverage}")
                 finished_successfully=True
                 return
             if destination == 'storm':

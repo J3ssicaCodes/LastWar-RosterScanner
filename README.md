@@ -249,3 +249,16 @@ in the table definition so Clear Data includes them. Only apply this marker
 to tables whose rows should be deleted on reset. The reset uses one transaction,
 preserves the dictionary and reset marker, and rejects dependencies from tables
 outside its scope.
+
+### Optional Google Cloud Vision for VS review
+
+VS scans use RapidOCR for the rank column. To enable a Google second read of
+flagged VS rows, enable the Cloud Vision API and billing in Google Cloud, then
+add a server-side API key restricted to Cloud Vision as `GOOGLE_VISION_API_KEY`
+in the Render service's Environment settings and deploy. The Google Drive
+picker uses separate credentials.
+
+The fallback sends one cropped leaderboard row per flagged candidate. An
+unavailable response leaves the local review intact. A database counter caps
+this application's submissions at 900 images per Pacific Time calendar month. Usage elsewhere
+on the same Google Cloud project is outside this counter.

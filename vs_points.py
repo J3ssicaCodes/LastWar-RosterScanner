@@ -62,7 +62,7 @@ def stage_vs_result(connect_db, job_id, result):
                 scores = defaultdict(set)
                 for row in result['rows']:
                     raw = row.get('ocr_name', row['name'])
-                    name = corrected_name(raw, corrections, master.keys())
+                    name = corrected_name(row['name'], corrections, master.keys())
                     player = master.get(name_key(name))
                     if not player and row.get('avatar_base64'):
                         if portraits is None:
