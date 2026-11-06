@@ -6,7 +6,7 @@
   const style=document.createElement('style');
   style.textContent='#vsRows .vs-unmatched{color:var(--red);color:color-mix(in srgb,var(--red) 80%,var(--text))}';
   document.head.append(style);
-  let saved=[],pending=[],days=[],weekRequest=0;
+  let saved=[],pending=[],days=[],weekRequest=0,displayedWeek;
   const localDate=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),
     String(d.getDate()).padStart(2,'0')].join('-');
   let selectedWeek=weekBounds(localDate(new Date()))[0];
@@ -18,13 +18,14 @@
   const calendar=$('vsWeekCalendar');
   function setWeek(day){
     selectedWeek=weekBounds(day)[0];
-    load().catch(error=>{$('vsMessage').textContent=error.message;});
+    load();
   }
   async function api(path,options){
     const r=await fetch(path,{cache:'no-store',...options});const data=await r.json();
     if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:'Check the selected names, dates and points.');return data;
   }
   function render(){
+    if(!displayedWeek)return;
     const query=$('vsSearch').value.trim().toLocaleLowerCase();
     const players=new Map();
     for(const row of saved){
@@ -41,7 +42,8 @@
       '<button type="button" class="player-profile-link" data-open-player-profile="'+Number(row.rosterId)+'">'+esc(row.name)+'</button>':
       '<span class="vs-unmatched" title="Not on the Player List">'+esc(row.name)+'<span class="sr-only"> (not on the Player List)</span></span>')+'</th>'+
       days.map(day=>'<td>'+(row.scores.has(day)?row.scores.get(day).toLocaleString():'—')+'</td>').join('')+
-      '<td>'+row.total.toLocaleString()+'</td></tr>').join('')||'<tr><td colspan="8">No scores for this week.</td></tr>';
+      '<td>'+row.total.toLocaleString()+'</td></tr>').join('')||'<tr><td colspan="8" class="pl-empty">'+
+      (query&&saved.length?'No players match your search.':'No scores for this week.')+'</td></tr>';
     const unmatched=rows.filter(row=>!row.rosterId).length;
     $('vsSummary').textContent=rows.length+' players · '+rows.reduce((sum,row)=>sum+row.total,0n).toLocaleString()+' points shown'+
       (unmatched?' · '+unmatched+' unmatched '+(unmatched===1?'name':'names')+' in red':'');
@@ -51,11 +53,26 @@
     const chosen=selectedWeek;
     $('vsWeekLabel').textContent='Week of '+displayDate(chosen)+' to '+displayDate(shiftDate(chosen,6));
     const request=++weekRequest;
-    const data=await api('/api/vs-points/weekly?week_start='+encodeURIComponent(chosen));
-    if(request!==weekRequest)return;
-    saved=data.rows||[];
-    days=data.days||[];
-    render();
+    const rows=$('vsRows');
+    if(displayedWeek!==chosen){
+      displayedWeek=null;
+      rows.innerHTML='<tr><td colspan="8" class="pl-empty">Loading scores…</td></tr>';
+      $('vsSummary').textContent='';
+      $('vsExport').href='/api/vs-points/export.csv?week_start='+encodeURIComponent(chosen);
+    }
+    rows.setAttribute('aria-busy','true');
+    try{
+      const data=await api('/api/vs-points/weekly?week_start='+encodeURIComponent(chosen));
+      if(request!==weekRequest)return;
+      saved=data.rows||[];
+      days=data.days||[];
+      displayedWeek=chosen;
+      render();
+    }catch(error){
+      if(request!==weekRequest)return;
+      if(!displayedWeek)rows.innerHTML='<tr><td colspan="8" class="pl-empty">Could not load scores for this week. Try Refresh.</td></tr>';
+      else $('vsSummary').textContent='Showing the last loaded scores. Try Refresh to check for updates.';
+    }finally{if(request===weekRequest)rows.removeAttribute('aria-busy');}
   }
   function weekBounds(upload){
     const d=new Date(upload+'T12:00:00');const sunday=new Date(d);sunday.setDate(d.getDate()+(7-d.getDay())%7);
@@ -273,7 +290,8 @@
   calendar.addEventListener('click',event=>{
     if(event.target===calendar)calendar.close();
   });
-  document.getElementById('vsPointsTab').addEventListener('click',refresh);
+  const view=$('vsPointsView');
+  new MutationObserver(()=>{if(!view.hidden)refresh();}).observe(view,{attributes:true,attributeFilter:['hidden']});
   window.addEventListener('focus',refresh);refresh();
   window.addEventListener('player-profile-updated',async()=>{
     try{const data=await api('/api/player-list');reviewNames.roster(data.players);refreshFocusedSuggestions();}catch{}

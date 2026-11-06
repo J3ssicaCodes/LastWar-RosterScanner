@@ -246,33 +246,89 @@ th[aria-sort] .sort-column span{opacity:1}
 @media(max-width:720px){.pl-section{padding:17px}.pl-upload-grid{grid-template-columns:1fr}.pl-drop{min-height:175px}.pl-summary{gap:7px}.pl-summary>div{padding:11px}.pl-summary strong{font-size:20px}.pl-title-row h2{font-size:21px}.pl-review-actions .btn{flex:1}}
 @media(max-width:460px){.pl-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.pl-filters{flex-direction:column}.pl-filters select{max-width:none}.pl-dir-actions .btn{padding:8px 10px;font-size:12px}}
 
+.workspace-brand,.workspace-heading>div{min-width:0}
+.top .workspace-utilities,.workspace-heading{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.top .workspace-brand{flex:1 1 330px}
+.top .header-preferences{margin-left:0}
+.workspace-heading{justify-content:space-between}
+.workspace-heading>div{flex:1 1 240px}
+.workspace-disclosure{cursor:pointer;font-weight:750}
+.start-guide-heading{margin-top:14px}
+.workspace-table-hint{color:var(--muted);font-size:12px;margin:6px 0}
+.workspace-view :is(button,a,input,select,textarea,summary,[tabindex]):focus-visible,
+dialog :is(button,a,input,select,textarea,summary):focus-visible,
+.workspace-utilities :is(button,a):focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+[data-scroll-table]:focus-visible{outline-offset:-2px!important}
+[data-scroll-table] td{font-variant-numeric:tabular-nums}
+#vsSummary:empty,#vsMessage:empty{display:none}
+#adminClearTables label{display:flex;align-items:center;gap:8px;min-height:36px}
+html[data-theme="light"]{color-scheme:light}
+html[data-theme="dark"]{color-scheme:dark}
+@media(max-width:1000px){
+  .workspace-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));overflow:visible;border:0;padding:0;gap:6px}
+  .workspace-tab{min-width:0;justify-content:center;text-align:center;line-height:1.2;min-height:47px;padding:7px;border:1px solid var(--stroke);border-radius:9px;overflow-wrap:anywhere}
+  .workspace-tab[aria-selected="true"]{box-shadow:inset 0 -2px var(--violet)}
+}
+@media(max-width:680px){
+  .top{gap:10px;margin-bottom:12px}
+  .top .workspace-brand{flex-basis:100%}
+  .workspace-brand .subtitle{display:none}
+  .workspace-brand h1{margin:3px 0;font-size:clamp(24px,8vw,33px)}
+  .top .workspace-utilities{width:100%;gap:6px}
+  .workspace-utilities .btn{flex:1 1 125px;width:auto;min-width:0;margin:0;min-height:42px;padding:8px 9px;font-size:14px}
+  .header-preferences .preference-control{flex:1 1 0;min-width:0}
+  .header-preferences .preference-control select{width:0;min-width:0}
+  .header-preferences .preference-label{display:none}
+  .header-preferences .theme-toggle{white-space:nowrap}
+  .workspace-tab{font-size:12px;gap:5px}
+  .workspace-tab-icon{flex:none;width:20px;height:20px;font-size:13px}
+  .start-guide{padding:12px 15px}
+  .workspace-heading>div{flex-basis:100%}
+  .workspace-view input:is([type="search"],[type="date"]){font-size:16px}
+  .vs-week-nav .btn{min-height:42px}
+  #vsWeekLabel{flex:1}
+  #vsWeekLabel~.btn,#vsPrevious{width:auto;flex:0 0 42px}
+  #plSortHeaders th:nth-child(2),#plDirectoryBody tr[data-player-profile] .pl-player-name,
+  #vsWeekColumns th:first-child,#vsRows th[scope="row"],
+  #performanceColumns th:first-child,#performanceRows th[scope="row"]{
+    position:sticky;left:0;z-index:1;background:var(--panel2);box-shadow:1px 0 var(--stroke);
+    max-width:144px;white-space:normal;overflow-wrap:anywhere
+  }
+  [data-scroll-table] :is(th[scope="row"],.pl-player-name) button{
+    max-width:120px;white-space:normal;overflow-wrap:anywhere;text-align:left
+  }
+}
+@media(max-width:440px){.workspace-tab-icon{display:none}}
+@media(prefers-reduced-motion:reduce){
+  .workspace-tab{transition:none}
+}
 </style>
 </head>
 <body>
 <main class="shell">
-<header class="top"><div><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch appearance" aria-pressed="false">☀️ Light mode</button></div></header>
+<header class="top"><div class="workspace-brand"><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch appearance" aria-pressed="false">☀️ Light mode</button></div><div class="workspace-utilities" id="workspaceUtilities"></div></header>
 <nav class="workspace-tabs" role="tablist" aria-label="Alliance workspace sections">
   <button type="button" class="workspace-tab" id="rosterScannerTab" role="tab" aria-controls="rosterScannerView" aria-selected="true" tabindex="0" data-workspace-tab="scanner"><span class="workspace-tab-icon" aria-hidden="true">▦</span><span>Roster Scanner</span></button>
-  <button type="button" class="workspace-tab" id="trainTab" role="tab" aria-controls="trainView" aria-selected="false" tabindex="-1" data-workspace-tab="train">Train Manager</button>
+  <button type="button" class="workspace-tab" id="trainTab" role="tab" aria-controls="trainView" aria-selected="false" tabindex="-1" data-workspace-tab="train"><span class="workspace-tab-icon" aria-hidden="true">♧</span><span>Train Manager</span></button>
   <button type="button" class="workspace-tab" id="playerListTab" role="tab" aria-controls="playerListView" aria-selected="false" tabindex="-1" data-workspace-tab="players"><span class="workspace-tab-icon" aria-hidden="true">♙</span><span>Player List</span></button>
   <button type="button" class="workspace-tab" id="vsPointsTab" role="tab" aria-controls="vsPointsView" aria-selected="false" tabindex="-1" data-workspace-tab="vs"><span class="workspace-tab-icon" aria-hidden="true">▤</span><span>VS Points</span></button>
-  <button type="button" class="workspace-tab" id="performanceTab" role="tab" aria-controls="performanceView" aria-selected="false" tabindex="-1" data-workspace-tab="performance">Player Performance</button>
-  <button type="button" class="workspace-tab" id="adminTab" role="tab" aria-controls="adminView" aria-selected="false" tabindex="-1" data-workspace-tab="admin">Admin</button>
+  <button type="button" class="workspace-tab" id="performanceTab" role="tab" aria-controls="performanceView" aria-selected="false" tabindex="-1" data-workspace-tab="performance"><span class="workspace-tab-icon" aria-hidden="true">↗</span><span>Player Performance</span></button>
+  <button type="button" class="workspace-tab" id="adminTab" role="tab" aria-controls="adminView" aria-selected="false" tabindex="-1" data-workspace-tab="admin"><span class="workspace-tab-icon" aria-hidden="true">⚙</span><span>Admin</span></button>
 </nav>
 <section id="rosterScannerView" class="workspace-view" role="tabpanel" aria-labelledby="rosterScannerTab" tabindex="0">
 <section class="event-selector panel" aria-labelledby="eventSelectorTitle">
   <div class="event-selector-copy"><div class="eyebrow">Event planning</div><h2 id="eventSelectorTitle">Choose your event</h2><p>Desert Storm and Canyon Storm are built in maps. Customize their priorities, or add another event with assignable buildings and ignored areas. Choose your event before scanning.</p></div>
-  <div class="event-selector-controls"><label for="eventSelect">Active event</label><div><select id="eventSelect" aria-label="Select event"></select><button id="manageEventsBtn" class="btn" type="button">⚙ Manage events</button></div><small id="eventStartupLabel">Saved locally on this device</small></div>
+  <div class="event-selector-controls"><label for="eventSelect">Active event</label><div><select id="eventSelect" aria-label="Select event"></select><button id="manageEventsBtn" class="btn" type="button">⚙ Manage events</button></div><small id="eventStartupLabel">Saved locally on this device</small><button class="btn primary" type="button" data-open-upload="storm">Upload roster</button></div>
 </section>
-<section class="start-guide" aria-labelledby="startGuideTitle">
+<details class="start-guide"><summary class="workspace-disclosure">Roster scanning guide</summary>
   <div class="start-guide-heading"><div class="eyebrow">Get started</div><h2 id="startGuideTitle">From screenshots to team maps in three steps</h2>
     <p>Take screenshots of the entire roster for <strong>Task Force A, Task Force B, or both</strong>. Upload them through the Media Upload button and the app will identify each team's players and suggest Phase 1 and Phase 2 assignments. You can adjust the assignments before creating your maps.</p></div>
   <ol class="start-steps">
     <li><span class="step-number" aria-hidden="true">1</span><div><strong>Capture your roster</strong><span>Screenshot every section of the team roster. Keep the <b>Task Force A</b> or <b>Task Force B</b> heading visible on each image so the app knows which team it belongs to.</span></div></li>
-    <li><span class="step-number" aria-hidden="true">2</span><div><strong>Upload and scan</strong><span>Tap <b>Media Upload</b> at the top, select <b>Storm Roster</b>, and submit your screenshots or recording. The app reads player names, roles, power and status, groups players by team, and creates suggested assignments.</span></div></li>
+    <li><span class="step-number" aria-hidden="true">2</span><div><strong>Upload and scan</strong><span>Tap <b>Upload roster</b> and submit the screenshots. The app groups players by team and suggests assignments.</span></div></li>
     <li><span class="step-number" aria-hidden="true">3</span><div><strong>Adjust and generate</strong><span>Review the roster, edit or swap assignments as needed, then click <b>Generate Map</b> for a Phase 1 and Phase 2 image you can download and share.</span></div></li>
   </ol>
-</section>
+</details>
 <section class="panel" aria-labelledby="uploadHeading"><div class="panel-title"><h2 id="uploadHeading">01 &nbsp; Add screenshots</h2><span class="hint" id="fileCount">0 images queued</span></div>
 <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose screenshots or drop images here"><div class="uploadicon">⇧</div><strong>Drop your player list screenshots here</strong><small>PNG, JPG, or WebP · Select as many as you need</small><button type="button" class="upload-btn" id="chooseBtn">Choose images</button></div><input type="file" id="files" class="sr-only" accept="image/png,image/jpeg,image/webp" multiple>
 <div id="fileList" class="file-grid"></div>
@@ -290,10 +346,11 @@ th[aria-sort] .sort-column span{opacity:1}
 </section>
 <section id="playerListView" class="workspace-view" role="tabpanel" aria-labelledby="playerListTab" tabindex="0" hidden>
   <section class="panel pl-section" aria-labelledby="playerListHeading">
-    <div class="player-list-header">
-      <div class="eyebrow">Alliance member directory</div>
+    <div class="player-list-header workspace-heading">
+      <div><div class="eyebrow">Alliance member directory</div>
       <h2 id="playerListHeading">Player List</h2>
-      <p>Upload screenshots or a recording of your scrolling <strong>Member List</strong>, plus individual <strong>Player Profile</strong> screenshots for players such as R5. The scanner merges both sources, extracts name, rank, power and HQ level, and uses the search bar to ignore the decorative member list header. Recognized players merge into the master list, keeping Power, Kills and Donations together. New or uncertain detections wait for review.</p>
+      <p>Browse player profiles, birthdays, and stats. Upload screenshots or a leaderboard recording to update the list.</p></div>
+      <button class="btn primary" type="button" data-open-upload="players">Upload player stats</button>
     </div>
     <div id="plConnection" class="pl-connection" role="status" aria-live="polite">Checking player database…</div>
     <div class="pl-upload-grid">
@@ -325,13 +382,13 @@ th[aria-sort] .sort-column span{opacity:1}
     <div class="pl-title-row"><div><div class="eyebrow">Shared database</div><h2 id="plDirectoryTitle">Current player list</h2></div><div class="pl-dir-actions"><button class="btn" type="button" id="plRefresh">↻ Refresh</button><a class="btn" href="/api/player-list/export.csv" id="plExport">↓ Export CSV</a></div></div>
     <div class="pl-summary"><div><small>Total</small><strong id="plTotal">0</strong></div><div><small>New</small><strong id="plNew">0</strong></div><div><small>Possibly removed</small><strong id="plMissing">0</strong></div><div><small>Active</small><strong id="plActive">0</strong></div></div>
     <div class="pl-filters"><input id="plSearch" type="search" placeholder="Search player names…" aria-label="Search player names"><select id="plFilter" aria-label="Filter players by status"><option value="all">All players</option><option value="new">New players</option><option value="removed">Possibly removed</option><option value="active">Active</option></select></div>
-    <div class="pl-table-wrap"><table class="pl-table"><thead><tr id="plSortHeaders"><th scope="col"><button type="button" class="sort-column" data-sort="photo">Photo <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="name">Player name <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="power">Power <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="kills">Kills <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="donations">Donations <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="hq_level">HQ <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="birthday">Birthday <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="status">Status <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="8" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
+    <p class="workspace-table-hint" hidden>Scroll horizontally for more columns.</p><div class="pl-table-wrap" data-scroll-table role="region" aria-labelledby="plDirectoryTitle"><table class="pl-table"><thead><tr id="plSortHeaders"><th scope="col"><button type="button" class="sort-column" data-sort="photo">Photo <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="name">Player name <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="power">Power <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="kills">Kills <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="donations">Donations <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="hq_level">HQ <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="birthday">Birthday <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="status">Status <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="8" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
     <p class="pl-hint">Players are matched by their names, ignoring capitalization and spaces. Power, Kills and Donations uploads update this master record. Stats absent from an upload and birthdays are preserved.</p>
   </section>
 </section>
 
 <section id="vsPointsView" class="workspace-view" role="tabpanel" aria-labelledby="vsPointsTab" tabindex="0" hidden>
-  <section class="panel pl-section"><div class="pl-title-row"><div><div class="eyebrow">Alliance competition</div><h2>VS Points</h2><p>Daily scores, one record per player and date. Upload a Daily Rank recording using Media Upload.</p></div><button class="btn" id="vsRefresh" type="button">↻ Refresh</button></div>
+  <section class="panel pl-section"><div class="pl-title-row"><div><div class="eyebrow">Alliance competition</div><h2>VS Points</h2><p>Browse daily scores by week. Upload a Daily Rank capture to add results.</p></div><div class="pl-dir-actions"><button class="btn primary" type="button" data-open-upload="vs">Upload VS scores</button><button class="btn" id="vsRefresh" type="button">↻ Refresh</button></div></div>
   <p id="vsMessage" role="status" aria-live="polite"></p>
   <div id="vsPending" hidden><h3>Review scanned points</h3><p>Choose a player and check the score date. Compare any flagged number with the capture before saving.</p><div id="vsReviewJobs"></div></div>
   <div class="vs-week-nav" aria-label="VS week navigation">
@@ -344,7 +401,7 @@ th[aria-sort] .sort-column span{opacity:1}
     <div class="pl-dir-actions"><button type="button" class="btn" id="vsCalendarCancel">Cancel</button><button type="submit" class="btn primary">Show week</button></div>
   </form></dialog>
   <div class="pl-filters"><input id="vsSearch" type="search" placeholder="Search player names…" aria-label="Search VS players"><a class="btn" id="vsExport" href="/api/vs-points/export.csv">↓ Export CSV</a></div>
-  <p id="vsSummary"></p><div class="pl-table-wrap"><table class="pl-table"><thead><tr id="vsWeekColumns"><th scope="col"><button type="button" class="sort-column" data-sort="name">Player <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="0">Mon <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="1">Tue <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="2">Wed <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="3">Thu <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="4">Fri <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="5">Sat <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="total">Total <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="vsRows"><tr><td colspan="8">No scores saved yet.</td></tr></tbody></table></div>
+  <p id="vsSummary" role="status"></p><p class="workspace-table-hint" hidden>Scroll horizontally for more columns.</p><div class="pl-table-wrap" data-scroll-table role="region" aria-label="Weekly VS scores"><table class="pl-table"><thead><tr id="vsWeekColumns"><th scope="col"><button type="button" class="sort-column" data-sort="name">Player <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="0">Mon <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="1">Tue <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="2">Wed <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="3">Thu <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="4">Fri <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="5">Sat <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="total">Total <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="vsRows"><tr><td colspan="8">No scores saved yet.</td></tr></tbody></table></div>
   <datalist id="vsPlayerNames"></datalist>
   </section>
 </section>
@@ -355,6 +412,7 @@ th[aria-sort] .sort-column span{opacity:1}
     <p id="performanceStatus" role="status" aria-live="polite"></p>
     <div id="performanceContent" hidden>
       <div class="pl-summary" id="performanceSummary"></div>
+      <a class="btn" href="#performanceTableTitle">Jump to scorecard ↓</a>
       <div class="performance-grid">
         <section><h3>Daily VS points and coverage</h3><div id="performanceDaily"></div></section>
         <section><h3>Alliance VS over eight weeks</h3><div id="performanceWeekly"></div></section>
@@ -364,9 +422,9 @@ th[aria-sort] .sort-column span{opacity:1}
         <section><h3>Biggest VS gains</h3><p>Compares the same recorded weekdays for each player.</p><div id="performanceGains"></div></section>
         <section><h3>Top 10 stat gains</h3><label>Metric <select id="performanceMetric"><option value="power_change">Power</option><option value="kills_change">Kills</option><option value="donations_change">Donations</option></select></label><div id="performanceGrowth"></div></section>
       </div>
-      <h3>Roster scorecard</h3><p>Missing scores are shown as a dash. Stat gains use recorded uploads.</p>
+      <h3 id="performanceTableTitle" tabindex="-1">Roster scorecard</h3><p>Missing scores are shown as a dash. Stat gains use recorded uploads.</p>
       <input id="performanceSearch" type="search" aria-label="Search performance by player" placeholder="Search players…">
-      <div class="pl-table-wrap"><table class="pl-table"><thead><tr id="performanceColumns"><th scope="col"><button type="button" class="sort-column" data-sort="name">Player <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="rank">Rank <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="vs_points">VS points <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="days_recorded">Days recorded <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="vs_change">VS change <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="power_change">Power change <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="kills_change">Kills change <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="donations_change">Donations change <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="performanceRows"></tbody></table></div>
+      <p class="workspace-table-hint" hidden>Scroll horizontally for more columns.</p><div class="pl-table-wrap" data-scroll-table role="region" aria-labelledby="performanceTableTitle"><table class="pl-table"><thead><tr id="performanceColumns"><th scope="col"><button type="button" class="sort-column" data-sort="name">Player <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="rank">Rank <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="vs_points">VS points <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="days_recorded">Days recorded <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="vs_change">VS change <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="power_change">Power change <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="kills_change">Kills change <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="donations_change">Donations change <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="performanceRows"></tbody></table></div>
     </div>
   </section>
 </section>
@@ -379,7 +437,7 @@ th[aria-sort] .sort-column span{opacity:1}
   </details>
   <details class="panel pl-section" id="adminClearSection">
     <summary class="admin-tool-summary">Clear Data</summary>
-    <p>Choose which tables to clear for everyone. The OCR dictionary and browser settings are kept.</p>
+    <p>Choose which tables to clear for everyone. The OCR dictionary is kept.</p>
     <fieldset style="display:grid;gap:6px;margin:12px 0">
       <legend>Tables to clear</legend>
       <div id="adminClearTables" style="display:grid;gap:6px">Loading tables…</div>
@@ -2036,6 +2094,14 @@ Object.assign(UI_TRANSLATIONS,{
   "Alliance workspace sections":{fr:"Sections de l’espace alliance",de:"Bereiche der Allianz",it:"Sezioni dello spazio alleanza",da:"Alliancens arbejdsområder",es:"Secciones de la alianza"},
   "Organize rosters, plan event maps, and build your alliance toolkit in one place.":{fr:"Organisez vos équipes, planifiez vos cartes d’événement et développez vos outils d’alliance.",de:"Organisiere Teamlisten, plane Eventkarten und verwalte deine Allianzwerkzeuge an einem Ort.",it:"Organizza le squadre, pianifica le mappe degli eventi e gestisci gli strumenti dell’alleanza.",da:"Organisér spillerlister, planlæg eventkort og saml alliancens værktøjer ét sted.",es:"Organiza equipos, planifica mapas de eventos y reúne las herramientas de tu alianza."},
   "Player List":{fr:"Liste des joueurs",de:"Spielerliste",it:"Elenco giocatori",da:"Spillerliste",es:"Lista de jugadores"},
+  "Train Manager":{fr:"Gestion des trains",de:"Zugverwaltung",it:"Gestione treni",da:"Togstyring",es:"Gestión de trenes"},
+  "Player Performance":{fr:"Performances",de:"Spielerleistung",it:"Prestazioni",da:"Spillerpræstationer",es:"Rendimiento"},
+  "Scan Queue":{fr:"File d’analyse",de:"Scan-Warteschlange",it:"Coda scansioni",da:"Scanningskø",es:"Cola de escaneos"},
+  "Upload roster":{fr:"Importer le roster",de:"Teamliste hochladen",it:"Carica la squadra",da:"Upload holdliste",es:"Subir plantilla"},
+  "Upload player stats":{fr:"Importer les statistiques",de:"Spielerwerte hochladen",it:"Carica statistiche",da:"Upload spillerstatistik",es:"Subir estadísticas"},
+  "Upload VS scores":{fr:"Importer les scores VS",de:"VS-Punkte hochladen",it:"Carica punteggi VS",da:"Upload VS-point",es:"Subir puntos VS"},
+  "Roster scanning guide":{fr:"Guide d’analyse du roster",de:"Anleitung zum Teamlisten-Scan",it:"Guida alla scansione",da:"Guide til holdscanning",es:"Guía de escaneo de plantilla"},
+  "Scroll horizontally for more columns.":{fr:"Faites défiler horizontalement pour voir les autres colonnes.",de:"Horizontal scrollen, um weitere Spalten zu sehen.",it:"Scorri orizzontalmente per vedere altre colonne.",da:"Rul vandret for at se flere kolonner.",es:"Desplázate horizontalmente para ver más columnas."},
   "Coming next":{fr:"À venir",de:"Als Nächstes",it:"Prossimamente",da:"Kommer snart",es:"Próximamente"},
   "A dedicated workspace for your alliance player list, separate from the event roster scanner.":{fr:"Un espace dédié à la liste des joueurs de votre alliance, distinct de l’analyseur d’événements.",de:"Ein eigener Bereich für deine Allianzspielerliste, getrennt vom Event Scanner.",it:"Uno spazio dedicato ai giocatori dell’alleanza, separato dallo scanner degli eventi.",da:"Et særskilt område til alliancens spillerliste, adskilt fra event scanneren.",es:"Un espacio dedicado a los jugadores de tu alianza, separado del escáner de eventos."},
   "Ready for the next feature":{fr:"Prêt pour la prochaine fonctionnalité",de:"Bereit für die nächste Funktion",it:"Pronto per la prossima funzione",da:"Klar til den næste funktion",es:"Listo para la próxima función"},
@@ -2132,6 +2198,17 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
   const storageKey='lastwar.workspaceTab.v1';
   const tabs=[...document.querySelectorAll('[data-workspace-tab]')];
   const views={scanner:document.getElementById('rosterScannerView'),train:document.getElementById('trainView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView'),performance:document.getElementById('performanceView'),admin:document.getElementById('adminView')};
+  for(const table of document.querySelectorAll('[data-scroll-table]')){
+    const observer=new ResizeObserver(()=>{
+      if(!table.clientWidth)return;
+      const overflow=table.scrollWidth>table.clientWidth+1;
+      table.previousElementSibling.hidden=!overflow;
+      if(overflow)table.tabIndex=0;
+      else table.removeAttribute('tabindex');
+    });
+    observer.observe(table);
+    observer.observe(table.firstElementChild);
+  }
   function selectTab(tabId,focus=false){
     if(!Object.hasOwn(views,tabId))tabId='scanner';
     for(const tab of tabs){
@@ -2215,11 +2292,11 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       const r=await fetch('/api/player-list/health',{cache:'no-store'});
       const data=await r.json();
       state.databaseReady=!!data.database&&data.database==='connected';
-      $('plConnection').textContent=state.databaseReady?'● Player database connected':'● Player database unavailable. Check Render database settings.';
+      $('plConnection').textContent=state.databaseReady?'● Player List available':'Player List is temporarily unavailable. Try Refresh.';
       $('plConnection').className='pl-connection '+(state.databaseReady?'ok':'bad');
     }catch{
       state.databaseReady=false;
-      $('plConnection').textContent='● Player List server unavailable. Refresh after deployment.';
+      $('plConnection').textContent='Player List is temporarily unavailable. Try Refresh.';
       $('plConnection').className='pl-connection bad';
     }
   }
@@ -2437,7 +2514,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       const [status,cls]=p.possibly_removed?['Possibly removed','removed']:p.is_new?['New player','new']:['Active','active'];
       const birthday=p.birthday?new Date('2000-'+p.birthday+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric'}):'—';
       const avatar=p.has_avatar?`<img class="pl-avatar" loading="lazy" src="${escape(p.avatar_url)}?v=${encodeURIComponent(p.avatar_updated_at||'1')}" alt="${escape(p.name)} video portrait">`:'<span class="pl-avatar-empty" title="No video portrait yet">♡</span>';
-      return `<tr data-player-profile="${p.id}"><td>${avatar}</td><td class="pl-player-name"><button type="button" class="btn" data-player-profile="${p.id}" aria-label="View ${escape(p.name)} profile">${escape(p.name)}</button></td><td>${escape(formatTablePower(p))}</td><td>${p.kills!=null?escape(Number(p.kills).toLocaleString()):'—'}</td><td>${p.donations!=null?escape(Number(p.donations).toLocaleString()):'—'}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
+      return `<tr data-player-profile="${p.id}"><td>${avatar}</td><td class="pl-player-name"><button type="button" class="player-profile-link" data-player-profile="${p.id}" aria-label="View ${escape(p.name)} profile">${escape(p.name)}</button></td><td>${escape(formatTablePower(p))}</td><td>${p.kills!=null?escape(Number(p.kills).toLocaleString()):'—'}</td><td>${p.donations!=null?escape(Number(p.donations).toLocaleString()):'—'}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
        <td><div class="pl-birthday-wrap"><span class="pl-birthday-date" title="${escape(p.birthday||'Birthday not set')}">${escape(birthday)}</span><button type="button" class="pl-calendar-btn" data-player-birthday="${p.id}" aria-label="Edit ${escape(p.name)} birthday" title="Set birthday">📅</button></div></td>
        <td><span class="pl-status ${cls}">${status}</span></td></tr>`;
     };
@@ -2465,7 +2542,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       state.players=result.players||[];
       renderDirectory();
     }catch(err){
-      $('plDirectoryBody').innerHTML='<tr><td colspan="8" class="pl-empty">Player database unavailable. Check Render connection settings.</td></tr>';
+      $('plDirectoryBody').innerHTML='<tr><td colspan="8" class="pl-empty">Could not load the Player List. Try Refresh.</td></tr>';
     }
   }
   $('plDrop').addEventListener('click',()=>{$('plFiles').click();});

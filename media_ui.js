@@ -11,7 +11,7 @@
   try{notified=new Set(JSON.parse(localStorage.getItem(NOTIFICATIONS)||'[]'));}catch{}
   const css=document.createElement('style');
   css.textContent=`
-  .media-top-button{display:inline-flex;gap:9px;align-items:center;justify-content:center;min-width:155px;white-space:nowrap;margin-left:auto}
+  .media-top-button{display:inline-flex;gap:9px;align-items:center;justify-content:center;white-space:nowrap}
   .media-top-button .media-count{min-width:20px;border-radius:12px;padding:2px 5px;background:#9a578c;color:white;font-size:11px}
   #mediaDialog{width:min(580px,calc(100vw - 22px));max-height:90vh;border:1px solid var(--stroke);border-radius:17px;background:var(--panel);color:var(--text);box-shadow:0 18px 70px #0009;padding:23px;overflow:auto}
   #mediaDialog::backdrop{background:#040712b3}
@@ -74,15 +74,21 @@
   .pl-rank-heading small{color:var(--muted);font-size:12px}.pl-rank-heading strong{font-size:15px}
   #playerListView .pl-upload-grid,#playerListView .pl-scan-progress,#playerListView #plReviewPanel{display:none!important}
   #rosterScannerView [aria-labelledby="uploadHeading"]{display:none!important}
-  @media(max-width:680px){.media-top-button{width:100%;margin:4px 0}.media-destination{font-size:12px;padding:13px 4px}#mediaDialog,#mediaQueueDialog{padding:15px}.media-titlebar h2{font-size:20px}}
+  @media(max-width:680px){.media-destination{font-size:12px;padding:13px 4px}.media-queue-footer{gap:8px;flex-wrap:wrap}#mediaDialog,#mediaQueueDialog{padding:15px}.media-titlebar h2{font-size:20px}}
   `;
   document.head.append(css);
 
-  const top=document.querySelector('header.top');
+  const utilities=$('workspaceUtilities');
   const topButton=document.createElement('button');
   topButton.id='mediaUploadButton';topButton.className='btn primary media-top-button';
+  topButton.setAttribute('aria-haspopup','dialog');
+  topButton.setAttribute('aria-controls','mediaDialog');
   topButton.type='button';topButton.innerHTML='<span aria-hidden="true">⇧</span> Media Upload <span class="media-count" id="mediaBadge" hidden>0</span>';
-  top?.append(topButton);
+  const queueButton=document.createElement('button');
+  queueButton.type='button';queueButton.id='mediaQueueButton';queueButton.className='btn';
+  queueButton.textContent='Scan Queue';queueButton.setAttribute('aria-haspopup','dialog');
+  queueButton.setAttribute('aria-controls','mediaQueueDialog');
+  utilities.append(topButton,queueButton);
 
   const dialog=document.createElement('dialog');
   dialog.id='mediaDialog';dialog.setAttribute('aria-labelledby','mediaTitle');
@@ -107,7 +113,7 @@
   banner.setAttribute('aria-haspopup','dialog');
   banner.setAttribute('aria-controls','mediaQueueDialog');
   banner.title='View current scanning status and queue';
-  top?.after(banner);
+  document.querySelector('.workspace-tabs').after(banner);
   const queueDialog=document.createElement('dialog');
   queueDialog.id='mediaQueueDialog';queueDialog.setAttribute('aria-labelledby','mediaQueueTitle');
   queueDialog.innerHTML=`<div class="media-titlebar">
@@ -120,7 +126,7 @@
   <div class="media-queue-footer"><button type="button" class="btn" id="mediaClearHistory">Clear old results</button><button type="button" class="btn" id="mediaQueueRefresh">↻ Refresh status</button></div>`;
   document.body.append(queueDialog);
   $('mediaQueueClose').onclick=()=>queueDialog.close();
-  banner.onclick=()=>{
+  queueButton.onclick=banner.onclick=()=>{
     if(queueDialog.open)return;
     queueDialog.showModal();
     refreshJobs();
@@ -176,7 +182,8 @@
 
   function announce(text){
     banner.hidden=false;
-    banner.textContent=text+'  ·  Tap to view scan queue';
+    const label=text+' · View scan queue';
+    if(banner.textContent!==label)banner.textContent=label;
   }
   function message(text,error=false){const el=$('mediaMessage');el.hidden=!text;el.textContent=text;el.style.borderColor=error?'#db7284':'#9476b0';}
   function updateTarget(){
@@ -199,7 +206,22 @@
       message('Storm Roster accepts screenshots only. Choose images again.');
     }
   }
-  topButton.onclick=()=>{message('');dialog.showModal();};
+  function openUpload(target){
+    const staged=busy||driveSelection||files.length;
+    if(!staged&&target)destination=target;
+    message(staged&&target&&target!==destination?'Your selected files are still set to '+destinationLabel(destination)+'. Change the destination above to switch.':'');
+    updateTarget();
+    if(!dialog.open)dialog.showModal();
+  }
+  topButton.onclick=()=>{
+    const view=document.querySelector('[data-workspace-tab][aria-selected="true"]')?.dataset.workspaceTab;
+    openUpload(view==='scanner'?'storm':view==='players'||view==='vs'?view:undefined);
+  };
+  document.querySelectorAll('[data-open-upload]').forEach(button=>{
+    button.setAttribute('aria-haspopup','dialog');
+    button.setAttribute('aria-controls','mediaDialog');
+    button.onclick=()=>openUpload(button.dataset.openUpload);
+  });
   $('mediaClose').onclick=()=>dialog.close();
   dialog.querySelectorAll('[data-dest]').forEach(btn=>btn.addEventListener('click',()=>{destination=btn.dataset.dest;updateTarget();}));
   const fileInput=$('mediaFileInput');
@@ -637,9 +659,8 @@
           ' waiting to scan · '+queuedCount+' scan job'+(queuedCount===1?'':'s')+' waiting');
       }else if(!newAlerts.length){
         const reviews=jobs.filter(j=>j.status==='review').length;
-        announce(reviews
-          ? 'No scans running · No jobs waiting · '+reviews+' scan result'+(reviews===1?'':'s')+' awaiting review'
-          : 'No scans running · No jobs waiting');
+        if(reviews)announce(reviews+' scan result'+(reviews===1?'':'s')+' awaiting review');
+        else banner.hidden=true;
       }
     }catch(e){
       console.warn('Media jobs temporarily unavailable:',e.message);

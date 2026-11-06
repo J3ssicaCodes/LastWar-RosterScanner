@@ -72,6 +72,7 @@
           <section class="train-card" aria-labelledby="trainNomineeTitle">
             <h3 id="trainNomineeTitle"><span class="train-step" aria-hidden="true">1</span> Choose a Conductor</h3>
             <p class="train-hint">Pick a nominee or use the Conductor menu. Checked nominees go on the VIP wheel once you pick a Conductor.</p>
+            <p><a class="btn smallbtn" href="#trainConductor">Jump to Conductor menu ↓</a></p>
             <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Include</th><th scope="col">Player</th><th scope="col">VS points</th><th scope="col">Assign</th></tr></thead><tbody id="trainRows"></tbody></table></div>
             <div class="train-nominee-actions"><button id="trainMore" type="button" class="btn smallbtn" hidden>Show all nominees</button><label class="train-field">Add nominee<select id="trainManual"></select></label><button class="btn" type="button" id="trainAppend">Add nominee</button></div>
           </section>
