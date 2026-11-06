@@ -41,6 +41,9 @@
       #trainView .pl-table button{white-space:normal;font-size:.8em;padding:6px}
     }
     #trainView textarea{width:100%;min-height:8em}
+    #trainTemplateAdmin :is(input,select,textarea){width:100%;color:var(--text);background:var(--panel2);border:1px solid var(--stroke);border-radius:7px;padding:8px;font:inherit}
+    #trainTemplateAdmin textarea{min-height:16em;resize:vertical}
+    #trainTemplateAdmin form .train-field{margin:10px 0}
     .train-wheel-wrap{width:min(100%,330px);position:relative;margin:15px auto;text-align:center}
     #trainWheel{display:block;width:100%;height:auto;border-radius:50%;border:4px solid var(--stroke);background:var(--panel2)}
     .train-pointer{position:absolute;z-index:1;left:50%;top:-12px;transform:translateX(-50%);color:var(--amber);font-size:25px}
@@ -94,6 +97,7 @@
     </section>
     <section class="panel pl-section" id="trainEmailEditor" hidden>
       <h3>Generate Alliance Email</h3>
+      <label class="train-field">Email template<select id="trainEmailTemplate" disabled><option value="">Random template</option></select></label>
       <form id="trainEventForm" class="train-controls">
         <label>Event name<input id="trainEventName" list="trainEventNames" autocomplete="off" maxlength="80" required><datalist id="trainEventNames"></datalist></label>
         <label>Event time<input id="trainEventTime" type="time" required></label>
@@ -102,7 +106,7 @@
       </form>
       <ul id="trainEventList"></ul>
       <label class="train-field">Admin notes<textarea id="trainNotes" maxlength="4000"></textarea></label>
-      <div class="train-controls"><label>Author<select id="trainAuthor"></select></label><button class="btn primary" type="button" id="trainGenerate">Generate Email</button></div>
+      <div class="train-controls"><label>Author<select id="trainAuthor"></select></label><button class="btn primary" type="button" id="trainGenerate" disabled>Generate Email</button></div>
       <label id="trainDraftField" class="train-field" hidden>Email draft<textarea id="trainDraft" maxlength="12000"></textarea></label>
       <div id="trainDraftActions" class="train-controls" hidden><button class="btn" type="button" id="trainCopy">Copy email</button><button class="btn primary" type="button" id="trainSaveEmail">Save email</button></div>
       <p id="trainEmailStatus" role="status" aria-live="polite"></p>
@@ -133,6 +137,21 @@
       <button class="btn" type="button" id="trainHistoryCancel">Back to history</button>
     </form>`;
   document.body.append(historyDialog);
+  $('trainTemplateAdmin').insertAdjacentHTML('beforeend',`
+    <div class="train-controls">
+      <label>Saved templates<select id="trainTemplateList" disabled></select></label>
+      <button class="btn" type="button" id="trainTemplateNew" disabled>Add template</button>
+    </div>
+    <form id="trainTemplateForm" hidden>
+      <label class="train-field">Template name<input name="name" maxlength="80" required></label>
+      <label class="train-field">Email body<textarea name="body" maxlength="6000" required aria-describedby="trainTemplateFields"></textarea></label>
+      <p id="trainTemplateFields" class="train-hint">Keep these fields in the email body so the app can fill in each message: <code>{alliance}</code>, <code>{conductor}</code>, <code>{vip}</code>, <code>{reasons}</code>, <code>{events}</code>, <code>{notes}</code>, and <code>{author}</code>. Empty sections are skipped.</p>
+      <div class="train-controls">
+        <button class="btn primary" id="trainTemplateSave" type="submit">Save template</button>
+        <button class="btn danger" id="trainTemplateDelete" type="button">Delete template</button>
+      </div>
+    </form>
+    <p id="trainTemplateStatus" role="status" aria-live="polite"></p>`);
   $('trainAdmin').innerHTML=`
     <details class="panel pl-section" id="trainSettingsSection">
     <summary class="admin-tool-summary">Train Manager settings</summary>
@@ -165,6 +184,81 @@
   }
   const json=(method,data)=>({method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
   const message=(id,text)=>{$(id).textContent=text;};
+  const templateUrl='/email-templates';
+  const newTemplateBody='Good morning, {alliance}! 🚂\n\n{conductor} is today’s Conductor and {vip} is our VIP.\n\n{reasons}\n\n{events}\n\n{notes}\n\nBest regards,\n{author}';
+  const templateForm=$('trainTemplateForm'),templateList=$('trainTemplateList');
+  let adminTemplates=[],emailTemplates=[],templateBusy=false,templateRequest=0;
+  function showTemplate(){
+    const template=adminTemplates.find(entry=>entry.id===templateList.value);
+    templateForm.hidden=false;
+    templateForm.elements.name.value=template?.name||'';
+    templateForm.elements.body.value=template?.body||newTemplateBody;
+    $('trainTemplateDelete').hidden=!template;
+  }
+  function setTemplateBusy(busy){
+    templateBusy=busy;
+    for(const id of ['trainTemplateList','trainTemplateNew','trainTemplateSave','trainTemplateDelete'])$(id).disabled=busy;
+    templateForm.elements.name.disabled=busy;
+    templateForm.elements.body.disabled=busy;
+  }
+  async function refreshTemplateAdmin(selected){
+    const {templates}=await api(templateUrl);
+    adminTemplates=templates;
+    templateList.innerHTML='<option value="">New template</option>'+
+      templates.map(entry=>'<option value="'+esc(entry.id)+'">'+esc(entry.name)+'</option>').join('');
+    templateList.value=selected??templates[0]?.id??'';
+    showTemplate();
+  }
+  async function templateAction(action,success){
+    if(templateBusy)return;
+    setTemplateBusy(true);
+    message('trainTemplateStatus','');
+    try{
+      await action();
+      if(success)message('trainTemplateStatus',success);
+    }catch(error){message('trainTemplateStatus',error.message);}
+    finally{setTemplateBusy(false);}
+  }
+  $('trainTemplateAdmin').addEventListener('toggle',()=>{
+    if($('trainTemplateAdmin').open)templateAction(()=>refreshTemplateAdmin(templateForm.hidden?undefined:templateList.value));
+  });
+  templateList.onchange=()=>{showTemplate();message('trainTemplateStatus','');};
+  $('trainTemplateNew').onclick=()=>{
+    templateList.value='';
+    showTemplate();
+    message('trainTemplateStatus','');
+    templateForm.elements.name.focus();
+  };
+  templateForm.onsubmit=event=>{
+    event.preventDefault();
+    const key=templateList.value,body={name:templateForm.elements.name.value,body:templateForm.elements.body.value};
+    templateAction(async()=>{
+      const {id}=await api(key?templateUrl+'/'+encodeURIComponent(key):templateUrl,json(key?'PUT':'POST',body));
+      await refreshTemplateAdmin(id);
+    },'Template saved.');
+  };
+  $('trainTemplateDelete').onclick=()=>{
+    const template=adminTemplates.find(entry=>entry.id===templateList.value);
+    if(!template||!window.confirm('Delete the “'+template.name+'” email template?'))return;
+    templateAction(async()=>{
+      await api(templateUrl+'/'+encodeURIComponent(template.id),{method:'DELETE'});
+      await refreshTemplateAdmin();
+    },'Template deleted.');
+  };
+  async function loadEmailTemplates(){
+    const request=++templateRequest,select=$('trainEmailTemplate'),selected=select.value;
+    select.disabled=true;$('trainGenerate').disabled=true;
+    try{
+      const {templates}=await api(templateUrl);
+      if(request!==templateRequest)return;
+      emailTemplates=templates;
+      select.innerHTML='<option value="">Random template</option>'+
+        templates.map(entry=>'<option value="'+esc(entry.id)+'">'+esc(entry.name)+'</option>').join('');
+      select.value=templates.some(entry=>entry.id===selected)?selected:'';
+      if(!templates.length)message('trainEmailStatus','Add an alliance email template in Admin to generate an email.');
+      select.disabled=!templates.length;$('trainGenerate').disabled=!templates.length;
+    }catch(error){if(request===templateRequest)message('trainEmailStatus',error.message);}
+  }
   const goal=()=>view.querySelector('[name="trainGoal"]:checked').value;
   const day=()=>$('trainDay').value;
   const target=()=>goal()==='Save'?Number($('trainTarget').value):defaultTarget;
@@ -484,6 +578,8 @@
   $('trainOpenEmail').onclick=()=>{
     const panel=$('trainEmailEditor');panel.hidden=false;
     eventOptions();renderEvents();
+    message('trainEmailStatus','');
+    loadEmailTemplates();
     const author=Number($('trainAuthor').value);
     $('trainAuthor').innerHTML='<option value="">Choose an R4 or R5 player…</option>'+
       board.players.filter(p=>p.rank==='R4'||p.rank==='R5').map(p=>option({...p,blocked:''},author)).join('');
@@ -531,27 +627,34 @@
   $('trainGenerate').onclick=()=>{
     const assignment=board.assignment,author=getPlayer(Number($('trainAuthor').value));
     if(!assignment||!author||!['R4','R5'].includes(author.rank)){message('trainEmailStatus','Choose an R4 or R5 author.');return;}
-    const lines=['Good Morning '+board.settings.alliance_name+',',
-      'Today’s train driver is '+assignment.conductor_name+' and VIP is '+assignment.vip_name+'.'];
+    const selected=$('trainEmailTemplate').value;
+    const template=selected?emailTemplates.find(entry=>entry.id===selected):
+      emailTemplates[Math.floor(Math.random()*emailTemplates.length)];
+    if(!template){message('trainEmailStatus','Choose an available email template.');return;}
+    const reasons=[];
     const c=selectionReason(assignment.conductor_reason,assignment),v=selectionReason(assignment.vip_reason,assignment);
     if(assignment.goal==='Save'&&assignment.conductor_points===assignment.target&&assignment.vip_points===assignment.target){
-      lines[1]+=' Both hit the save goal of '+num(assignment.target)+' VS points.';
-      if(c.includes('birthday'))lines[1]+=' '+assignment.conductor_name+' has a birthday this week.';
-      if(v.includes('birthday'))lines[1]+=' '+assignment.vip_name+' has a birthday this week.';
-      if(v.includes('Wheel of Fortune'))lines[1]+=' The Wheel of Fortune selected '+assignment.vip_name+' as VIP.';
+      reasons.push('Both hit the save goal of '+num(assignment.target)+' VS points.');
+      if(c.includes('birthday'))reasons.push(assignment.conductor_name+' has a birthday this week.');
+      if(v.includes('birthday'))reasons.push(assignment.vip_name+' has a birthday this week.');
+      if(v.includes('Wheel of Fortune'))reasons.push('The Wheel of Fortune selected '+assignment.vip_name+' as VIP.');
     }else{
-      if(c)lines[1]+=' '+assignment.conductor_name+' '+c+'.';
-      if(v)lines[1]+=' '+assignment.vip_name+' '+v+'.';
+      if(c)reasons.push(assignment.conductor_name+' '+c+'.');
+      if(v)reasons.push(assignment.vip_name+' '+v+'.');
     }
-    for(const event of events){
+    const eventLines=events.map(event=>{
       let line=event.name+' is at '+event.time+' '+event.zone+'.';
       if(event.name.trim().toLowerCase()==='zombie siege')line+=' Please have troops on the wall by '+wallTime(event.time)+' '+event.zone+(event.time<'00:30'?' the previous day':'')+'.';
-      lines.push(line);
-    }
-    if($('trainNotes').value.trim())lines.push($('trainNotes').value.trim());
-    lines.push('Best Regards,\n'+author.name);
-    $('trainDraft').value=lines.join('\n\n');$('trainDraftField').hidden=false;$('trainDraftActions').hidden=false;
-    message('trainEmailStatus','Draft ready to edit, copy, or save.');
+      return line;
+    });
+    const fields={alliance:board.settings.alliance_name,conductor:assignment.conductor_name,vip:assignment.vip_name,
+      reasons:reasons.join(' '),events:eventLines.join('\n\n'),notes:$('trainNotes').value.trim(),author:author.name};
+    const draft=template.body.split(/\n{2,}/)
+      .map(paragraph=>paragraph.replace(/\{([a-zA-Z_]+)\}/g,(_,field)=>fields[field]))
+      .filter(paragraph=>paragraph.trim()).join('\n\n');
+    if(draft.length>12000){message('trainEmailStatus','This draft exceeds 12,000 characters. Shorten the notes or choose a shorter template.');return;}
+    $('trainDraft').value=draft;$('trainDraftField').hidden=false;$('trainDraftActions').hidden=false;
+    message('trainEmailStatus','Draft generated using “'+template.name+'”. You can edit, copy, or save it.');
   };
   async function copy(field,status){
     try{

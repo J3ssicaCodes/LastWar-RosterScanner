@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 from fastapi import HTTPException
 from pymysql.err import IntegrityError
-from train_manager import Assignment, HistoryEdit, install_train_manager, nominations, parse_train_csv
+from train_manager import Assignment, EmailTemplate, HistoryEdit, install_train_manager, nominations, parse_train_csv, validate_template
 from test_player_merge_vs import Cursor, SQLDatabase
 
 
@@ -25,6 +25,7 @@ class TrainDatabase(SQLDatabase):
                 conductor_name TEXT,vip_name TEXT,conductor_reason TEXT,vip_reason TEXT,
                 goal TEXT,target INTEGER,conductor_points INTEGER,vip_points INTEGER);
             CREATE TABLE train_emails (assignment_date TEXT PRIMARY KEY,body TEXT);
+            CREATE TABLE train_email_templates (id TEXT PRIMARY KEY,name TEXT,body TEXT,deleted INTEGER DEFAULT 0);
             INSERT INTO `player list` (id,player_name,normalized_name,player_rank,possibly_removed)
                 VALUES (1,'Alpha','alpha','R4',0),(2,'Bravo','bravo','R3',0),(3,'Charlie','charlie','R5',0);
             INSERT INTO train_restrictions VALUES (2);
@@ -50,6 +51,40 @@ class TrainCursor(Cursor):
 
 
 class TrainTests(TestCase):
+    def test_email_template_crud_keeps_starter_deletions_and_validates_fields(self):
+        db=TrainDatabase()
+        app=Mock()
+        install_train_manager(app,db)
+        endpoints={(r.path,next(iter(r.methods))):r.endpoint for r in app.include_router.call_args.args[0].routes}
+        get=endpoints['/api/train/email-templates','GET']
+        create=endpoints['/api/train/email-templates','POST']
+        edit=endpoints['/api/train/email-templates/{key}','PUT']
+        delete=endpoints['/api/train/email-templates/{key}','DELETE']
+
+        starters=get()['templates']
+        self.assertEqual(len(starters),20)
+        self.assertEqual(len({item['name'] for item in starters}),20)
+        for item in starters:
+            validate_template(item['body'])
+        first=starters[0]
+        with self.assertRaises(HTTPException) as error:
+            create(EmailTemplate(name='Broken',body='{conductor} {typo}'))
+        self.assertEqual(error.exception.status_code,422)
+        draft=EmailTemplate(name='Custom',body=first['body'])
+        added=create(draft)
+        self.assertEqual(len(get()['templates']),21)
+        edit(first['id'],draft.model_copy(update={'name':'Edited starter'}))
+        self.assertIn('Edited starter',{item['name'] for item in get()['templates']})
+        delete(first['id'])
+        delete(added['id'])
+        remaining={item['id'] for item in get()['templates']}
+        self.assertEqual(len(remaining),19)
+        self.assertNotIn(first['id'],remaining)
+        self.assertNotIn(added['id'],remaining)
+        with self.assertRaises(HTTPException) as error:
+            edit(first['id'],draft)
+        self.assertEqual(error.exception.status_code,404)
+
     def test_redo_clears_only_todays_unchanged_assignment(self):
         db=TrainDatabase()
         app=Mock()

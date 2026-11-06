@@ -2,9 +2,11 @@
 import csv
 import io
 import logging
+import re
 from datetime import date, datetime, timedelta
 from threading import Event, Thread
 from typing import Literal
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -15,6 +17,78 @@ from player_identity import corrected_name, load_name_corrections, name_key
 
 DEFAULTS = {'alliance_name':'Rubies','cooldown_weeks':4,'spin_seconds':3}
 EVENTS = ('Desert Storm','Canyon Storm','Zombie Siege','Marshalls','Sky Predator')
+
+# Each starter shares the assignment fields, with its own greeting and voice.
+TEMPLATE_STYLES = (
+    ('All Aboard', 'Good morning, {alliance}! 🚂✨',
+     'All aboard! {conductor} is driving today, with {vip} riding VIP.',
+     'Thanks for showing up for each other. You make this ride a good one! 💜'),
+    ('Ruby Shine', 'Morning, {alliance}! 💎',
+     'Today’s train spotlight goes to {conductor} as Conductor and {vip} as VIP.',
+     'A little extra sparkle for everyone who helped a teammate yesterday. We see you! ✨'),
+    ('Coffee and Cabooses', 'Good morning, {alliance}! ☕',
+     'Coffee first, caboose second. {conductor} has the controls, and {vip} has the VIP seat. 🚂',
+     'Thanks for making the morning check-in worth getting out of bed for. 🤍'),
+    ('The Hype Car', 'Rise and shine, {alliance}! 🎉',
+     'Let’s hear it for {conductor}, today’s Conductor, and {vip}, our VIP!',
+     'Drop them a little cheer in chat if you get a chance. Thanks for keeping the good energy going! 🙌'),
+    ('Little Wins', 'Good morning, {alliance}! 🌷',
+     'Today’s train is in the hands of {conductor}, and the VIP seat belongs to {vip}.',
+     'Here’s to the little wins, the big saves, and the teammates who make both happen. 💕'),
+    ('Platform One', 'Morning, {alliance}! 🚉',
+     'Now boarding on Platform One: {conductor} is our Conductor and {vip} is our VIP.',
+     'Thank you to the whole crew for keeping things rolling. You’re the best part of the trip. 💜'),
+    ('Confetti Carriage', 'Good morning, {alliance}! 🎊',
+     'Cue the tiny confetti cannon: {conductor} is driving the train, and {vip} gets the VIP seat.',
+     'Big thanks to everyone who pitched in. Consider this a little confetti for you, too. ✨'),
+    ('The Morning Whistle', 'Morning, {alliance}! 🚂',
+     'One whistle for {conductor}, today’s Conductor, and another for {vip}, today’s VIP!',
+     'Thanks for all the work that happens between whistles, especially the quiet stuff nobody sees. 💛'),
+    ('Front-Row Seats', 'Good morning, {alliance}! 🎟️',
+     'Today’s tickets are punched: {conductor} is at the controls, and {vip} is riding VIP.',
+     'Thanks for making room for each other and keeping the ride fun. 🫶'),
+    ('Cozy Departure', 'Good morning, {alliance}! ☕🌸',
+     'Before we get into the day, a warm congrats to {conductor}, our Conductor, and {vip}, our VIP.',
+     'Hope you get a quiet sip of coffee somewhere between the rallies. Thanks for being here. 💗'),
+    ('Good Luck Charms', 'Morning, {alliance}! 🍀',
+     'Our train crew is set: {conductor} is driving, and {vip} has the lucky VIP seat.',
+     'Sending a little luck to anyone chasing a goal today, and a thank-you to the crew cheering them on. 💚'),
+    ('The Scenic Route', 'Good morning, {alliance}! 🌿',
+     'Taking the scenic route with {conductor} as Conductor and {vip} as VIP today.',
+     'Thanks for the good company along the way. The chat banter is absolutely part of the scenery. 💜'),
+    ('Star Tickets', 'Morning, {alliance}! ⭐',
+     'Two gold stars for the morning crew: one for our Conductor, {conductor}, and one for our VIP, {vip}.',
+     'And a handful of extra stars for the folks sharing tips, reminders, and rally help. ✨'),
+    ('Full Steam', 'Good morning, {alliance}! 🚂💨',
+     'Full steam ahead with {conductor} at the controls and {vip} in the VIP car.',
+     'Thanks for pulling together, especially on the days when the schedule gets a little wild. 💪💜'),
+    ('Snack Car', 'Morning, {alliance}! 🍪',
+     'The snack car is open. {conductor} is driving, and {vip} gets the VIP seat and imaginary first dibs on cookies.',
+     'Thanks for bringing the teamwork. I’ll bring the imaginary cookies. 🫶'),
+    ('Sunshine Dispatch', 'Good morning, {alliance}! ☀️',
+     'A sunny little shout-out to {conductor}, today’s Conductor, and {vip}, our VIP.',
+     'Thanks for brightening the day for someone in chat, on a rally, or just by checking in. 💛'),
+    ('Teamwork Express', 'Morning, {alliance}! 🚆',
+     'The Teamwork Express is departing with {conductor} as Conductor and {vip} as VIP.',
+     'A special thanks to the people who answer questions, share reminders, and help new folks get settled. 🤝'),
+    ('Ribbon on the Rail', 'Good morning, {alliance}! 🎀',
+     'A little ribbon for today’s train crew: {conductor} is our Conductor, and {vip} is our VIP.',
+     'Thanks for the effort you put in and the kindness you bring along with it. 💜'),
+    ('A Toast to the Crew', 'Morning, {alliance}! 🥂',
+     'Raise whatever’s in your mug to {conductor}, today’s Conductor, and {vip}, our VIP.',
+     'Here’s to the crew that makes logging in feel like catching up with friends. 💕'),
+    ('Postcard from the Train', 'Good morning, {alliance}! 💌',
+     'A quick postcard from the rails: {conductor} is driving today, and {vip} is our VIP.',
+     'Wish you were here? You are, and we’re glad you are. Thanks for riding with us! 🚂💜'),
+)
+DEFAULT_TEMPLATES = {
+    f'starter-{i:02d}': {
+        'name': name,
+        'body': '\n\n'.join((greeting, announcement, '{reasons}', thanks, '{events}', '{notes}', 'Best regards,\n{author}')),
+    }
+    for i, (name, greeting, announcement, thanks) in enumerate(TEMPLATE_STYLES, 1)
+}
+TEMPLATE_FIELDS = {'alliance','conductor','vip','reasons','events','notes','author'}
 
 
 class TrainSettings(BaseModel):
@@ -53,8 +127,32 @@ class EmailDraft(BaseModel):
     body: str = Field(min_length=1,max_length=12000)
 
 
+class EmailTemplate(BaseModel):
+    name: str = Field(min_length=1,max_length=80)
+    body: str = Field(min_length=1,max_length=6000)
+
+    @field_validator('name','body',mode='before')
+    @classmethod
+    def trim_template(cls,value):
+        return value.strip() if isinstance(value,str) else value
+
+
+
 class EventName(BaseModel):
     name: str = Field(min_length=1,max_length=80)
+
+
+def validate_template(body):
+    fields = set(re.findall(r'\{([a-zA-Z_]+)\}',body))
+    missing = TEMPLATE_FIELDS - fields
+    unknown = fields - TEMPLATE_FIELDS
+    if missing or unknown:
+        problems = []
+        if missing:
+            problems.append('Include '+', '.join('{'+field+'}' for field in sorted(missing))+'.')
+        if unknown:
+            problems.append('Unknown fields '+', '.join('{'+field+'}' for field in sorted(unknown))+'.')
+        raise HTTPException(422,detail=' '.join(problems))
 
 
 def read_settings(cur):
@@ -191,6 +289,10 @@ def install_train_manager(app, connect_db):
                     assignment_date DATE PRIMARY KEY, body TEXT NOT NULL,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     KEY idx_train_emails_age(created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='alliance_tools:user_data'""",
+                """CREATE TABLE IF NOT EXISTS train_email_templates (
+                    id VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin PRIMARY KEY,
+                    name VARCHAR(80) NOT NULL, body TEXT NOT NULL, deleted BOOLEAN NOT NULL DEFAULT FALSE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='alliance_tools:user_data'""",
             ):
                 cur.execute(sql)
@@ -396,6 +498,51 @@ def install_train_manager(app, connect_db):
             cur.execute('INSERT IGNORE INTO train_event_names (name_key,name) VALUES (%s,%s)',(name_key(name),name))
             conn.commit()
         return {'name':name}
+
+    @router.get('/email-templates')
+    def email_templates():
+        templates = dict(DEFAULT_TEMPLATES)
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute('SELECT id,name,body,deleted FROM train_email_templates')
+            for row in cur.fetchall():
+                if row['deleted']:
+                    templates.pop(row['id'],None)
+                else:
+                    templates[row['id']] = {'name':row['name'],'body':row['body']}
+        return {'templates':sorted((dict(template,id=key) for key,template in templates.items()),
+                                   key=lambda template:(template['name'].casefold(),template['id']))}
+
+    @router.post('/email-templates',status_code=201)
+    def create_email_template(body:EmailTemplate):
+        validate_template(body.body)
+        key = uuid4().hex
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute('INSERT INTO train_email_templates (id,name,body) VALUES (%s,%s,%s)',(key,body.name,body.body))
+            conn.commit()
+        return dict(body.model_dump(),id=key)
+
+    def change_email_template(key, body=None):
+        if body is not None:
+            validate_template(body.body)
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute('SELECT deleted FROM train_email_templates WHERE id=%s FOR UPDATE',(key,))
+            row = cur.fetchone()
+            if (row and row['deleted']) or (not row and key not in DEFAULT_TEMPLATES):
+                raise HTTPException(404,detail='This template is no longer available. Reopen the template manager.')
+            name,text,deleted = (body.name,body.body,False) if body is not None else ('','',True)
+            cur.execute("""INSERT INTO train_email_templates (id,name,body,deleted) VALUES (%s,%s,%s,%s)
+                           ON DUPLICATE KEY UPDATE name=VALUES(name),body=VALUES(body),deleted=VALUES(deleted)""",
+                        (key,name,text,deleted))
+            conn.commit()
+        return {'id':key}
+
+    @router.put('/email-templates/{key}')
+    def update_email_template(key:str,body:EmailTemplate):
+        return change_email_template(key,body)
+
+    @router.delete('/email-templates/{key}')
+    def delete_email_template(key:str):
+        return change_email_template(key)
 
     @router.get('/emails')
     def emails():

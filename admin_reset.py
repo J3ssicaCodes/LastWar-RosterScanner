@@ -21,6 +21,7 @@ USER_TABLES = {
     'train_assignments': 'Train Assignment History',
     'train_event_names': 'Custom Alliance Event Names',
     'train_emails': 'Saved Alliance Emails',
+    'train_email_templates': 'Alliance Email Template Changes',
 }
 PRESERVED_TABLES = {'player_name_dictionary', 'alliance_admin_state', 'vs_vision_usage'}
 USER_DATA_MARKER = 'alliance_tools:user_data'
