@@ -36,14 +36,13 @@
       <p class="train-hint" id="trainContext"></p>
       <div id="trainBoard" hidden>
         <h3>Eligible nominees</h3>
-        <p class="train-hint">Uncheck a player to leave them out of Conductor and VIP selection.</p>
+        <p class="train-hint">Checked nominees are automatically on the VIP wheel. Uncheck a player to leave them out of Conductor and VIP selection.</p>
         <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th>Include</th><th>Player</th><th>VS points</th><th>Nomination</th><th>Conductor</th></tr></thead><tbody id="trainRows"></tbody></table></div>
         <button id="trainMore" type="button" class="btn smallbtn" hidden>Show all nominees</button>
         <div class="train-controls"><label>Add a player<select id="trainManual"></select></label><button class="btn" type="button" id="trainAppend">Add to table</button></div>
         <h3>Train assignment</h3>
         <label class="train-field">Conductor<select id="trainConductor"></select></label>
-        <div class="train-controls"><button class="btn" type="button" id="trainAddWheel">Add checked players to wheel</button>
-          <button class="btn primary" type="button" id="trainSpin" disabled>Spin the wheel</button></div>
+        <div class="train-controls"><button class="btn primary" type="button" id="trainSpin" disabled>Spin the wheel</button></div>
         <p id="trainWheelStatus" role="status" aria-live="polite"></p>
         <div class="train-wheel-wrap"><span class="train-pointer" aria-hidden="true">▼</span><canvas id="trainWheel" width="480" height="480" aria-label="VIP randomizer wheel"></canvas></div>
         <label class="train-field">VIP<select id="trainVip"></select></label>
@@ -128,25 +127,35 @@
   loadGoal();
 
   function nomineeIds(){return [...new Set([...(showAll?board.nominees:board.nominees.slice(0,20)),...manual])];}
-  function invalidateWheel(){
-    wheel=[];wheelWinner=0;drawWheel();message('trainWheelStatus','');
+  function syncWheel(ids){
+    const next=ids.filter(id=>!excluded.has(id));
+    if(next.length===wheel.length&&next.every((id,i)=>id===wheel[i]))return;
+    wheel=next;
+    rotation=0;
+    const canvas=$('trainWheel');
+    canvas.style.transition='none';
+    canvas.style.transform='rotate(0deg)';
+    drawWheel();
+    message('trainWheelStatus',wheel.length?wheel.length+' on the VIP wheel.':'No eligible players on the VIP wheel.');
   }
   function render(){
     const assigned=board.assignment;
     const oldConductor=conductor(),oldVip=vip();
     const ids=nomineeIds();
-    $('trainRows').innerHTML=ids.map(id=>{
+    const choices=board.players.filter(p=>!p.blocked&&!excluded.has(p.id));
+    const selectedConductor=assigned?.conductor_id||choices.find(p=>p.id===oldConductor)?.id||0;
+    const remaining=ids.filter(id=>id!==selectedConductor);
+    $('trainRows').innerHTML=remaining.map(id=>{
       const p=getPlayer(id);
       const birthday=p.birthday_offset>=7?' · Birthday '+p.birthday+' in '+Math.floor(p.birthday_offset/7)+' week(s)':'';
-      return '<tr><td><input type="checkbox" data-train-include="'+id+'" aria-label="Include '+esc(p.name)+'" '+(excluded.has(id)?'':'checked')+'></td>'+
+      return '<tr><td><input type="checkbox" data-train-include="'+id+'" aria-label="Include '+esc(p.name)+'" '+(excluded.has(id)?'':'checked ')+(assigned||spin?'disabled':'')+'></td>'+
         '<th scope="row">'+esc(p.name)+'</th><td>'+(p.points==null?'—':num(p.points))+'</td><td>'+esc(p.reason+birthday)+'</td>'+
         '<td><button class="btn smallbtn" type="button" data-train-conductor="'+id+'" '+(assigned||excluded.has(id)||spin?'disabled':'')+'>Assign as Conductor</button></td></tr>';
-    }).join('')||'<tr><td colspan="5">No automatic nominees. Add an eligible player below.</td></tr>';
+    }).join('')||'<tr><td colspan="5">No remaining nominees. Add an eligible player below.</td></tr>';
     $('trainMore').hidden=board.nominees.length<=20;
     $('trainMore').textContent=showAll?'Show top 20':'Show all '+board.nominees.length+' nominees';
     $('trainManual').innerHTML='<option value="">Choose player…</option>'+board.players.map(p=>option(p,0,!!p.blocked||ids.includes(p.id))).join('');
-    const choices=board.players.filter(p=>!p.blocked&&!excluded.has(p.id));
-    for(const [id,chosen,other] of [['trainConductor',oldConductor,0],['trainVip',oldVip,oldConductor]]){
+    for(const [id,chosen,other] of [['trainConductor',selectedConductor,0],['trainVip',oldVip,selectedConductor]]){
       const select=$(id);
       if(assigned){
         select.innerHTML='<option>'+esc(assigned[id==='trainConductor'?'conductor_name':'vip_name'])+'</option>';
@@ -155,10 +164,11 @@
       }
       select.disabled=!!assigned||spin;
     }
-    if(!assigned&&vip()===conductor())$('trainVip').value='';
+    if(vip()!==wheelWinner)wheelWinner=0;
+    syncWheel(assigned?[]:remaining);
+    if(assigned)message('trainWheelStatus','');
     $('trainOpenEmail').hidden=!assigned;
     $('trainAppend').disabled=!!assigned||spin;
-    $('trainAddWheel').disabled=!!assigned||spin||!conductor();
     $('trainSpin').disabled=!!assigned||spin||!conductor()||!wheel.length;
     $('trainSave').disabled=!!assigned||spin||!conductor()||!vip();
   }
@@ -174,11 +184,8 @@
       const result=await api('/board?'+new URLSearchParams({day:day(),goal:goal(),target:target()}));
       if(current!==request)return;
       board=result;
-      if(reset){manual=[];excluded.clear();showAll=false;$('trainConductor').value='';$('trainVip').value='';invalidateWheel();}
-      else{
-        manual=manual.filter(id=>getPlayer(id)&&!getPlayer(id).blocked);
-        if(wheel.some(id=>!getPlayer(id)||getPlayer(id).blocked))invalidateWheel();
-      }
+      if(reset){manual=[];excluded.clear();showAll=false;$('trainConductor').value='';$('trainVip').value='';}
+      else manual=manual.filter(id=>getPlayer(id)&&!getPlayer(id).blocked);
       message('trainContext','VS score date '+board.score_date+' · '+board.settings.cooldown_weeks+'-week cooldown');
       message('trainStatus',board.assignment?'Train assignment saved for '+day()+'.':'');
       $('trainBoard').hidden=false;render();
@@ -187,10 +194,10 @@
   }
 
   function selectConductor(id){
-    if(!getPlayer(id)||getPlayer(id).blocked||excluded.has(id))return;
-    $('trainConductor').value=id;
-    if(vip()===id)$('trainVip').value='';
-    invalidateWheel();render();
+    if(id&&(!getPlayer(id)||getPlayer(id).blocked||excluded.has(id)))return;
+    if(id&&!board.nominees.slice(0,20).includes(id)&&!manual.includes(id))manual.push(id);
+    $('trainConductor').value=id||'';
+    render();
   }
   $('trainRows').onclick=event=>{
     const button=event.target.closest('[data-train-conductor]');
@@ -200,18 +207,15 @@
     const id=Number(event.target.dataset.trainInclude);
     if(!id||spin)return;
     if(event.target.checked)excluded.delete(id);
-    else{excluded.add(id);if(conductor()===id)$('trainConductor').value='';if(vip()===id)$('trainVip').value='';}
-    invalidateWheel();render();
+    else excluded.add(id);
+    render();
   };
   $('trainMore').onclick=()=>{showAll=!showAll;render();};
   $('trainAppend').onclick=()=>{
     const id=Number($('trainManual').value);
     if(id&&!getPlayer(id).blocked){manual.push(id);render();}
   };
-  $('trainConductor').onchange=()=>{
-    if(conductor())selectConductor(conductor());
-    else{invalidateWheel();render();}
-  };
+  $('trainConductor').onchange=()=>selectConductor(conductor());
   $('trainVip').onchange=()=>{wheelWinner=0;render();};
   $('trainDay').onchange=()=>{
     $('trainEmailEditor').hidden=true;events=[];$('trainNotes').value='';$('trainDraft').value='';
@@ -242,11 +246,6 @@
       context.textAlign='right';context.fillText(getPlayer(id).name.slice(0,20),center-15,5);context.restore();
     }
   }
-  $('trainAddWheel').onclick=()=>{
-    wheel=nomineeIds().filter(id=>id!==conductor()&&!excluded.has(id)&&!getPlayer(id).blocked);
-    drawWheel();render();
-    message('trainWheelStatus',wheel.length?wheel.length+' eligible VIP candidates on the wheel.':'Select at least one eligible VIP candidate.');
-  };
   $('trainSpin').onclick=()=>{
     if(spin||!conductor()||!wheel.length)return;
     const previous=vip();
@@ -263,7 +262,7 @@
     canvas.style.transition='transform '+duration+'s cubic-bezier(.15,.72,.17,1)';
     canvas.style.transform='rotate('+rotation+'deg)';
     setTimeout(()=>{
-      spin=false;render();$('trainVip').value=winner;wheelWinner=winner;render();
+      spin=false;$('trainVip').value=winner;wheelWinner=winner;render();
       for(const input of view.querySelectorAll('[name="trainGoal"],#trainDay,#trainTarget,[data-train-include],#trainMore'))input.disabled=false;
       message('trainWheelStatus',getPlayer(winner).name+' selected as VIP.');
     },duration*1000);
