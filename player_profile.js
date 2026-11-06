@@ -24,6 +24,7 @@
     .profile-vs-legend span{display:inline-flex;align-items:center;gap:6px}
     .profile-vs-legend i{display:inline-block;width:18px;border-top:3px solid var(--cyan)}
     .profile-vs-legend .previous{border-top:3px dashed var(--violet)}
+    .profile-vs-legend .goal{border-top:2px dotted var(--green)}
     .player-profile-name{display:flex;align-items:center;gap:8px;margin-top:10px}
     .player-profile-name h2{margin:0;min-width:0;overflow-wrap:anywhere}
     .player-profile-name input{flex:1;min-width:0}
@@ -41,7 +42,8 @@
     const values=[...current,...previous].filter(value=>value!=null);
     if(!values.length)return '<figure>'+caption+'<p>No VS scores recorded for either week.</p></figure>';
     const days=['Mon','Tue','Wed','Thu','Fri','Sat'];
-    const max=Math.max(2,Math.ceil(Math.max(...values)/2)*2);
+    const goal=7_200_000;
+    const max=Math.max(8_000_000,Math.ceil(Math.max(...values)/2)*2);
     const x=index=>52+59*index,y=value=>108-92*value/max;
     const short=new Intl.NumberFormat(undefined,{notation:'compact',maximumFractionDigits:1});
     const grid=[0,max/2,max].map(value=>
@@ -57,9 +59,10 @@
       }
       return '<path d="'+path+'" fill="none" stroke="'+color+'" stroke-width="2"'+(dashed?' stroke-dasharray="5 4"':'')+'/>'+dots;
     }
-    return '<figure>'+caption+'<div class="profile-vs-legend"><span><i aria-hidden="true"></i>This week</span><span><i class="previous" aria-hidden="true"></i>Last week</span></div>'+
-      '<svg viewBox="0 0 370 136" role="img" aria-label="Daily VS points for this week and last week, Monday through Saturday">'+
-      grid+plot(previous,'Last week','var(--violet)',true)+plot(current,'This week','var(--cyan)')+ticks+'</svg></figure>';
+    const goalLine='<path d="M52 '+y(goal)+' H347" stroke="var(--green)" stroke-dasharray="1 4" stroke-linecap="round"/>';
+    return '<figure>'+caption+'<div class="profile-vs-legend"><span><i aria-hidden="true"></i>This week</span><span><i class="previous" aria-hidden="true"></i>Last week</span><span><i class="goal" aria-hidden="true"></i>7.2M goal</span></div>'+
+      '<svg viewBox="0 0 370 136" role="img" aria-label="Daily VS points for this week and last week, Monday through Saturday, with a 7.2 million point goal">'+
+      grid+goalLine+plot(previous,'Last week','var(--violet)',true)+plot(current,'This week','var(--cyan)')+ticks+'</svg></figure>';
   }
   function historyChart(label,axis,rows){
     const caption='<figcaption>'+label+'</figcaption><small>'+axis+'</small>';
