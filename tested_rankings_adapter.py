@@ -72,7 +72,7 @@ def recheck_ranking_group(records, anchors, sources, tab, period, resolve, progr
             record[field] = int(row['value'])
             record['review_reasons'] = [
                 reason for reason in record['review_reasons']
-                if reason not in ('uncertain_stat', 'Statistic unreadable',
+                if reason not in ('uncertain_stat', 'Statistic unreadable', 'conflicting_stat', 'multi_view_difference',
                                   f'{NUMBER_REVIEW_PREFIX} the scanned number is unclear.')
             ]
         record['review_reasons'].extend(row.get('neighbor_conflicts',[]))

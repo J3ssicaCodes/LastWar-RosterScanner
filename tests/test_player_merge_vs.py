@@ -26,7 +26,8 @@ class SQLDatabase:
             created_count INTEGER,updated_count INTEGER,possible_removed_count INTEGER);
             CREATE TABLE player_name_dictionary (ocr_key TEXT PRIMARY KEY,player_name TEXT);
             CREATE TABLE player_stat_history (player_id INTEGER,import_id TEXT,recorded_at TEXT,
-            power INTEGER,power_millions REAL,kills INTEGER);
+            power INTEGER,power_millions REAL,kills INTEGER,donations INTEGER,
+            power_upload_date TEXT,power_millions_upload_date TEXT,kills_upload_date TEXT,donations_upload_date TEXT);
             CREATE TABLE vs_points (id INTEGER PRIMARY KEY,score_date TEXT,player_id INTEGER,
             player_name TEXT,normalized_name TEXT,points INTEGER,source_job_id TEXT,updated_at TEXT,
             UNIQUE(score_date,normalized_name),UNIQUE(score_date,player_id));
@@ -114,6 +115,24 @@ class PlayerMergeTests(unittest.TestCase):
         snapshots=self.db.db.execute('SELECT power,kills FROM player_stat_history ORDER BY rowid').fetchall()
         self.assertEqual([tuple(row) for row in snapshots],[(100,None),(100,20),(125,20)])
 
+    def test_chart_history_uses_each_upload_date_and_sunday_vs_totals(self):
+        app.import_players(app.ImportData(players=[
+            app.Member(name='Jess',rank='R4',power=123,upload_date=date(2026,11,2)),
+            app.Member(name='Jess',rank='R4',kills=45,donations=500,upload_date=date(2026,11,3)),
+        ]))
+        app.import_players(app.ImportData(players=[
+            app.Member(name='Jess',rank='R4',donations=750,upload_date=date(2026,11,5)),
+        ]))
+        player_id=self.db.db.execute('SELECT id FROM `player list`').fetchone()[0]
+        self.db.db.executemany('INSERT INTO vs_points (score_date,player_id,player_name,normalized_name,points) VALUES (?,?,?,?,?)',
+                               [(day,player_id,'Jess','jess',points) for day,points in
+                                [('2026-11-02',10),('2026-11-07',20),('2026-11-09',50)]])
+        history=app.player_history(player_id)
+        self.assertEqual(history['power'],[{'date':'2026-11-02','value':123}])
+        self.assertEqual(history['kills'],[{'date':'2026-11-03','value':45}])
+        self.assertEqual(history['donations'],[{'date':'2026-11-03','value':500},{'date':'2026-11-05','value':750}])
+        self.assertEqual(history['vs'],[{'date':'2026-11-08','value':30},{'date':'2026-11-15','value':50}])
+
     def test_birthday_has_no_year_and_supports_leap_day(self):
         self.assertEqual(app.BirthdayUpdate(birthday='02-29').birthday,'02-29')
         self.assertEqual(app.BirthdayUpdate(birthday='1999-05-07').birthday,'05-07')
@@ -126,7 +145,8 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         from vs_points_ocr import recheck_neighbors
         original={'internal_position':4,'page':1,'name':'Ladv Jess','value':'123',
                   'name_conf':85,'value_conf':85}
-        frames={39:{'name':'Lady Jess','value':'124'}, 41:{'name':'Lady Jess','value':'124'}}
+        frames={37:{'name':'Lady Jess','value':'124'}, 39:{'name':'Lady Jess','value':'124'},
+                41:{'name':'Lady Jess','value':'124'}, 43:{'name':'Lady Jess','value':'123'}}
         capture=Mock()
         cursor=0
 
@@ -153,24 +173,24 @@ class VSDateAndPersistenceTests(unittest.TestCase):
         with patch('vs_points_ocr.cv2.VideoCapture',return_value=capture):
             confirmed=recheck_neighbors({4:original},{1:('sample.mp4',40)},{4:['Check']},
                                        str,Mock(),read_frame)
-        self.assertEqual([call.args[1] for call in capture.set.call_args_list],[39])
+        self.assertEqual([call.args[1] for call in capture.set.call_args_list],[39,37,43])
         capture.grab.assert_called_once_with()
-        self.assertEqual(confirmed[4],{'name'})
+        self.assertEqual(confirmed[4],{'name','value'})
         self.assertEqual(original['name'],'Lady Jess')
-        self.assertEqual(original['value'],'123')
-        self.assertIn('Number needs verification: frame readings were 123 / 124 / 124.',original['neighbor_conflicts'])
+        self.assertEqual(original['value'],'124')
+        self.assertNotIn('neighbor_conflicts',original)
 
-    def test_video_number_needs_two_confident_reads_and_no_conflicts(self):
+    def test_video_accepts_three_matching_reads_even_with_low_confidence(self):
         from vs_points_ocr import recheck_neighbors
-        for neighboring, expected in [(['100','100'],True), (['100',''],True),
-                                      (['',''],False), (['100','101'],False)]:
+        for neighboring, expected in [(['100','100'],True), (['100','','100',''],True),
+                                      (['','','',''],False), (['100','101','102',''],False)]:
             with self.subTest(neighboring=neighboring):
                 row={'internal_position':1,'page':1,'name':'Lady Jess','value':'100',
-                     'name_conf':90,'value_conf':90}
+                     'name_conf':90,'value_conf':10}
                 capture=Mock()
                 capture.read.side_effect=[(True,value) for value in neighboring]
                 def read_frame(value, anchors):
-                    return [{'matched_position':1,'value':value,'value_conf':90}]
+                    return [{'matched_position':1,'value':value,'value_conf':10}]
                 with patch('vs_points_ocr.cv2.VideoCapture',return_value=capture):
                     confirmed=recheck_neighbors({1:row},{1:('sample.mp4',40)},{1:[]},str,Mock(),read_frame)
                 self.assertEqual('value' in confirmed[1],expected)

@@ -226,6 +226,13 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
 .pl-review-table input[type=checkbox]{accent-color:var(--violet);width:16px;height:16px}.pl-review-table .pl-name-input{min-width:150px}.pl-review-table .pl-number-input{min-width:86px;max-width:115px}.pl-review-table select{min-width:76px}.pl-review-table .pl-invalid{border-color:#b74d6a}.pl-review-table button{cursor:pointer;color:var(--muted);background:transparent;border:0;padding:5px 8px;font-size:18px}.pl-review-table button:hover{color:var(--text)}
 .pl-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:15px}.pl-summary>div{border:1px solid var(--stroke);border-radius:11px;background:var(--panel2);padding:13px 15px}.pl-summary small{display:block;color:var(--muted);font-size:11px}.pl-summary strong{font-size:24px;display:block;margin-top:4px;font-weight:800}
 .pl-filters{display:flex;gap:10px;margin-bottom:12px}.pl-filters input{flex:1}.pl-filters select{max-width:195px}.pl-player-name{font-weight:730}.pl-status{font-size:11px;font-weight:700;border-radius:99px;border:1px solid var(--stroke);padding:5px 9px;white-space:nowrap;background:var(--panel2)}.pl-status.new{color:var(--violet)}.pl-status.removed{color:#d17f84}.pl-empty{padding:28px!important;text-align:center;color:var(--muted)}
+.sort-column{appearance:none;background:transparent;border:0;color:inherit;font:inherit;font-weight:inherit;text-align:inherit;white-space:nowrap;cursor:pointer;padding:6px 1px}
+.sort-column span{opacity:.72}
+th[aria-sort] .sort-column span{opacity:1}
+.vs-week-nav{display:flex;align-items:center;gap:6px;justify-content:center;margin:12px 0}
+#vsWeekLabel{white-space:normal;text-align:center}
+#vsWeekCalendar{border:1px solid var(--stroke);border-radius:14px;padding:20px;background:var(--panel);color:var(--text)}
+#vsWeekCalendar input{display:block;margin:8px 0 12px;padding:6px;color:var(--text);background:var(--panel2);border:1px solid var(--stroke);border-radius:6px}
 /* Player List portraits come exclusively from video; birthdays are manual. */
 .pl-avatar{display:block;width:42px;height:42px;object-fit:cover;border-radius:10px;border:1px solid var(--stroke);background:var(--panel2)}
 .pl-avatar.pl-avatar-review{width:36px;height:36px}
@@ -316,7 +323,7 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
     <div class="pl-title-row"><div><div class="eyebrow">Shared database</div><h2 id="plDirectoryTitle">Current player list</h2></div><div class="pl-dir-actions"><button class="btn" type="button" id="plRefresh">↻ Refresh</button><a class="btn" href="/api/player-list/export.csv" id="plExport">↓ Export CSV</a></div></div>
     <div class="pl-summary"><div><small>Total</small><strong id="plTotal">0</strong></div><div><small>New</small><strong id="plNew">0</strong></div><div><small>Possibly removed</small><strong id="plMissing">0</strong></div><div><small>Active</small><strong id="plActive">0</strong></div></div>
     <div class="pl-filters"><input id="plSearch" type="search" placeholder="Search player names…" aria-label="Search player names"><select id="plFilter" aria-label="Filter players by status"><option value="all">All players</option><option value="new">New players</option><option value="removed">Possibly removed</option><option value="active">Active</option></select></div>
-    <div class="pl-table-wrap"><table class="pl-table"><thead><tr><th scope="col">Photo</th><th scope="col">Player name</th><th scope="col">Power</th><th scope="col">Kills</th><th scope="col">Donations</th><th scope="col">HQ</th><th scope="col">Birthday</th><th scope="col">Status</th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="8" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
+    <div class="pl-table-wrap"><table class="pl-table"><thead><tr id="plSortHeaders"><th scope="col"><button type="button" class="sort-column" data-sort="photo">Photo <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="name">Player name <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="power">Power <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="kills">Kills <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="donations">Donations <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="hq_level">HQ <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="birthday">Birthday <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="status">Status <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="8" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
     <p class="pl-hint">Players are matched by their names, ignoring capitalization and spaces. Power, Kills and Donations uploads update this master record. Stats absent from an upload and birthdays are preserved.</p>
   </section>
 </section>
@@ -325,8 +332,17 @@ html[data-theme="light"] .filename,html[data-theme="light"] .file-state{color:#5
   <section class="panel pl-section"><div class="pl-title-row"><div><div class="eyebrow">Alliance competition</div><h2>VS Points</h2><p>Daily scores, one record per player and date. Upload a Daily Rank recording using Media Upload.</p></div><button class="btn" id="vsRefresh" type="button">↻ Refresh</button></div>
   <p id="vsMessage" role="status" aria-live="polite"></p>
   <div id="vsPending" hidden><h3>Review scanned points</h3><p>Choose a player and check the score date. Compare any flagged number with the capture before saving.</p><div id="vsReviewJobs"></div></div>
-  <div class="pl-filters"><label>Week <select id="vsDate" aria-label="Score week"><option value="">Current week</option></select></label><input id="vsSearch" type="search" placeholder="Search player names…" aria-label="Search VS players"><a class="btn" id="vsExport" href="/api/vs-points/export.csv">↓ Export CSV</a></div>
-  <p id="vsSummary"></p><div class="pl-table-wrap"><table class="pl-table"><thead><tr id="vsWeekColumns"><th>Player</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Total</th></tr></thead><tbody id="vsRows"><tr><td colspan="8">No scores saved yet.</td></tr></tbody></table></div>
+  <div class="vs-week-nav" aria-label="VS week navigation">
+    <button type="button" class="btn" id="vsPrevious" aria-label="Previous week">‹</button>
+    <button type="button" class="btn" id="vsWeekLabel" aria-haspopup="dialog">Choose week</button>
+    <button type="button" class="btn" id="vsNext" aria-label="Next week">›</button>
+  </div>
+  <dialog id="vsWeekCalendar" aria-label="Choose a VS week"><form method="dialog">
+    <label>Pick any date in the week <input type="date" id="vsCalendarDate" required></label>
+    <div class="pl-dir-actions"><button type="button" class="btn" id="vsCalendarCancel">Cancel</button><button type="submit" class="btn primary">Show week</button></div>
+  </form></dialog>
+  <div class="pl-filters"><input id="vsSearch" type="search" placeholder="Search player names…" aria-label="Search VS players"><a class="btn" id="vsExport" href="/api/vs-points/export.csv">↓ Export CSV</a></div>
+  <p id="vsSummary"></p><div class="pl-table-wrap"><table class="pl-table"><thead><tr id="vsWeekColumns"><th scope="col"><button type="button" class="sort-column" data-sort="name">Player <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="0">Mon <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="1">Tue <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="2">Wed <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="3">Thu <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="4">Fri <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="5">Sat <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="total">Total <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="vsRows"><tr><td colspan="8">No scores saved yet.</td></tr></tbody></table></div>
   <datalist id="vsPlayerNames"></datalist>
   </section>
 </section>
@@ -2116,6 +2132,28 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
+  window.allianceTableSort = (header, initialKey, initialDirection, onChange) => {
+    let key=initialKey, direction=initialDirection;
+    const update=()=>header.querySelectorAll('[data-sort]').forEach(button=>{
+      const th=button.closest('th');
+      if(button.dataset.sort===key)th.setAttribute('aria-sort',direction===1?'ascending':'descending');
+      else th.removeAttribute('aria-sort');
+      button.querySelector('span').textContent=button.dataset.sort===key?(direction===1?'↑':'↓'):'↕';
+    });
+    header.addEventListener('click',event=>{
+      const button=event.target.closest('[data-sort]');
+      if(!button)return;
+      direction=key===button.dataset.sort?-direction:1;
+      key=button.dataset.sort;update();onChange();
+    });
+    update();
+    return (rows,getValue)=>rows.sort((a,b)=>{
+      const x=getValue(a,key),y=getValue(b,key);
+      if(x==null||y==null)return x==null?(y==null?a.name.localeCompare(b.name):1):-1;
+      const difference=typeof x==='string'?x.localeCompare(y,undefined,{sensitivity:'base',numeric:true}):x<y?-1:x>y?1:0;
+      return direction*difference||a.name.localeCompare(b.name);
+    });
+  };
   const state = {files:[], candidates:[], players:[], busy:false, databaseReady:false};
   const escape = value => String(value??'').replace(/[&<>"']/g, ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const ext = file => (file.name.split('.').pop() || '').toLowerCase();
@@ -2348,6 +2386,16 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     const truncated=Math.floor(value/(unit/100))/100;
     return truncated.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+suffix;
   }
+  const sortDirectory=window.allianceTableSort($('plSortHeaders'),null,1,()=>renderDirectory());
+  function birthdayDistance(value,today){
+    if(!/^\d{2}-\d{2}$/.test(value||''))return null;
+    const [month,day]=value.split('-').map(Number);
+    for(let year=today.getFullYear();year<=today.getFullYear()+8;year++){
+      const next=new Date(year,month-1,day,12);
+      if(next.getMonth()===month-1&&next>=today)return next.getTime();
+    }
+    return null;
+  }
   function renderDirectory(){
     const rows=state.players,query=$('plSearch').value.trim().toLocaleLowerCase(),filter=$('plFilter').value;
     $('plTotal').textContent=rows.length;
@@ -2363,9 +2411,17 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
        <td><div class="pl-birthday-wrap"><span class="pl-birthday-date" title="${escape(p.birthday||'Birthday not set')}">${escape(birthday)}</span><button type="button" class="pl-calendar-btn" data-player-birthday="${p.id}" aria-label="Edit ${escape(p.name)} birthday" title="Set birthday">📅</button></div></td>
        <td><span class="pl-status ${cls}">${status}</span></td></tr>`;
     };
+    const today=new Date();today.setHours(0,0,0,0);
+    const sortValue=(p,key)=>{
+      if(key==='birthday')return birthdayDistance(p.birthday,today);
+      if(key==='photo')return Number(p.has_avatar);
+      if(key==='status')return p.possibly_removed?'Possibly removed':p.is_new?'New player':'Active';
+      if(key==='power')return p.power??(p.power_millions==null?null:Math.round(p.power_millions*1000000));
+      return p[key];
+    };
     let html='';
     for(const rank of ['R5','R4','R3','R2','R1']){
-      const group=selected.filter(p=>p.rank===rank);
+      const group=sortDirectory(selected.filter(p=>p.rank===rank),sortValue);
       if(!group.length)continue;
       const collapsed=collapsedRanks.has(rank);
       html+=`<tr class="pl-rank-heading"><th colspan="8"><button type="button" data-rank-toggle="${rank}" aria-expanded="${!collapsed}"><span><strong>${rank}</strong> · ${group.length} players</span><small>${collapsed?'▸ Expand':'▾ Collapse'}</small></button></th></tr>`;

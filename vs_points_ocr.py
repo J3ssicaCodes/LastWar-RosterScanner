@@ -288,50 +288,61 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
                 captures[path] = cv2.VideoCapture(str(path))
             cap = captures[path]
             neighbors = defaultdict(list)
-            previous_read = False
-            for adjacent in (frame-1,frame+1):
-                if adjacent < 0:
-                    continue
-                # After reading frame-1 the decoder is already at frame.
-                # Skip that one frame instead of seeking back to a keyframe.
-                positioned = cap.grab() if previous_read else False
-                if not positioned and not cap.set(cv2.CAP_PROP_POS_FRAMES,adjacent):
-                    continue
+
+            def read_at(index, targets, positioned=False):
+                if index < 0 or (not positioned and not cap.set(cv2.CAP_PROP_POS_FRAMES,index)):
+                    return False
                 ok,image = cap.read()
                 if not ok:
-                    continue
-                previous_read = adjacent == frame-1
+                    return False
                 readings = defaultdict(list)
-                for reading in read_frame(image,anchors):
+                for reading in read_frame(image,targets):
                     readings[reading['matched_position']].append(reading)
-                for position, matches in readings.items():
-                    if len(matches) == 1:
-                        neighbors[position].append(matches[0])
+                for target in targets:
+                    position = target['internal_position']
+                    matches = readings[position]
+                    neighbors[position].append(matches[0] if len(matches) == 1 else None)
+                return True
+
+            def points_in(views):
+                return [int(view['value']) for view in views if view and view['value'].isdecimal()]
+
+            before = read_at(frame-1,anchors)
+            read_at(frame+1,anchors,positioned=before and cap.grab())
+            unresolved = [row for row in anchors
+                          if points_in([row,*neighbors[row['internal_position']]]).count(
+                              int(row['value']) if row['value'].isdecimal() else None) != 3]
+            if unresolved:
+                read_at(frame-3,unresolved)
+                read_at(frame+3,unresolved)
             for row in anchors:
                 position = row['internal_position']
                 views = [row,*neighbors[position]]
-                numbers = [view['value'] for view in views]
-                readable = [int(value) for value in numbers if value.isdecimal()]
+                readable = points_in(views)
                 row['point_readings'] = sorted(set(readable))
-                reliable = [view for view in views
-                            if view['value'].isdecimal() and view['value_conf'] >= 55]
-                if len(reliable) >= 2 and len(set(readable)) == 1:
-                    best = max(reliable, key=lambda view: view['value_conf'])
-                    row['value'], row['value_conf'] = best['value'], best['value_conf']
+                matches = Counter(readable).most_common(1)
+                if matches and matches[0][1] >= 3:
+                    row['value'] = str(matches[0][0])
+                    row['value_conf'] = max(55, *(view['value_conf'] for view in views
+                                            if view and view['value'].isdecimal()
+                                            and int(view['value']) == matches[0][0]))
                     confirmed[position].add('value')
                 else:
-                    readings = [f'{int(value):,}' if value.isdecimal() else 'unreadable' for value in numbers]
-                    readings += ['unavailable'] * (3 - len(views))
+                    row['frame_consensus_failed'] = True
+                    readings = [f"{int(view['value']):,}" if view and view['value'].isdecimal()
+                                else 'unreadable' if view else 'unavailable' for view in views]
+                    readings += ['unavailable'] * (5 - len(views))
                     row.setdefault('neighbor_conflicts',[]).append(
                         f"{NUMBER_REVIEW_PREFIX} frame readings were {' / '.join(readings)}.")
-                if len(views) != 3 or not row['check_name']:
+                views = [view for view in views if view]
+                if len(views) < 3 or not row['check_name']:
                     continue
                 keys = [name_key(resolve(view['name'])) for view in views]
                 votes = Counter(key for key in keys if key)
                 if not votes:
                     continue
                 winner, count = votes.most_common(1)[0]
-                if count < 2:
+                if count < 2 or list(votes.values()).count(count) > 1:
                     if len(votes)>1:
                         row.setdefault('neighbor_conflicts',[]).append('Player name differs across adjacent frames')
                     continue
@@ -444,6 +455,8 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
         for position, fields in confirmed.items():
             if 'name' in fields:
                 variants.pop(position,None)
+            if 'value' in fields:
+                score_variants.pop(position,None)
 
     if not observations:raise ValueError('No complete VS score rows found.')
     day=next(iter(days)); earned=score_date_for_day(upload_date,day)

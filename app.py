@@ -21,7 +21,7 @@ import unicodedata
 import uuid
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import unquote, urlsplit
 from pathlib import Path
@@ -159,15 +159,33 @@ def initialize_db():
                     power BIGINT UNSIGNED NULL,
                     power_millions DECIMAL(12,1) NULL,
                     kills BIGINT UNSIGNED NULL,
+                    donations BIGINT UNSIGNED NULL,
+                    power_upload_date DATE NULL,
+                    power_millions_upload_date DATE NULL,
+                    kills_upload_date DATE NULL,
+                    donations_upload_date DATE NULL,
                     PRIMARY KEY (player_id, import_id),
                     KEY idx_player_stat_history_time (player_id, recorded_at)
                 ) ENGINE=InnoDB''')
-                cur.execute('''INSERT IGNORE INTO player_stat_history
+                for field, definition in (
+                    ('donations','BIGINT UNSIGNED NULL'),
+                    *((f'{stat}_upload_date','DATE NULL') for stat in ('power','power_millions','kills','donations')),
+                ):
+                    cur.execute('SHOW COLUMNS FROM player_stat_history LIKE %s',(field,))
+                    if not cur.fetchone():
+                        cur.execute(f'ALTER TABLE player_stat_history ADD COLUMN {field} {definition}')
+                cur.execute("""INSERT IGNORE INTO player_stat_history
                     (player_id,import_id,recorded_at,power,power_millions,kills)
                     SELECT p.id,'baseline',UTC_TIMESTAMP(6),p.power,p.power_millions,p.kills
                     FROM `player list` p
                     WHERE (p.power IS NOT NULL OR p.power_millions IS NOT NULL OR p.kills IS NOT NULL)
-                      AND NOT EXISTS (SELECT 1 FROM player_stat_history h WHERE h.player_id=p.id)''')
+                      AND NOT EXISTS (SELECT 1 FROM player_stat_history h WHERE h.player_id=p.id AND
+                          (h.power IS NOT NULL OR h.power_millions IS NOT NULL OR h.kills IS NOT NULL))""")
+                cur.execute("""INSERT IGNORE INTO player_stat_history
+                    (player_id,import_id,recorded_at,donations,donations_upload_date)
+                    SELECT p.id,'donation-baseline',UTC_TIMESTAMP(6),p.donations,UTC_DATE()
+                    FROM `player list` p WHERE p.donations IS NOT NULL
+                      AND NOT EXISTS (SELECT 1 FROM player_stat_history h WHERE h.player_id=p.id AND h.donations IS NOT NULL)""")
                 cur.execute('SHOW TABLES LIKE %s', ('player list',))
                 if cur.fetchone() is None:
                     raise RuntimeError('Player List table not visible after creation.')
@@ -471,6 +489,7 @@ class Member(BaseModel):
     power: int | None = Field(default=None,ge=0,le=18446744073709551615)
     kills: int | None = Field(default=None,ge=0,le=18446744073709551615)
     donations: int | None = Field(default=None,ge=0,le=18446744073709551615)
+    upload_date: date | None = None
 
     @field_validator('name')
     @classmethod
@@ -546,11 +565,17 @@ def merge_players(body: ImportData, connection=None):
             cur.execute("SELECT id,player_name,player_rank,normalized_name FROM `player list`")
             master=cur.fetchall()
     unique = {}
+    observed_dates = {}
+    stats = ('power','power_millions','kills','donations')
     for member in body.players:
         current=match_master({'name':member.name},master)
         if current:
             member=member.model_copy(update={'name':current['player_name']})
         key=normalize_name(member.name)
+        dates = observed_dates.setdefault(key, {})
+        for field in stats:
+            if getattr(member,field) is not None:
+                dates[field] = member.upload_date
         if key in unique:
             other=unique[key]
             # Power and Kills observations can have different portraits/rank OCR.
@@ -583,7 +608,7 @@ def merge_players(body: ImportData, connection=None):
                             ):
                                 raise HTTPException(400,detail='Invalid PNG or WebP portrait image.')
                         avatar_mime = ('image/png' if portrait and portrait.startswith(b'\x89PNG') else 'image/webp')
-                        cur.execute('SELECT id,power,power_millions,kills FROM `player list` WHERE normalized_name=%s FOR UPDATE', (key,))
+                        cur.execute('SELECT id,power,power_millions,kills,donations FROM `player list` WHERE normalized_name=%s FOR UPDATE', (key,))
                         existing = cur.fetchone()
                         if existing:
                             cur.execute("""UPDATE `player list` SET
@@ -612,18 +637,18 @@ def merge_players(body: ImportData, connection=None):
                                 (member.name,key,member.rank,member.power_millions,member.power,member.kills,member.donations,
                                  member.hq_level,portrait,avatar_mime,portrait,batch_id))
                             created += 1
-                        supplied_stats = {
-                            'power': member.power,
-                            'power_millions': member.power_millions,
-                            'kills': member.kills,
-                        }
-                        if any(value is not None and (existing is None or
-                               (Decimal(str(value)) if field == 'power_millions' else value) != existing[field])
-                               for field,value in supplied_stats.items()):
-                            cur.execute('''INSERT INTO player_stat_history
-                                (player_id,import_id,recorded_at,power,power_millions,kills)
-                                SELECT id,%s,UTC_TIMESTAMP(6),power,power_millions,kills
-                                FROM `player list` WHERE normalized_name=%s''',(batch_id,key))
+                        dates = observed_dates[key]
+                        changed = any(
+                            existing is None or (Decimal(str(getattr(member,field))) if field == 'power_millions'
+                                                 else getattr(member,field)) != existing[field]
+                            for field in dates)
+                        if changed or any(dates.values()):
+                            samples = [dates[field] or date.today() if field in dates else None for field in stats]
+                            cur.execute("""INSERT INTO player_stat_history
+                                (player_id,import_id,recorded_at,power,power_millions,kills,donations,
+                                 power_upload_date,power_millions_upload_date,kills_upload_date,donations_upload_date)
+                                SELECT id,%s,UTC_TIMESTAMP(6),power,power_millions,kills,donations,%s,%s,%s,%s
+                                FROM `player list` WHERE normalized_name=%s""",(batch_id,*samples,key))
                     if body.full_capture:
                         cur.execute("""UPDATE `player list` SET possibly_removed=TRUE,
                             updated_at=UTC_TIMESTAMP(6) WHERE (last_import_id IS NULL OR last_import_id<>%s)
@@ -644,6 +669,55 @@ def merge_players(body: ImportData, connection=None):
         raise HTTPException(503, detail='Could not sync Player List. Check the MySQL connection and Render logs.') from exc
     return {'import_id':batch_id,'scanned_count':len(unique),'new_count':created,
             'updated_count':updated,'possibly_removed_count':removed,'full_capture':body.full_capture}
+
+@app.get('/api/player-list/{player_id}/history')
+def player_history(player_id: int):
+    with db_connect() as conn, conn.cursor() as cur:
+        cur.execute('SELECT normalized_name FROM `player list` WHERE id=%s',(player_id,))
+        player = cur.fetchone()
+        if not player:
+            raise HTTPException(404,detail='Player not found.')
+        cur.execute("""SELECT DATE(recorded_at) AS recorded_date,power,power_millions,kills,donations,
+                       power_upload_date,power_millions_upload_date,kills_upload_date,donations_upload_date
+                       FROM player_stat_history WHERE player_id=%s ORDER BY recorded_at,import_id""",(player_id,))
+        history = cur.fetchall()
+        cur.execute("""SELECT score_date,points FROM vs_points
+                       WHERE player_id=%s OR (player_id IS NULL AND normalized_name=%s)
+                       ORDER BY score_date,player_id IS NULL,updated_at DESC""",
+                    (player_id,player['normalized_name']))
+        scores = cur.fetchall()
+
+    series = {key:{} for key in ('power','kills','donations','vs')}
+    fields = ('power','power_millions','kills','donations')
+    previous = {}
+    for row in history:
+        legacy = all(row[f'{field}_upload_date'] is None for field in fields)
+        for field in fields:
+            value = row[field]
+            sample_date = row[f'{field}_upload_date']
+            if legacy and value is not None and previous.get(field) != value:
+                sample_date = row['recorded_date']
+            if value is not None:
+                previous[field] = value
+            if value is None or sample_date is None:
+                continue
+            key = 'power' if field == 'power_millions' else field
+            if field == 'power_millions':
+                # Exact power wins when both formats were recorded on the same date.
+                series[key].setdefault(str(sample_date),int(value * 1000000))
+            else:
+                series[key][str(sample_date)] = int(value)
+    seen = set()
+    for row in scores:
+        day = row['score_date']
+        if day in seen or day.weekday() == 6:
+            continue
+        seen.add(day)
+        sunday = (day + timedelta(days=6-day.weekday())).isoformat()
+        series['vs'][sunday] = series['vs'].get(sunday,0) + int(row['points'])
+    return {key:[{'date':day,'value':value} for day,value in sorted(values.items())]
+            for key,values in series.items()}
+
 
 @app.get('/media_ui.js')
 def shared_media_script():

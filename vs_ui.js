@@ -4,9 +4,19 @@
   const $=id=>document.getElementById(id);
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   let saved=[],pending=[],days=[],weekRequest=0;
-  const weekdays=['Mon','Tue','Wed','Thu','Fri','Sat'];
   const localDate=d=>[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),
     String(d.getDate()).padStart(2,'0')].join('-');
+  let selectedWeek=weekBounds(localDate(new Date()))[0];
+  const shiftDate=(date,offset)=>{
+    const value=new Date(date+'T12:00:00');value.setDate(value.getDate()+offset);return localDate(value);
+  };
+  const displayDate=date=>new Date(date+'T12:00:00').toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'});
+  const sortScores=window.allianceTableSort($('vsWeekColumns'),null,-1,render);
+  const calendar=$('vsWeekCalendar');
+  function setWeek(day){
+    selectedWeek=weekBounds(day)[0];
+    load().catch(error=>{$('vsMessage').textContent=error.message;});
+  }
   async function api(path,options){
     const r=await fetch(path,{cache:'no-store',...options});const data=await r.json();
     if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:'Check the selected names, dates and points.');return data;
@@ -19,30 +29,24 @@
       const player=players.get(row.player_key);
       if(!player.scores.has(row.score_date))player.scores.set(row.score_date,BigInt(row.points));
     }
-    const rows=[...players.values()]
+    const rows=sortScores([...players.values()]
       .filter(row=>row.name.toLocaleLowerCase().includes(query))
-      .map(row=>({...row,total:[...row.scores.values()].reduce((sum,value)=>sum+value,0n)}))
-      .sort((a,b)=>a.total===b.total?a.name.localeCompare(b.name):a.total>b.total?-1:1);
-    $('vsWeekColumns').innerHTML='<th scope="col">Player</th>'+days.map((day,i)=>
-      '<th scope="col">'+weekdays[i]+' '+esc(day.slice(5))+'</th>').join('')+'<th scope="col">Total</th>';
+      .map(row=>({...row,total:[...row.scores.values()].reduce((sum,value)=>sum+value,0n)})),
+      (row,key)=>key==null?row.total:key==='name'||key==='total'?row[key]:row.scores.get(days[Number(key)]));
     $('vsRows').innerHTML=rows.map(row=>'<tr><th scope="row">'+esc(row.name)+'</th>'+
       days.map(day=>'<td>'+(row.scores.has(day)?row.scores.get(day).toLocaleString():'—')+'</td>').join('')+
       '<td>'+row.total.toLocaleString()+'</td></tr>').join('')||'<tr><td colspan="8">No scores for this week.</td></tr>';
     $('vsSummary').textContent=rows.length+' players · '+rows.reduce((sum,row)=>sum+row.total,0n).toLocaleString()+' points shown';
-    $('vsExport').href='/api/vs-points/export.csv?week_start='+encodeURIComponent($('vsDate').value);
+    $('vsExport').href='/api/vs-points/export.csv?week_start='+encodeURIComponent(selectedWeek);
   }
   async function load(){
-    const currentWeek=weekBounds(localDate(new Date()))[0];
-    const chosen=$('vsDate').value||currentWeek;
+    const chosen=selectedWeek;
+    $('vsWeekLabel').textContent='Week of '+displayDate(chosen)+' to '+displayDate(shiftDate(chosen,6));
     const request=++weekRequest;
     const data=await api('/api/vs-points/weekly?week_start='+encodeURIComponent(chosen));
     if(request!==weekRequest)return;
     saved=data.rows||[];
     days=data.days||[];
-    const weeks=[...new Set([...data.weeks,currentWeek])].sort().reverse();
-    $('vsDate').innerHTML=weeks.map(week=>'<option value="'+esc(week)+'">'+
-      (week===currentWeek?'Current week · ':'Week of ')+esc(week)+'</option>').join('');
-    $('vsDate').value=data.week_start;
     render();
   }
   function weekBounds(upload){
@@ -236,8 +240,7 @@
         const score_date=group.querySelector('[data-vs-date]').value;
         await api('/api/vs-points/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:group.dataset.vsJob,score_date,rows:selected.map(r=>({...r,points:window.reviewIssues.numberValue(r.points)}))})});
         // Show the week that contains the scores just saved.
-        const week=weekBounds(score_date)[0];
-        $('vsDate').innerHTML='<option value="'+esc(week)+'">'+esc(week)+'</option>';
+        selectedWeek=weekBounds(score_date)[0];
         $('vsMessage').textContent='Saved '+selected.length+' scores for '+score_date+'. Existing scores for those players on that date were updated.';
       }
       await refresh();window.refreshMediaUploads?.();
@@ -246,7 +249,22 @@
   });
   async function refresh(){try{await Promise.all([load(),loadPending()]);}catch(err){$('vsMessage').textContent='Could not refresh VS Points: '+err.message;}}
   window.vsPointsRefresh=refresh;
-  $('vsRefresh').onclick=refresh;$('vsDate').onchange=load;$('vsSearch').oninput=render;
+  $('vsRefresh').onclick=refresh;$('vsSearch').oninput=render;
+  $('vsPrevious').onclick=()=>setWeek(shiftDate(selectedWeek,-7));
+  $('vsNext').onclick=()=>setWeek(shiftDate(selectedWeek,7));
+  $('vsWeekLabel').onclick=()=>{
+    const date=$('vsCalendarDate');date.value=selectedWeek;calendar.showModal();
+    try{date.showPicker?.();}catch{}
+  };
+  $('vsCalendarCancel').onclick=()=>calendar.close();
+  $('vsCalendarDate').onchange=event=>{
+    if(!event.target.value)return;
+    setWeek(event.target.value);calendar.close();
+  };
+  calendar.querySelector('form').onsubmit=()=>setWeek($('vsCalendarDate').value);
+  calendar.addEventListener('click',event=>{
+    if(event.target===calendar)calendar.close();
+  });
   document.getElementById('vsPointsTab').addEventListener('click',refresh);
   window.addEventListener('focus',refresh);refresh();
   window.addEventListener('player-profile-updated',async()=>{

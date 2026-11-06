@@ -101,6 +101,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     started_at DATETIME(6) NULL,
                     finished_at DATETIME(6) NULL,
                     updated_player_ids TEXT NULL,
+                    upload_date DATE NULL,
                     KEY idx_media_jobs_created (created_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4''')
                 cur.execute('''CREATE TABLE IF NOT EXISTS `storm roster` (
@@ -173,7 +174,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 if rank_column and rank_column.get('Type','').lower()=='varchar(2)':
                     cur.execute('ALTER TABLE `roster upload` MODIFY COLUMN player_rank VARCHAR(8) NOT NULL')
                 for field,definition in (('started_at','DATETIME(6)'),('finished_at','DATETIME(6)'),
-                                         ('updated_player_ids','TEXT')):
+                                         ('updated_player_ids','TEXT'), ('upload_date','DATE')):
                     cur.execute('SHOW COLUMNS FROM media_scan_jobs LIKE %s',(field,))
                     if not cur.fetchone():
                         cur.execute(f'ALTER TABLE media_scan_jobs ADD COLUMN {field} {definition} NULL')
@@ -341,7 +342,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                             fields={field:row.get(field) for field in
                                     ('power_millions','power','kills','donations','hq_level','avatar_base64')}
                             merge.append(Member(name=current['player_name'],
-                                rank=row['rank'],
+                                rank=row['rank'],upload_date=upload_date,
                                 **fields))
                             merged_ids.add(current['id'])
                             continue
@@ -496,9 +497,9 @@ def install_media_upload(app, connect_db, import_players, import_model):
             with connect_db() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""INSERT INTO media_scan_jobs
-                        (id,destination,status,progress,message,full_capture)
-                        VALUES (%s,%s,'queued',0,'Waiting to scan selected Google Drive file',FALSE)""",
-                        (job_id,body.destination))
+                        (id,destination,status,progress,message,full_capture,upload_date)
+                        VALUES (%s,%s,'queued',0,'Waiting to scan selected Google Drive file',FALSE,%s)""",
+                        (job_id,body.destination,body.upload_date))
                 conn.commit()
             token_data={'file_id':body.file_id,'access_token':body.access_token,
                         'move_to_trash':body.move_to_trash}
@@ -546,9 +547,9 @@ def install_media_upload(app, connect_db, import_players, import_model):
             with connect_db() as conn:
                 with conn.cursor() as cur:
                     cur.execute('''INSERT INTO media_scan_jobs
-                        (id,destination,status,progress,message,full_capture)
-                        VALUES (%s,%s,'queued',0,'Waiting to scan',%s)''',
-                        (job_id,destination,False))
+                        (id,destination,status,progress,message,full_capture,upload_date)
+                        VALUES (%s,%s,'queued',0,'Waiting to scan',%s,%s)''',
+                        (job_id,destination,False,upload_date))
                 conn.commit()
             executor.submit(run_job,job_id,destination,saved,work,upload_date=upload_date)
             return {'job_id':job_id,'destination':destination,'message':'Upload accepted. Waiting to scan.'}
@@ -659,8 +660,10 @@ def install_media_upload(app, connect_db, import_players, import_model):
             try:
                 with conn.cursor() as cur:
                     marks=','.join(['%s']*len(ids))
-                    cur.execute(f'''SELECT id,job_id,COALESCE(ocr_name,player_name) AS original_name,avatar_base64,leaderboard_tab,review_reasons FROM `roster upload`
-                        WHERE id IN ({marks}) FOR UPDATE''',tuple(ids))
+                    cur.execute(f'''SELECT r.id,r.job_id,COALESCE(r.ocr_name,r.player_name) AS original_name,
+                        r.avatar_base64,r.leaderboard_tab,r.review_reasons,COALESCE(j.upload_date,DATE(j.created_at)) AS upload_date
+                        FROM `roster upload` r LEFT JOIN media_scan_jobs j ON j.id=r.job_id
+                        WHERE r.id IN ({marks}) FOR UPDATE''',tuple(ids))
                     matching={int(row['id']):row for row in cur.fetchall()}
                     if len(matching)!=len(ids):
                         raise HTTPException(409,detail='The pending list changed. Refresh before approving.')
@@ -688,7 +691,8 @@ def install_media_upload(app, connect_db, import_players, import_model):
                         rank=player['player_rank'] if body.auto_match and item.rank=='Unknown' else item.rank
                         approved.append(Member(name=name,rank=rank,power_millions=item.power_millions,
                                                hq_level=item.hq_level,avatar_base64=info['avatar_base64'],
-                                               power=item.power,kills=item.kills,donations=item.donations))
+                                               power=item.power,kills=item.kills,donations=item.donations,
+                                               upload_date=info['upload_date']))
                         keys_by_job[info['job_id']].add(name_key(name))
                         learn_name_correction(cur,info['original_name'],name)
                     result=import_players(import_model(players=approved,full_capture=False),connection=conn)

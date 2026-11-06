@@ -53,6 +53,15 @@ class GoogleVisionTests(unittest.TestCase):
         self.assertTrue(number_needs_review(row['review_reasons']))
         self.assertIn('Number needs verification: Google Vision read 20,000.',row['review_reasons'])
 
+    @patch('google_vision_ocr.reserve_vision_images', return_value=1)
+    @patch('google_vision_ocr.annotate_images')
+    def test_google_does_not_override_a_failed_video_frame_vote(self, annotate, reserve):
+        annotate.return_value = [self.response()]
+        row = self.row('Lady Jess',10000,['Number needs verification: fewer than three matching frames.'],[10000])
+        row['frame_consensus_failed'] = True
+        recheck_vs_rows({'rows':[row]},'test-key',Mock(),{}, {'ladyjess'},Mock())
+        self.assertTrue(number_needs_review(row['review_reasons']))
+
     @patch('google_vision_ocr.reserve_vision_images', return_value=0)
     @patch('google_vision_ocr.annotate_images')
     def test_no_google_request_when_unconfigured_or_budget_used(self, annotate, reserve):

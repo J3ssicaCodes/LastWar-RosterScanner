@@ -112,7 +112,7 @@ def recheck_vs_rows(result, api_key, connect_db, corrections, master_keys, progr
             if points is None or not number_needs_review(reasons):
                 continue
             readings = set(row.get('point_readings', []))
-            if readings == {points} and row['points'] == points:
+            if not row.get('frame_consensus_failed') and readings == {points} and row['points'] == points:
                 reasons[:] = [reason for reason in reasons if not (
                     reason == 'Check points' or reason.startswith(NUMBER_REVIEW_PREFIX)
                 )]
