@@ -171,8 +171,8 @@
   missingPanel.id='mediaMissingPanel';
   missingPanel.className='panel pl-section media-review';
   missingPanel.hidden=true;
-  missingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Video review</div><h2>Players missing from the video</h2>
-    <p>Remove players who left the alliance, keep players who are still in it, or upload a screenshot of their row to scan it separately.</p></div></div>
+  missingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Video review</div><h2>Roster changes to review</h2>
+    <p>Confirm who left or returned. You can upload a row screenshot for a player who was missed.</p></div></div>
     <p id="mediaMissingStatus" role="status" aria-live="polite"></p><div id="mediaMissingRows" class="review-grid"></div>`;
   directory?.before(missingPanel);
   const recoveryFile=document.createElement('input');
@@ -190,12 +190,19 @@
       if(snapshot===missingSnapshot)return;
       missingSnapshot=snapshot;
       missingPanel.hidden=!players.length;
-      $('mediaMissingRows').innerHTML=players.map(player=>
+      $('mediaMissingRows').innerHTML=players.map(player=>{
+        const controls=player.reactivate?
+          '<p>This archived player appeared in the video. Restore them to the active roster?</p>'+
+          '<div class="review-card-actions"><button class="btn primary" type="button" data-missing-decision="restore">Yes, reactivate</button>'+
+          '<button class="btn" type="button" data-missing-decision="keep_archived">No, keep archived</button></div>':
+          '<p>Remove this player from the active roster?</p>'+
+          '<div class="review-card-actions"><button class="btn danger" type="button" data-missing-decision="remove">Yes, remove</button>'+
+          '<button class="btn" type="button" data-missing-decision="keep">No, keep</button>'+
+          '<button class="btn" type="button" data-missing-screenshot>Upload row screenshot</button></div>';
+        return (
         '<article class="review-card" data-missing-job="'+escape(player.job_id)+'" data-missing-player="'+Number(player.id)+'">'+
-        '<strong>'+escape(player.name)+'</strong> · '+escape(player.rank)+'<p>Remove this player from the active roster?</p>'+
-        '<div class="review-card-actions"><button class="btn danger" type="button" data-missing-decision="remove">Yes, remove</button>'+
-        '<button class="btn" type="button" data-missing-decision="keep">No, keep</button>'+
-        '<button class="btn" type="button" data-missing-screenshot>Upload row screenshot</button></div></article>').join('');
+        '<strong>'+escape(player.name)+'</strong> · '+escape(player.rank)+controls+'</article>');
+      }).join('');
     }catch(error){console.warn('Could not load missing player reviews:',error.message);}
   }
   missingPanel.addEventListener('click',async event=>{
@@ -203,13 +210,20 @@
     if(screenshot){recoveryFile.click();return;}
     const button=event.target.closest('[data-missing-decision]');
     if(!button)return;
-    const row=button.closest('[data-missing-player]'),archive=button.dataset.missingDecision==='remove';
+    const row=button.closest('[data-missing-player]'),decision=button.dataset.missingDecision;
     for(const action of row.querySelectorAll('button'))action.disabled=true;
     try{
-      const params=new URLSearchParams({job_id:row.dataset.missingJob,archive:String(archive)});
+      const params=new URLSearchParams({job_id:row.dataset.missingJob});
+      if(decision==='restore'||decision==='keep_archived')params.set('action',decision);
+      else params.set('archive',String(decision==='remove'));
       await getJson('/api/media/missing-players/'+row.dataset.missingPlayer+'?'+params,{method:'PUT'});
-      await Promise.all([refreshMissingPlayers(),refreshJobs(),window.playerListRefresh?.(),window.vsPointsRefresh?.()]);
-      const status=archive?'Player removed from the active roster. Their history was kept.':'Player kept on the active roster.';
+      await refreshRosterAfterDecision();
+      const status={
+        restore:'Player reactivated.',
+        keep_archived:'Player kept in the archive.',
+        remove:'Player removed from the active roster. Their history was kept.',
+        keep:'Player kept on the active roster.'
+      }[decision];
       if(missingPanel.hidden)announce(status);
       else $('mediaMissingStatus').textContent=status;
     }catch(error){
@@ -231,6 +245,47 @@
     $('mediaFileNames').textContent=file.name;
     openUpload('players');
   };
+  const archiveSection=document.createElement('details');
+  archiveSection.className='panel pl-section';
+  archiveSection.id='playerArchiveManager';
+  archiveSection.innerHTML=`<summary class="admin-tool-summary">Player Archive</summary>
+    <p>Reactivate an archived player to return them to the active roster and alliance analytics.</p>
+    <p id="playerArchiveStatus" role="status" aria-live="polite"></p>
+    <div id="playerArchiveRows" class="review-grid"></div>`;
+  $('trainAdmin').before(archiveSection);
+  let archiveRequest=0;
+  async function refreshArchive(){
+    const request=++archiveRequest;
+    try{
+      const {players}=await getJson('/api/media/archived-players');
+      if(request!==archiveRequest)return;
+      $('playerArchiveRows').innerHTML=players.map(player=>
+        '<article class="review-card"><strong>'+escape(player.name)+'</strong> · '+escape(player.rank)+
+        '<div class="review-card-actions"><button class="btn" type="button" data-archive-restore="'+Number(player.id)+
+        '" aria-label="Reactivate '+escape(player.name)+'">Reactivate</button></div></article>'
+      ).join('')||'<p>No archived players.</p>';
+    }catch(error){if(request===archiveRequest)$('playerArchiveStatus').textContent=error.message;}
+  }
+  function refreshRosterAfterDecision(){
+    return Promise.all([refreshMissingPlayers(),refreshJobs(),window.playerListRefresh?.(),
+      window.vsPointsRefresh?.(),archiveSection.open?refreshArchive():null]);
+  }
+  archiveSection.addEventListener('toggle',()=>{
+    if(archiveSection.open){$('playerArchiveStatus').textContent='';refreshArchive();}
+  });
+  archiveSection.addEventListener('click',async event=>{
+    const button=event.target.closest('[data-archive-restore]');
+    if(!button)return;
+    button.disabled=true;
+    try{
+      await getJson('/api/media/archived-players/'+button.dataset.archiveRestore+'/restore',{method:'PUT'});
+      $('playerArchiveStatus').textContent='Player reactivated.';
+      await refreshRosterAfterDecision();
+    }catch(error){
+      $('playerArchiveStatus').textContent=error.message;
+      await refreshArchive();
+    }finally{button.disabled=false;}
+  });
   const masterNames=document.createElement('datalist');masterNames.id='playerMasterNames';document.body.append(masterNames);
   const reviewNames=window.reviewIssues.scanNames(masterNames);
   let autoTail=Promise.resolve();

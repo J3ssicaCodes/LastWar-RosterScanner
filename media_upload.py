@@ -16,7 +16,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -85,8 +85,8 @@ def google_picker_config():
 
 def install_media_upload(app, connect_db, import_players, import_model):
     router = APIRouter(prefix='/api/media', tags=['Media Upload'])
-    missing_match = """p.archived=FALSE AND
-        (p.last_import_id=m.last_import_id COLLATE utf8mb4_unicode_ci
+    review_match = """p.archived=m.reactivate AND
+        (m.reactivate=TRUE OR p.last_import_id=m.last_import_id COLLATE utf8mb4_unicode_ci
          OR (p.last_import_id IS NULL AND m.last_import_id IS NULL))"""
 
     def schema():
@@ -112,8 +112,12 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     player_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
                     job_id CHAR(36) NOT NULL,
                     last_import_id CHAR(36) NULL,
+                    reactivate BOOLEAN NOT NULL DEFAULT FALSE,
                     KEY idx_media_missing_job (job_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='alliance_tools:user_data' ''')
+                cur.execute("SHOW COLUMNS FROM media_missing_players LIKE 'reactivate'")
+                if not cur.fetchone():
+                    cur.execute('ALTER TABLE media_missing_players ADD COLUMN reactivate BOOLEAN NOT NULL DEFAULT FALSE')
                 cur.execute('''CREATE TABLE IF NOT EXISTS `storm roster` (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                     source_job_id CHAR(36) NOT NULL,
@@ -368,10 +372,14 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     needs_review.append(row)
                 records=needs_review
                 observed_ids={exact[name_key(row['name'])]['id'] for row in prepared if exact.get(name_key(row['name']))}
+                video_ids={exact[name_key(row['name'])]['id'] for row in prepared
+                           if row.get('seen_in_video') and exact.get(name_key(row['name']))}
                 video_capture=any(Path(path).suffix.lower() in VIDEO_EXTENSIONS for path in paths)
-                missing=[(row['id'],job_id,row.get('last_import_id')) for row in roster
+                missing=[(row['id'],job_id,row.get('last_import_id'),False) for row in roster
                          if video_capture and prepared and row.get('id') is not None and
                          row['id'] not in observed_ids and not row.get('archived')]
+                returning=[(row['id'],job_id,None,True) for row in roster
+                           if video_capture and row.get('id') in video_ids and row.get('archived')]
                 with connect_db() as conn:
                     try:
                         with conn.cursor() as cur:
@@ -382,12 +390,13 @@ def install_media_upload(app, connect_db, import_players, import_model):
                                 record_scan_players(cur,job_id,merged_ids,updated_ids)
                             if observed_ids:
                                 marks=','.join(['%s']*len(observed_ids))
-                                cur.execute(f'DELETE FROM media_missing_players WHERE player_id IN ({marks})',
+                                cur.execute(f'DELETE FROM media_missing_players WHERE reactivate=FALSE AND player_id IN ({marks})',
                                             tuple(sorted(observed_ids)))
-                            if missing:
-                                cur.executemany("""INSERT INTO media_missing_players (player_id,job_id,last_import_id)
-                                    VALUES (%s,%s,%s) ON DUPLICATE KEY UPDATE
-                                    job_id=VALUES(job_id),last_import_id=VALUES(last_import_id)""",missing)
+                            if missing or returning:
+                                cur.executemany("""INSERT INTO media_missing_players (player_id,job_id,last_import_id,reactivate)
+                                    VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE
+                                    job_id=VALUES(job_id),last_import_id=VALUES(last_import_id),reactivate=VALUES(reactivate)""",
+                                    missing+returning)
                             cur.execute("""SELECT normalized_name,player_name,player_rank,
                                 power_millions,power,kills,donations,hq_level,
                                 avatar_image IS NOT NULL AS has_avatar
@@ -472,9 +481,10 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     except Exception:
                         conn.rollback()
                         raise
-                if inserted or missing:
+                if inserted or missing or returning:
                     set_job(job_id,status='review',progress=100,count=len(merge)+inserted,
-                            message=f'{len(merge)} records updated · {inserted} scan rows and {len(missing)} missing players to review.')
+                            message=(f'{len(merge)} records updated · {inserted} scan rows · '
+                                     f'{len(missing)} missing and {len(returning)} archived players to review.'))
                 else:
                     set_job(job_id,status='ready',progress=100,count=len(merge),
                             message=f'Scan finished. {len(merge)} master records merged.')
@@ -598,7 +608,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     CASE j.destination
                         WHEN 'players' THEN (SELECT COUNT(*) FROM `roster upload` r WHERE r.job_id=j.id)
                            + (SELECT COUNT(*) FROM media_missing_players m JOIN `player list` p ON p.id=m.player_id
-                              WHERE m.job_id=j.id AND {missing_match})
+                              WHERE m.job_id=j.id AND {review_match})
                         WHEN 'vs' THEN (SELECT COUNT(*) FROM vs_scan_rows v WHERE v.job_id=j.id)
                         ELSE 0
                     END AS pending_count
@@ -607,7 +617,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                       OR (j.destination='players' AND EXISTS (SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id))
                       OR (j.destination='vs' AND EXISTS (SELECT 1 FROM vs_scan_rows v WHERE v.job_id=j.id))
                       OR EXISTS (SELECT 1 FROM media_missing_players m JOIN `player list` p ON p.id=m.player_id
-                                 WHERE m.job_id=j.id AND {missing_match})
+                                 WHERE m.job_id=j.id AND {review_match})
                       OR j.id IN (SELECT recent.id FROM
                           (SELECT id FROM media_scan_jobs ORDER BY created_at DESC,id DESC LIMIT 35) recent)
                     ORDER BY j.created_at DESC,j.id DESC''')
@@ -638,7 +648,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                           AND NOT EXISTS (SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id)
                           AND NOT EXISTS (SELECT 1 FROM vs_scan_rows v WHERE v.job_id=j.id)
                           AND NOT EXISTS (SELECT 1 FROM media_missing_players m JOIN `player list` p ON p.id=m.player_id
-                                          WHERE m.job_id=j.id AND {missing_match})""")
+                                          WHERE m.job_id=j.id AND {review_match})""")
                     ids=[r['id'] for r in cur.fetchall()]
                     if ids:
                         marks=','.join(['%s']*len(ids))
@@ -674,28 +684,53 @@ def install_media_upload(app, connect_db, import_players, import_model):
     @router.get('/missing-players')
     def list_missing_players():
         with connect_db() as conn, conn.cursor() as cur:
-            cur.execute(f"""SELECT p.id,p.player_name AS name,p.player_rank AS `rank`,m.job_id
+            cur.execute(f"""SELECT p.id,p.player_name AS name,p.player_rank AS `rank`,m.job_id,m.reactivate
                 FROM media_missing_players m JOIN `player list` p ON p.id=m.player_id
                 JOIN media_scan_jobs j ON j.id=m.job_id
-                WHERE {missing_match} ORDER BY p.player_name,p.id""")
+                WHERE {review_match} ORDER BY m.reactivate DESC,p.player_name,p.id""")
             return {'players':cur.fetchall()}
 
     @router.put('/missing-players/{player_id}')
-    def decide_missing_player(player_id:int, job_id:str, archive:bool):
+    def decide_missing_player(player_id:int, job_id:str, archive:bool=False,
+                              action:Literal['restore','keep_archived']|None=None):
         with connect_db() as conn, conn.cursor() as cur:
             cur.execute('SELECT id FROM `player list` WHERE id=%s FOR UPDATE',(player_id,))
             if not cur.fetchone():
                 raise HTTPException(404,detail='Player is no longer on the roster.')
             cur.execute(f"""SELECT p.id FROM media_missing_players m JOIN `player list` p ON p.id=m.player_id
                 JOIN media_scan_jobs j ON j.id=m.job_id
-                WHERE m.player_id=%s AND m.job_id=%s AND {missing_match} FOR UPDATE""",(player_id,job_id))
+                WHERE m.player_id=%s AND m.job_id=%s AND m.reactivate=%s AND {review_match} FOR UPDATE""",
+                        (player_id,job_id,action is not None))
             if not cur.fetchone():
                 raise HTTPException(409,detail='This review has changed. Refresh before trying again.')
-            if archive:
+            if action=='restore':
+                restore_player(cur,player_id)
+            elif archive and action is None:
                 cur.execute('UPDATE `player list` SET archived=TRUE,updated_at=UTC_TIMESTAMP(6) WHERE id=%s',(player_id,))
             cur.execute('DELETE FROM media_missing_players WHERE player_id=%s',(player_id,))
             conn.commit()
-        return {'archived':archive}
+        return {'archived':action=='keep_archived' if action else archive}
+
+    def restore_player(cur,player_id):
+        cur.execute("""UPDATE `player list` SET archived=FALSE,possibly_removed=FALSE,updated_at=UTC_TIMESTAMP(6)
+                       WHERE id=%s AND archived=TRUE""",(player_id,))
+        return cur.rowcount
+
+    @router.get('/archived-players')
+    def list_archived_players():
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute("""SELECT id,player_name AS name,player_rank AS `rank` FROM `player list`
+                           WHERE archived=TRUE ORDER BY player_name,id""")
+            return {'players':cur.fetchall()}
+
+    @router.put('/archived-players/{player_id}/restore')
+    def restore_archived_player(player_id:int):
+        with connect_db() as conn, conn.cursor() as cur:
+            if not restore_player(cur,player_id):
+                raise HTTPException(409,detail='This player is no longer archived. Refresh and try again.')
+            cur.execute('DELETE FROM media_missing_players WHERE player_id=%s',(player_id,))
+            conn.commit()
+        return {'archived':False}
 
     @router.get('/pending')
     def get_pending_review():

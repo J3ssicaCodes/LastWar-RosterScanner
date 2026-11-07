@@ -13,7 +13,8 @@ from test_player_merge_vs import SQLDatabase
 def review_database():
     db = SQLDatabase()
     db.db.create_collation('utf8mb4_unicode_ci',lambda left,right:(left>right)-(left<right))
-    db.db.execute('CREATE TABLE media_missing_players (player_id INTEGER PRIMARY KEY,job_id TEXT,last_import_id TEXT)')
+    db.db.execute('''CREATE TABLE media_missing_players (player_id INTEGER PRIMARY KEY,job_id TEXT,
+                   last_import_id TEXT,reactivate INTEGER NOT NULL DEFAULT 0)''')
     return db
 
 
@@ -118,7 +119,7 @@ class MediaScanTests(unittest.TestCase):
         worker,job,dest,paths,directory=self.queued_worker()
         worker(job,dest,paths,directory)
         missing = [args for sql,args in self.db.statements if 'INSERT INTO media_missing_players' in sql]
-        self.assertEqual(missing,[(7,job,None)])
+        self.assertEqual(missing,[(7,job,None,False)])
         self.db.statements.clear()
         worker,job,dest,paths,directory=self.queued_worker('test.png')
         with patch.object(media,'scan_upload',return_value={'players':[{'name':'Visible Player','rank':'R4'}]}):
@@ -130,7 +131,7 @@ class MediaScanTests(unittest.TestCase):
         db.db.execute("INSERT INTO media_scan_jobs (id,status) VALUES ('video','review')")
         db.db.executemany('INSERT INTO `player list` (id,player_name,last_import_id) VALUES (?,?,?)',
                           [(1,'Keep',None),(2,'Remove','original'),(3,'Found','new-scan')])
-        db.db.executemany('INSERT INTO media_missing_players VALUES (?,?,?)',
+        db.db.executemany('INSERT INTO media_missing_players (player_id,job_id,last_import_id) VALUES (?,?,?)',
                           [(1,'video',None),(2,'video','original'),(3,'video','old-scan')])
         web=Mock()
         media.install_media_upload(web,db,Mock(),ImportData)
@@ -142,6 +143,38 @@ class MediaScanTests(unittest.TestCase):
         self.assertEqual(failure.exception.status_code,409)
         self.assertEqual([tuple(row) for row in db.db.execute('SELECT id,archived FROM `player list` ORDER BY id')],
                          [(1,0),(2,1),(3,0)])
+
+    def test_archived_players_seen_in_video_are_flagged_without_reactivating(self):
+        self.db.players=[{'id':1,'player_name':'Returned','player_rank':'R4','archived':True},
+                         {'id':2,'player_name':'Still archived','player_rank':'R3','archived':True}]
+        self.scanner.return_value={'players':[
+            {'name':'Returned','rank':'R4','tab':'power','power':123,'seen_in_video':True},
+            {'name':'Still archived','rank':'R3','tab':'power','power':456,'seen_in_video':False},
+        ]}
+        worker,job,dest,paths,directory=self.queued_worker()
+        worker(job,dest,paths,directory)
+        self.assertEqual([args for sql,args in self.db.statements if 'INSERT INTO media_missing_players' in sql],
+                         [(1,job,None,True)])
+        self.assertFalse(any('SET archived=FALSE' in sql for sql,args in self.db.statements))
+
+    def test_reactivation_from_scan_or_archive_manager_preserves_the_player_id(self):
+        db=review_database()
+        db.db.execute("INSERT INTO media_scan_jobs (id,status) VALUES ('video','review')")
+        db.db.executemany('INSERT INTO `player list` (id,player_name,archived,possibly_removed) VALUES (?,?,1,1)',
+                          [(1,'Returned'),(2,'Declined'),(3,'Manual')])
+        db.db.executemany('INSERT INTO media_missing_players (player_id,job_id,reactivate) VALUES (?,\'video\',1)',
+                          [(1,),(2,),(3,)])
+        web=Mock()
+        media.install_media_upload(web,db,Mock(),ImportData)
+        routes={r.path:r.endpoint for r in web.include_router.call_args.args[0].routes}
+        decide=routes['/api/media/missing-players/{player_id}']
+        self.assertEqual(decide(1,'video',action='restore'),{'archived':False})
+        self.assertEqual(decide(2,'video',action='keep_archived'),{'archived':True})
+        self.assertEqual(routes['/api/media/archived-players/{player_id}/restore'](3),{'archived':False})
+        self.assertEqual([row['id'] for row in routes['/api/media/archived-players']()['players']],[2])
+        self.assertEqual(routes['/api/media/missing-players']()['players'],[])
+        self.assertEqual([tuple(row) for row in db.db.execute('SELECT id,archived,possibly_removed FROM `player list` ORDER BY id')],
+                         [(1,0,0),(2,1,1),(3,0,0)])
 
     def test_known_player_kills_merges_into_master_automatically(self):
         self.db.players=[{'id':1,'player_name':'Test Player','player_rank':'R4',

@@ -311,6 +311,7 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable, correctio
                     record=_record_from_csv(entry,folder,metadata,tab)
                     if not record:
                         continue
+                    record['seen_in_video'] = kind == 'video'
                     group_records.append(record)
                     unmatched = master_keys is not None and name_key(resolve(record['name'])) not in master_keys
                     if not video_path:
@@ -362,6 +363,8 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable, correctio
             prev=unique.get(key)
             if prev is None or (prev['review_required'] and not row['review_required']):
                 unique[key]=row
+                if prev is not None:
+                    unique[key]['seen_in_video'] = prev['seen_in_video'] or row['seen_in_video']
             if prev is not None and prev[row['tab']] is not None and row[row['tab']] is not None and prev[row['tab']]!=row[row['tab']]:
                 chosen=unique[key]
                 chosen['review_reasons'].append(

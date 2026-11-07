@@ -18,7 +18,7 @@ USER_TABLES = {
     'media_scan_jobs': 'Scan Queue and History',
     'train_settings': 'Train Manager Settings',
     'train_restrictions': 'Train Award Restrictions',
-    'media_missing_players': 'Pending Missing Player Reviews',
+    'media_missing_players': 'Pending Roster Change Reviews',
     'train_assignments': 'Train Assignment History',
     'train_event_names': 'Custom Alliance Event Names',
     'train_emails': 'Saved Alliance Emails',
