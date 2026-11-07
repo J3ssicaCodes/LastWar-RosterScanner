@@ -9,17 +9,17 @@
   let ready=false;
   let errorMessage='';
   let prep=null;
-  let tokenClient=null;
-  let accessToken=null;
-  let expiresAt=0;
-  let selectionCallbacks=null;
+  let picking=false;
 
   function externalScript(url){
     return new Promise((resolve,reject)=>{
       const script=document.createElement('script');
       script.src=url;script.async=true;
       script.onload=()=>resolve();
-      script.onerror=()=>reject(Error('Could not load Google sign in. Check your connection.'));
+      script.onerror=()=>{
+        script.remove();
+        reject(Error('Could not load Google sign in. Check your connection.'));
+      };
       document.head.append(script);
     });
   }
@@ -33,41 +33,21 @@
       if(!config.configured)
         throw Error('Google Drive needs one-time setup by the site owner before it can be linked.');
       await Promise.all([
-        externalScript('https://accounts.google.com/gsi/client'),
-        externalScript('https://apis.google.com/js/api.js')
+        window.google?.accounts?.oauth2 || externalScript('https://accounts.google.com/gsi/client'),
+        window.gapi || externalScript('https://apis.google.com/js/api.js')
       ]);
       if(!window.google?.accounts?.oauth2||!window.gapi)
         throw Error('Google sign in could not load. Please try again.');
       await new Promise((resolve,reject)=>{
         window.gapi.load('picker',{callback:resolve,onerror:()=>reject(Error('Google Drive picker could not load.'))});
       });
-      tokenClient=google.accounts.oauth2.initTokenClient({
-        client_id:config.client_id,scope:SCOPE,
-        error_callback:error=>{
-          if(error?.type==='popup_closed')selectionCallbacks?.onCancel?.();
-          else selectionCallbacks?.onError?.(Error('Google sign in could not open. Allow popups and try again.'));
-        },
-        callback:response=>{
-          if(!response||response.error||!response.access_token){
-            selectionCallbacks?.onError?.(Error('Google Drive access was not granted.'));
-            return;
-          }
-          accessToken=response.access_token;
-          expiresAt=Date.now()+Math.max(60,Number(response.expires_in)||3500)*1000;
-          showPicker();
-        }
-      });
+      errorMessage='';
       ready=true;
-    })().catch(err=>{errorMessage=err.message;throw err;});
+    })().catch(err=>{prep=null;errorMessage=err.message;throw err;});
     return prep;
   }
 
-  function showPicker(){
-    const callbacks=selectionCallbacks;
-    if(!callbacks||!accessToken||!window.google?.picker){
-      callbacks?.onError?.(Error('Google Drive authorization is not ready.'));
-      return;
-    }
+  function showPicker(callbacks,accessToken,expiresAt){
     const gp=google.picker;
     const view=new gp.DocsView(gp.ViewId.DOCS);
     view.setMode(gp.DocsViewMode.LIST);
@@ -80,6 +60,7 @@
       .setOAuthToken(accessToken)
       .setDeveloperKey(config.api_key)
       .setAppId(config.project_number)
+      .setOrigin(window.location.origin)
       .setCallback(data=>{
         if(data.action===gp.Action.CANCEL){
           callbacks.onCancel?.();
@@ -119,16 +100,51 @@
   // This is called directly by a user click. Do not await inside the
   // Google OAuth popup gesture: browsers may otherwise block sign in.
   function choose(callbacks){
-    selectionCallbacks=callbacks;
     if(!ready){
       callbacks.onError?.(Error(errorMessage||'Google Drive is loading. Tap again shortly.'));
       return;
     }
-    if(accessToken&&Date.now()<expiresAt-90000){
-      showPicker();
-    }else{
-      accessToken=null;
-      tokenClient.requestAccessToken({prompt:'consent'});
+    if(picking){
+      callbacks.onError?.(Error('Finish the open Google Drive selection first.'));
+      return;
+    }
+    picking=true;
+    let finished=false;
+    const finish=handler=>value=>{
+      if(finished)return;
+      finished=true;
+      picking=false;
+      handler?.(value);
+    };
+    const selected=finish(callbacks.onSelected);
+    const cancel=finish(callbacks.onCancel);
+    const fail=finish(callbacks.onError);
+    try{
+      const oauth=google.accounts.oauth2;
+      const client=oauth.initTokenClient({
+        client_id:config.client_id,scope:SCOPE,include_granted_scopes:false,
+        error_callback:error=>{
+          if(error?.type==='popup_closed')cancel();
+          else fail(Error('Google sign in could not open. Allow popups and try again.'));
+        },
+        callback:response=>{
+          if(finished)return;
+          if(!response||response.error||!response.access_token||!oauth.hasGrantedAllScopes(response,SCOPE)){
+            fail(Error('Google Drive access was not granted. Choose a Google account and try again.'));
+            return;
+          }
+          const expiresAt=Date.now()+(Number(response.expires_in)||3600)*1000;
+          try{
+            showPicker({destination:callbacks.destination,onSelected:selected,onCancel:cancel,onError:fail},
+              response.access_token,expiresAt);
+          }catch{
+            fail(Error('Could not open Google Drive. Try selecting the file again.'));
+          }
+        }
+      });
+      client.requestAccessToken({prompt:'select_account'});
+    }catch{
+      fail(Error('Could not open Google sign in. Try again.'));
     }
   }
 

@@ -163,6 +163,10 @@ credentials cannot be invented by the app. Enable both **Google Picker API**
 and **Google Drive API**. Configure the OAuth consent screen and create an
 **OAuth client ID for a web application**, authorizing the JavaScript origin
 `https://lastwar-rosterscanner.onrender.com`.
+Use an External audience for alliances outside your Google organization.
+While the consent screen is in Testing, add each pilot Google account as a
+test user. Publish the consent screen before opening Drive selection to all
+leaders.
 
 Create a browser API key restricted to the Google Picker API and optionally
 the Google Drive API, with website referrer restrictions for both
@@ -176,10 +180,11 @@ Set these Render service environment variables:
 * `GOOGLE_CLOUD_PROJECT_NUMBER` — numeric Google Cloud project number.
 
 No Google client secret or refresh token is needed. Reload the website after
-configuring them. The **Select from Google Drive** button offers Google's
-account chooser and Picker, requesting only the `drive.file` scope for files
-the user explicitly chooses. Access tokens are kept only in worker/browser
-memory for the current attempt; never in MySQL or GitHub.
+configuring them. **Select from Google Drive** opens Google's account chooser
+each time so the uploader can choose their own account, including on a shared
+device. The project's credentials identify the app. The file picker uses the
+selected user's `drive.file` authorization. Access tokens are kept in browser
+and worker memory for the current upload.
 
 The server retrieves the selected file to its temporary scan directory; it
 removes that local copy after processing. If the user checks the extra option
@@ -192,6 +197,30 @@ permanent Google Drive deletion and does not require broad Drive access.
 
 For Google Picker configuration guidance see:
 https://developers.google.com/workspace/drive/picker/guides/web-picker
+
+### Rubies migration rehearsal
+
+Restore a complete MySQL 8 backup into an isolated database and point the
+existing `DB_*` settings at that copy. Inventory the database first.
+
+```sh
+python -m workspace_migration --database rubies_rehearsal
+```
+
+Use the backup's SHA-256 digest when applying a rehearsal. The migration
+creates scoped shadow tables in the same database and compares every copied
+row with the legacy row. It seeds a single Lady Jess account with separate
+platform admin and Rubies R5 roles, and records the copy in the audit log.
+
+```sh
+python -m workspace_migration --database rubies_rehearsal --apply \
+  --writes-paused --backup-sha256 "$RUBIES_BACKUP_SHA256"
+```
+
+Enter the temporary setup password at the private prompt. Keep the generated
+setup code private. The cutover also needs workspace-aware routes and a tested
+login flow. Take a fresh backup and drain scans during the production write
+pause before applying the final copy.
 
 ### Video processing performance and limitations
 

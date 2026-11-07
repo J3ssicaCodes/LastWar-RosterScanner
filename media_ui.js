@@ -353,6 +353,13 @@
       picker.prepare().catch(()=>{});
       return;
     }
+    if(driveSelection){
+      driveSelection=null;
+      $('mediaDriveTrashWrap').hidden=true;
+      $('mediaDriveTrash').checked=false;
+      $('mediaFileNames').textContent='No files selected';
+      $('mediaSubmit').disabled=!files.length;
+    }
     if(dialog.open)dialog.close(); // Google Picker must not sit behind a native modal.
     picker.choose({
       destination,
