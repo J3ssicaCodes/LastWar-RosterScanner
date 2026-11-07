@@ -20,7 +20,7 @@ class SQLDatabase:
             id INTEGER PRIMARY KEY AUTOINCREMENT,player_name TEXT,normalized_name TEXT UNIQUE,
             player_rank TEXT,power_millions REAL,power INTEGER,kills INTEGER,donations INTEGER,
             hq_level INTEGER,avatar_image BLOB,avatar_mime TEXT,avatar_updated_at TEXT,
-            birthday TEXT,is_new INTEGER,possibly_removed INTEGER,first_seen_at TEXT,
+            birthday TEXT,is_new INTEGER,possibly_removed INTEGER,archived INTEGER NOT NULL DEFAULT 0,first_seen_at TEXT,
             last_seen_at TEXT,updated_at TEXT,last_import_id TEXT);
             CREATE TABLE player_list_imports (id TEXT,is_full_capture INTEGER,scanned_count INTEGER,
             created_count INTEGER,updated_count INTEGER,possible_removed_count INTEGER);
@@ -57,14 +57,14 @@ class Cursor:
         if row is None:return None
         row=dict(row)
         if 'upload_date' in row:row['upload_date']=date.fromisoformat(row['upload_date'])
-        if 'score_date' in row:row['score_date']=date.fromisoformat(row['score_date'])
+        if row.get('score_date'):row['score_date']=date.fromisoformat(row['score_date'])
         return row
     def fetchall(self):
         rows=[]
         for row in self.cursor_.fetchall():
             row=dict(row)
             if 'upload_date' in row:row['upload_date']=date.fromisoformat(row['upload_date'])
-            if 'score_date' in row:row['score_date']=date.fromisoformat(row['score_date'])
+            if row.get('score_date'):row['score_date']=date.fromisoformat(row['score_date'])
             if row.get('birthday'):row['birthday']=date.fromisoformat(row['birthday'])
             rows.append(row)
         return rows
@@ -140,6 +140,24 @@ class PlayerMergeTests(unittest.TestCase):
 
 
 class VSDateAndPersistenceTests(unittest.TestCase):
+    def test_vs_video_keeps_rows_when_the_weekday_is_unreadable(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        import numpy as np
+        from vs_points_ocr import scan_vs_upload
+        row={'name':'Lady Jess','value':'123','name_conf':90,'value_conf':90,'page':1}
+        with TemporaryDirectory() as temp, \
+                patch('vs_points_ocr.detect'), patch('vs_points_ocr.include_readable_opening',return_value=()), \
+                patch('vs_points_ocr.extract',return_value={'kept':[{'image':'frame.png','frame':0}]}), \
+                patch('vs_points_ocr.cv2.imread',return_value=np.zeros((100,60,3),np.uint8)), \
+                patch('vs_points_ocr.selected_weekday',side_effect=ValueError('Unreadable weekday')), \
+                patch('vs_points_ocr.estimate_row_height',return_value=10), \
+                patch('vs_points_ocr.read_page',return_value=[row]), patch('vs_points_ocr.best_start',return_value=1), \
+                patch('vs_points_ocr.recheck_neighbors',return_value={}):
+            result=scan_vs_upload([Path(temp)/'clip.mp4'],Mock(),date(2026,11,6),master_keys={'ladyjess'},recheck_keys=set())
+        self.assertIsNone(result['score_date'])
+        self.assertEqual(result['rows'][0]['points'],123)
+
     def test_adjacent_frames_require_agreement_for_each_field(self):
         from unittest.mock import patch
         from vs_points_ocr import recheck_neighbors

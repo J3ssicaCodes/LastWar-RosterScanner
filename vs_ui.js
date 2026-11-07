@@ -113,9 +113,17 @@
     $('vsPending').hidden=!pending.length;
     const groups=new Map();for(const row of pending){if(!groups.has(row.job_id))groups.set(row.job_id,[]);groups.get(row.job_id).push(row);}
     $('vsReviewJobs').innerHTML=[...groups].map(([job,rows])=>{
-      const first=rows[0],[min,max]=weekBounds(first.upload_date);
-      return '<section class="panel" style="padding:16px;margin:14px 0" data-vs-job="'+esc(job)+'"><h4>'+esc(first.weekday)+' · '+rows.length+' scores to review</h4>'+
-        '<label>Score date <input data-vs-date type="date" value="'+esc(dates.get(job)||first.score_date)+'" min="'+min+'" max="'+max+'"></label>'+
+      const first=rows[0],[min,max]=weekBounds(first.upload_date),chosen=dates.get(job)||first.score_date;
+      const dayOptions=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'].map((day,i)=>{
+        const date=shiftDate(min,i);
+        return date>max?'':'<option value="'+date+'"'+(date===chosen?' selected':'')+'>'+day+' · '+esc(displayDate(date))+'</option>';
+      }).join('');
+      const dateControl=first.score_date?
+        '<label>Score date <input data-vs-date type="date" required value="'+esc(chosen)+'" min="'+min+'" max="'+max+'"></label>':
+        '<p>We couldn’t read the weekday in this upload. Choose the day before saving scores.</p>'+
+        '<label>Score weekday <select data-vs-date required><option value="">Choose a weekday…</option>'+dayOptions+'</select></label>';
+      return '<section class="panel" style="padding:16px;margin:14px 0" data-vs-job="'+esc(job)+'"><h4>'+esc(first.weekday||'Choose VS weekday')+' · '+rows.length+' scores to review</h4>'+
+        dateControl+
         '<div class="review-toolbar"><label><input type="checkbox" data-vs-select-all aria-label="Select all scores in this batch"> Select all</label>'+
         '<span data-vs-selected></span><button class="btn" data-vs-select-clear type="button">Select clear rows</button><button class="btn" data-vs-dismiss type="button">Dismiss selected</button><button class="btn primary" data-vs-approve type="button">Save selected</button></div><p data-vs-feedback role="status" hidden></p>'+
         '<div class="review-grid">'+rows.map(r=>
@@ -263,7 +271,9 @@
           throw Error('Check names and enter whole-number points for every selected row.');
         const unverified=selected.find(row=>!row.number_checked&&window.reviewIssues.numberNeedsReview(pending.find(p=>p.id===row.id)));
         if(unverified)throw Error('Compare '+unverified.name+'’s score with the capture and mark it checked.');
-        const score_date=group.querySelector('[data-vs-date]').value;
+        const dateInput=group.querySelector('[data-vs-date]');
+        if(!dateInput.value||!dateInput.validity.valid){dateInput.focus();throw Error('Choose the score weekday before saving.');}
+        const score_date=dateInput.value;
         await api('/api/vs-points/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:group.dataset.vsJob,score_date,rows:selected.map(r=>({...r,points:window.reviewIssues.numberValue(r.points)}))})});
         // Show the week that contains the scores just saved.
         selectedWeek=weekBounds(score_date)[0];

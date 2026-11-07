@@ -210,7 +210,8 @@ def nominations(players, points, last_awards, day, cooldown, goal, target):
 def load_nominations(cur, day, settings, goal, target):
     cur.execute("""SELECT p.id,p.player_name AS name,p.player_rank AS `rank`,p.birthday,p.possibly_removed,
                           r.player_id IS NOT NULL AS disabled
-                   FROM `player list` p LEFT JOIN train_restrictions r ON r.player_id=p.id""")
+                   FROM `player list` p LEFT JOIN train_restrictions r ON r.player_id=p.id
+                   WHERE p.archived=FALSE""")
     players = cur.fetchall()
     previous = day-timedelta(days=1)
     cur.execute("""SELECT COALESCE(linked.id,named.id) AS player_id,v.points
@@ -406,6 +407,8 @@ def install_train_manager(app, connect_db):
             else:
                 players,_ = load_nominations(cur,body.day,read_settings(cur),body.goal,body.target)
             by_id = {p['id']:p for p in players}
+            if body.conductor_id not in by_id or (body.vip_id is not None and body.vip_id not in by_id):
+                raise HTTPException(409,detail='A selected player has been removed from the active roster.')
             conductor = by_id[body.conductor_id]
             vip = by_id.get(body.vip_id,{'id':None,'name':'','reason':'Dice roll','points':None})
             for player in (conductor,vip):
@@ -454,7 +457,7 @@ def install_train_manager(app, connect_db):
         if body.conductor_id == body.vip_id:
             raise HTTPException(422,detail='Choose a different player from the Conductor.')
         with connect_db() as conn, conn.cursor() as cur:
-            cur.execute('SELECT player_name FROM `player list` WHERE id=%s FOR UPDATE',(body.vip_id,))
+            cur.execute('SELECT player_name FROM `player list` WHERE id=%s AND archived=FALSE FOR UPDATE',(body.vip_id,))
             player = cur.fetchone()
             if not player:
                 raise HTTPException(422,detail='Choose a winner from the Player List.')

@@ -124,6 +124,7 @@ def initialize_db():
                     avatar_updated_at DATETIME(6) NULL,
                     is_new BOOLEAN NOT NULL DEFAULT TRUE,
                     possibly_removed BOOLEAN NOT NULL DEFAULT FALSE,
+                    archived BOOLEAN NOT NULL DEFAULT FALSE,
                     first_seen_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                     last_seen_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -150,6 +151,7 @@ def initialize_db():
                     ('power','BIGINT UNSIGNED NULL'),
                     ('kills','BIGINT UNSIGNED NULL'),
                     ('donations','BIGINT UNSIGNED NULL'),
+                    ('archived','BOOLEAN NOT NULL DEFAULT FALSE'),
                 ):
                     cur.execute('SHOW COLUMNS FROM `player list` LIKE %s',(field,))
                     if not cur.fetchone():
@@ -240,6 +242,7 @@ def list_players():
                     avatar_image IS NOT NULL AS has_avatar, avatar_updated_at,
                     first_seen_at, last_seen_at, updated_at
                     FROM `player list`
+                    WHERE archived=FALSE
                     ORDER BY player_rank DESC, power IS NULL, power DESC,
                     power_millions IS NULL, power_millions DESC, LOWER(player_name)
                     LIMIT 10000""")

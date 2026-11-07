@@ -4,7 +4,7 @@ import io
 import unittest
 from unittest.mock import Mock, patch
 
-from fastapi import UploadFile
+from fastapi import HTTPException, UploadFile
 import media_upload as media
 from app import ImportData
 from test_player_merge_vs import SQLDatabase
@@ -37,6 +37,10 @@ class Database:
             raise RuntimeError('staging unavailable')
         self.statements.append((query, args))
 
+    def executemany(self, query, args):
+        for row in args:
+            self.execute(query,row)
+
     def fetchone(self):
         return {'n': 1}
 
@@ -56,6 +60,7 @@ class MediaScanTests(unittest.TestCase):
         for field in ('destination','created_at','progress','result_count','full_capture','started_at','finished_at'):
             db.db.execute(f'ALTER TABLE media_scan_jobs ADD COLUMN {field} TEXT')
         db.db.execute('CREATE TABLE `roster upload` (job_id TEXT)')
+        db.db.execute('CREATE TABLE media_missing_players (player_id INTEGER PRIMARY KEY,job_id TEXT,last_import_id TEXT)')
         recent = [(f'recent-{i}','ready','players') for i in range(36)]
         db.db.executemany('INSERT INTO media_scan_jobs (id,status,destination) VALUES (?,?,?)',
                           [*recent,('a-real','interrupted','vs'),('z-stale','review','vs')])
@@ -86,8 +91,8 @@ class MediaScanTests(unittest.TestCase):
         self.scanner = self.scan.start()
         self.addCleanup(self.scan.stop)
 
-    def queued_worker(self):
-        asyncio.run(self.upload('players', [UploadFile(filename='test.mp4', file=io.BytesIO(b'fixture'))]))
+    def queued_worker(self, filename='test.mp4'):
+        asyncio.run(self.upload('players', [UploadFile(filename=filename, file=io.BytesIO(b'fixture'))]))
         worker, job_id, destination, paths, directory = self.pool.submit.call_args.args
         self.addCleanup(lambda: __import__('shutil').rmtree(directory, ignore_errors=True))
         return worker, job_id, destination, paths, directory
@@ -100,6 +105,38 @@ class MediaScanTests(unittest.TestCase):
         self.assertEqual(staged[0][1:3], ('Test Player', 'R4'))
         self.assertTrue(any('status=%s' in q and args[0] == 'review' for q, args in self.db.statements))
         self.assertFalse(directory.exists())
+
+    def test_only_video_stages_missing_players_and_ignores_archived_players(self):
+        self.db.players=[{'id':7,'player_name':'Missing Player','player_rank':'R4','archived':False},
+                         {'id':8,'player_name':'Old Player','player_rank':'R4','archived':True}]
+        worker,job,dest,paths,directory=self.queued_worker()
+        worker(job,dest,paths,directory)
+        missing = [args for sql,args in self.db.statements if 'INSERT INTO media_missing_players' in sql]
+        self.assertEqual(missing,[(7,job,None)])
+        self.db.statements.clear()
+        worker,job,dest,paths,directory=self.queued_worker('test.png')
+        with patch.object(media,'scan_upload',return_value={'players':[{'name':'Visible Player','rank':'R4'}]}):
+            worker(job,dest,paths,directory)
+        self.assertFalse(any('INSERT INTO media_missing_players' in sql for sql,args in self.db.statements))
+
+    def test_missing_player_decisions_keep_history_and_reject_stale_reviews(self):
+        db=SQLDatabase()
+        db.db.execute('CREATE TABLE media_missing_players (player_id INTEGER PRIMARY KEY,job_id TEXT,last_import_id TEXT)')
+        db.db.execute("INSERT INTO media_scan_jobs (id,status) VALUES ('video','review')")
+        db.db.executemany('INSERT INTO `player list` (id,player_name,last_import_id) VALUES (?,?,?)',
+                          [(1,'Keep',None),(2,'Remove','original'),(3,'Found','new-scan')])
+        db.db.executemany('INSERT INTO media_missing_players VALUES (?,?,?)',
+                          [(1,'video',None),(2,'video','original'),(3,'video','old-scan')])
+        web=Mock()
+        media.install_media_upload(web,db,Mock(),ImportData)
+        decide=next(r.endpoint for r in web.include_router.call_args.args[0].routes if r.path=='/api/media/missing-players/{player_id}')
+        self.assertEqual(decide(1,'video',False),{'archived':False})
+        self.assertEqual(decide(2,'video',True),{'archived':True})
+        with self.assertRaises(HTTPException) as failure:
+            decide(3,'video',True)
+        self.assertEqual(failure.exception.status_code,409)
+        self.assertEqual([tuple(row) for row in db.db.execute('SELECT id,archived FROM `player list` ORDER BY id')],
+                         [(1,0),(2,1),(3,0)])
 
     def test_known_player_kills_merges_into_master_automatically(self):
         self.db.players=[{'id':1,'player_name':'Test Player','player_rank':'R4',

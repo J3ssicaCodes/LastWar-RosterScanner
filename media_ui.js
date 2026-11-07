@@ -167,6 +167,70 @@
     <div id="mediaPendingRows" class="review-grid"></div>`;
   const directory=playerView?.querySelector('[aria-labelledby="plDirectoryTitle"]');
   directory?.before(pendingPanel);
+  const missingPanel=document.createElement('section');
+  missingPanel.id='mediaMissingPanel';
+  missingPanel.className='panel pl-section media-review';
+  missingPanel.hidden=true;
+  missingPanel.innerHTML=`<div class="pl-title-row"><div><div class="eyebrow">Video review</div><h2>Players missing from the video</h2>
+    <p>Remove players who left the alliance, keep players who are still in it, or upload a screenshot of their row to scan it separately.</p></div></div>
+    <p id="mediaMissingStatus" role="status" aria-live="polite"></p><div id="mediaMissingRows" class="review-grid"></div>`;
+  directory?.before(missingPanel);
+  const recoveryFile=document.createElement('input');
+  recoveryFile.type='file';
+  recoveryFile.accept='image/png,image/jpeg,image/webp';
+  recoveryFile.hidden=true;
+  missingPanel.append(recoveryFile);
+  let missingSnapshot,missingRequest=0;
+  async function refreshMissingPlayers(){
+    const request=++missingRequest;
+    try{
+      const {players=[]}=await getJson('/api/media/missing-players');
+      if(request!==missingRequest)return;
+      const snapshot=JSON.stringify(players);
+      if(snapshot===missingSnapshot)return;
+      missingSnapshot=snapshot;
+      missingPanel.hidden=!players.length;
+      $('mediaMissingRows').innerHTML=players.map(player=>
+        '<article class="review-card" data-missing-job="'+escape(player.job_id)+'" data-missing-player="'+Number(player.id)+'">'+
+        '<strong>'+escape(player.name)+'</strong> · '+escape(player.rank)+'<p>Remove this player from the active roster?</p>'+
+        '<div class="review-card-actions"><button class="btn danger" type="button" data-missing-decision="remove">Yes, remove</button>'+
+        '<button class="btn" type="button" data-missing-decision="keep">No, keep</button>'+
+        '<button class="btn" type="button" data-missing-screenshot>Upload row screenshot</button></div></article>').join('');
+    }catch(error){console.warn('Could not load missing player reviews:',error.message);}
+  }
+  missingPanel.addEventListener('click',async event=>{
+    const screenshot=event.target.closest('[data-missing-screenshot]');
+    if(screenshot){recoveryFile.click();return;}
+    const button=event.target.closest('[data-missing-decision]');
+    if(!button)return;
+    const row=button.closest('[data-missing-player]'),archive=button.dataset.missingDecision==='remove';
+    for(const action of row.querySelectorAll('button'))action.disabled=true;
+    try{
+      const params=new URLSearchParams({job_id:row.dataset.missingJob,archive:String(archive)});
+      await getJson('/api/media/missing-players/'+row.dataset.missingPlayer+'?'+params,{method:'PUT'});
+      await Promise.all([refreshMissingPlayers(),refreshJobs(),window.playerListRefresh?.(),window.vsPointsRefresh?.()]);
+      const status=archive?'Player removed from the active roster. Their history was kept.':'Player kept on the active roster.';
+      if(missingPanel.hidden)announce(status);
+      else $('mediaMissingStatus').textContent=status;
+    }catch(error){
+      $('mediaMissingStatus').textContent=error.message;
+      await refreshMissingPlayers();
+    }finally{for(const action of row.querySelectorAll('button'))action.disabled=false;}
+  });
+  recoveryFile.onchange=()=>{
+    const file=recoveryFile.files?.[0];
+    recoveryFile.value='';
+    if(!file||busy)return;
+    if((files.length||driveSelection)&&!confirm('Replace the files already selected in Media Upload?'))return;
+    driveSelection=null;
+    fileInput.value='';
+    $('mediaDriveTrashWrap').hidden=true;
+    $('mediaDriveTrash').checked=false;
+    files=[file];
+    destination='players';
+    $('mediaFileNames').textContent=file.name;
+    openUpload('players');
+  };
   const masterNames=document.createElement('datalist');masterNames.id='playerMasterNames';document.body.append(masterNames);
   const reviewNames=window.reviewIssues.scanNames(masterNames);
   let autoTail=Promise.resolve();
@@ -475,6 +539,7 @@
       reviewMessage('Saved '+player.name+' to the Player List.');
       window.playerListRefresh?.();
       refreshJobs();
+      refreshMissingPlayers();
     }catch(error){reviewMessage('Could not save '+player.name+': '+error.message);}
   }
   function reviewMessage(text){
@@ -530,7 +595,7 @@
       removeSavedMedia(new Set(rows.map(row=>row.id)));
       const summary='Added '+result.approved+' rows to the Player List.';
       reviewMessage(summary+(pending.length?' '+pending.length+' rows still awaiting review.':''));
-      await Promise.all([refreshPending(),refreshJobs(),window.playerListRefresh?.()]);
+      await Promise.all([refreshPending(),refreshMissingPlayers(),refreshJobs(),window.playerListRefresh?.()]);
     }catch(error){
       notify('Could not save: '+error.message);
     }finally{
@@ -582,10 +647,11 @@
     $(isVS?'vsPointsTab':'playerListTab').click();
     await Promise.resolve();
     if(isVS)await window.vsPointsRefresh?.();
-    else await refreshPending();
+    else await Promise.all([refreshPending(),refreshMissingPlayers()]);
     const panel=$(isVS?'vsPending':'mediaPendingPanel');
     const job=[...panel.querySelectorAll(isVS?'[data-vs-job]':'[data-media-review-job]')]
-      .find(row=>(isVS?row.dataset.vsJob:row.dataset.mediaReviewJob)===jobId);
+      .find(row=>(isVS?row.dataset.vsJob:row.dataset.mediaReviewJob)===jobId)||
+      (!isVS&&[...missingPanel.querySelectorAll('[data-missing-job]')].find(row=>row.dataset.missingJob===jobId));
     if(job){
       job.tabIndex=-1;
       job.focus();
@@ -666,7 +732,7 @@
             announce('✓ '+(job.message||'VS points are ready to review in VS Points.'));
           }else{
             await window.playerListRefresh?.();
-            await refreshPending();
+            await Promise.all([refreshPending(),refreshMissingPlayers()]);
             announce('✓ '+(job.message||'Player List scan finished.'));
           }
         }
@@ -696,7 +762,8 @@
       if(queueDialog.open)$('mediaQueueSummary').textContent='Unable to refresh. Check your connection and try again.';
     }
   }
-  window.refreshMediaUploads=()=>Promise.all([refreshJobs(),refreshPending()]);
+  window.refreshMediaUploads=()=>Promise.all([refreshJobs(),refreshPending(),refreshMissingPlayers()]);
+  $('playerListTab').addEventListener('click',refreshMissingPlayers);
   window.addEventListener('focus',()=>refreshJobs());
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)window.refreshMediaUploads();});
   setInterval(refreshJobs,8000);

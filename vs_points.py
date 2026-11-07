@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from player_identity import (match_master, name_key, learn_name_correction, exact_player_index,
                              corrected_name, load_name_corrections, scan_player_ids, record_scan_players,
                              number_needs_review, NUMBER_REVIEW_PREFIX)
-from vs_points_ocr import roster_portrait_match, score_date_for_day
+from vs_points_ocr import DAYS, roster_portrait_match, score_date_for_day
 from player_merge import merge_vs_rows
 
 
@@ -108,6 +108,7 @@ def vs_scan_player_ids(cursor, job_id, lock=False):
 
 def stage_vs_result(connect_db, job_id, result):
     saved = pending = skipped = 0
+    date_known = result['score_date'] is not None
     with connect_db() as conn:
         try:
             with conn.cursor() as cur:
@@ -181,7 +182,7 @@ def stage_vs_result(connect_db, job_id, result):
                 saved_ids = set()
                 for row, raw, name, player, valid in retained:
                     points = row['points']
-                    if player and valid and len(scores[player['id']]) == 1 and not number_needs_review(row['review_reasons']):
+                    if date_known and player and valid and len(scores[player['id']]) == 1 and not number_needs_review(row['review_reasons']):
                         if player['id'] not in saved_ids:
                             upsert_vs_score(cur,result['score_date'],player['id'],player['player_name'],points,job_id)
                             saved_ids.add(player['id'])
@@ -229,7 +230,7 @@ def install_vs_points(app, connect_db):
                 cur.execute('''CREATE TABLE IF NOT EXISTS vs_scan_rows (
                     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                     job_id CHAR(36) NOT NULL,
-                    score_date DATE NOT NULL,
+                    score_date DATE NULL,
                     upload_date DATE NOT NULL,
                     weekday CHAR(3) NOT NULL,
                     player_name VARCHAR(255) NOT NULL,
@@ -242,6 +243,9 @@ def install_vs_points(app, connect_db):
                 cur.execute('SHOW COLUMNS FROM vs_scan_rows LIKE %s',('ocr_name',))
                 if not cur.fetchone():
                     cur.execute('ALTER TABLE vs_scan_rows ADD COLUMN ocr_name VARCHAR(255) NULL')
+                cur.execute("SHOW COLUMNS FROM vs_scan_rows LIKE 'score_date'")
+                if (cur.fetchone() or {}).get('Null')=='NO':
+                    cur.execute('ALTER TABLE vs_scan_rows MODIFY score_date DATE NULL')
             conn.commit()
 
     @router.get('')
@@ -252,8 +256,11 @@ def install_vs_points(app, connect_db):
                 dates=[r['score_date'].isoformat() for r in cur.fetchall()]
                 chosen=score_date or (date.fromisoformat(dates[0]) if dates else None)
                 if chosen:
-                    cur.execute('''SELECT id,score_date,player_id,player_name AS name,points
-                        FROM vs_points WHERE score_date=%s ORDER BY points DESC,player_name''',(chosen,))
+                    cur.execute('''SELECT v.id,v.score_date,v.player_id,v.player_name AS name,v.points
+                        FROM vs_points v LEFT JOIN `player list` linked ON linked.id=v.player_id
+                        LEFT JOIN `player list` named ON named.normalized_name=v.normalized_name
+                        WHERE v.score_date=%s AND COALESCE(linked.archived,named.archived,FALSE)=FALSE
+                        ORDER BY v.points DESC,v.player_name''',(chosen,))
                     rows=cur.fetchall()
                 else:rows=[]
         for row in rows:row['score_date']=row['score_date'].isoformat()
@@ -275,6 +282,7 @@ def install_vs_points(app, connect_db):
                     LEFT JOIN `player list` linked ON linked.id=v.player_id
                     LEFT JOIN `player list` named ON named.normalized_name=v.normalized_name
                     WHERE v.score_date BETWEEN %s AND %s
+                      AND COALESCE(linked.archived,named.archived,FALSE)=FALSE
                     ORDER BY v.player_id IS NULL,v.updated_at DESC''',(days[0],days[-1]))
                 rows = cur.fetchall()
         weeks = {day - timedelta(days=day.weekday()) for day in dates}
@@ -309,7 +317,8 @@ def install_vs_points(app, connect_db):
                 rows=cur.fetchall()
                 updated={job:sorted(vs_scan_player_ids(cur,job)) for job in {row['job_id'] for row in rows}}
         for row in rows:
-            for key in ('score_date','upload_date'):row[key]=row[key].isoformat()
+            for key in ('score_date','upload_date'):
+                row[key]=row[key].isoformat() if row[key] is not None else None
             row['review_reasons']=json.loads(row.get('review_reasons') or '[]')
         return {'rows':rows,'updated_by_job':updated}
 
@@ -330,7 +339,7 @@ def install_vs_points(app, connect_db):
                     exact=exact_player_index(master)
                     corrections=load_name_corrections(cur)
                     marks=','.join(['%s']*len(ids))
-                    cur.execute(f'SELECT id,upload_date,COALESCE(ocr_name,player_name) AS original_name,review_reasons FROM vs_scan_rows WHERE job_id=%s AND id IN ({marks}) FOR UPDATE', (body.job_id,*ids))
+                    cur.execute(f'SELECT id,score_date,upload_date,COALESCE(ocr_name,player_name) AS original_name,review_reasons FROM vs_scan_rows WHERE job_id=%s AND id IN ({marks}) FOR UPDATE', (body.job_id,*ids))
                     staged=cur.fetchall()
                     if len(staged)!=len(ids):raise HTTPException(409,detail='Review changed. Refresh and retry.')
                     staged_by_id={source['id']:source for source in staged}
@@ -362,6 +371,9 @@ def install_vs_points(app, connect_db):
                             learn_name_correction(cur,source['original_name'],name)
                         upsert_vs_score(cur,body.score_date,player['id'] if player else None,name,row.points,body.job_id)
                     record_scan_players(cur,body.job_id,saved_ids,updated)
+                    if any(source['score_date'] is None for source in staged):
+                        cur.execute('UPDATE vs_scan_rows SET score_date=%s,weekday=%s WHERE job_id=%s AND score_date IS NULL',
+                                    (body.score_date,DAYS[body.score_date.weekday()],body.job_id))
                     cur.execute(f'DELETE FROM vs_scan_rows WHERE id IN ({marks})',tuple(ids))
                     cur.execute("""UPDATE media_scan_jobs SET status='approved',message='VS points saved',
                         updated_at=UTC_TIMESTAMP(6) WHERE id=%s

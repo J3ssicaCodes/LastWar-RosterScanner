@@ -178,3 +178,24 @@ class PerformanceTests(unittest.TestCase):
             'previous':[10,None,None,None,None,60],
         })
         self.assertEqual([row['value'] for row in history['vs']],[70,30,70])
+
+    def test_unreadable_vs_weekday_stages_even_known_scores_without_writing_them(self):
+        keep,_=self.add_players()
+        self.db.db.execute("INSERT INTO media_scan_jobs (id,updated_player_ids) VALUES ('undated','[]')")
+        counts=stage_vs_result(self.db,'undated',{'score_date':None,'upload_date':'2026-11-06','weekday':'',
+            'rows':[{'name':'DonPepon','points':240,'review_reasons':[]}]})
+        self.assertEqual(counts,{'saved':0,'pending':1,'skipped':0})
+        self.assertEqual(self.db.db.execute('SELECT COUNT(*) FROM vs_points').fetchone()[0],0)
+        self.assertEqual(tuple(self.db.db.execute('SELECT score_date,points FROM vs_scan_rows').fetchone()),(None,240))
+
+    def test_archived_players_are_excluded_from_alliance_totals_but_keep_history(self):
+        keep,other=self.add_players()
+        self.db.db.execute('UPDATE `player list` SET archived=TRUE WHERE id=?',(other,))
+        self.db.db.executemany('INSERT INTO vs_points (score_date,player_id,player_name,normalized_name,points) VALUES (?,?,?,?,?)',[
+            ('2026-11-02',keep,'DonPepon','donpepon',100),
+            ('2026-11-02',other,'ep','ep',200),
+        ])
+        result=app.player_performance(date(2026,11,2))
+        self.assertEqual([row['id'] for row in result['players']],[keep])
+        self.assertEqual(result['daily'][0]['points'],'100')
+        self.assertEqual(app.player_history(other)['vs'],[{'date':'2026-11-08','value':200}])

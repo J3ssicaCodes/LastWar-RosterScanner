@@ -363,10 +363,7 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
 
 
 def read_vs_neighbor(image, anchors, day, resolve, master_keys):
-    try:
-        if selected_weekday(image,False) != day:
-            return []
-    except ValueError:
+    if day is not None and readable_weekday(image,False) not in (None,day):
         return []
     return read_page(image,0,anchors[0]['period'],
                      round(.225*image.shape[0]),anchors=anchors,resolve=resolve,master_keys=master_keys)
@@ -389,6 +386,13 @@ def include_readable_opening(path, detection):
     finally:
         cap.release()
     return detection
+
+
+def readable_weekday(image, validate_labels=True):
+    try:
+        return selected_weekday(image,validate_labels)
+    except ValueError:
+        return None
 
 
 def missing_player_frames(detection, used_frames):
@@ -431,10 +435,7 @@ def recheck_missing_players(observations, variants, score_variants, page_sources
                 ok,image = cap.read()
                 if not ok:
                     continue
-                try:
-                    if selected_weekday(image,False) != day:
-                        continue
-                except ValueError:
+                if day is not None and readable_weekday(image,False) not in (None,day):
                     continue
                 try:
                     period = estimate_row_height(image)
@@ -493,13 +494,10 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
             for number,page in enumerate(pages,1):
                 image=cv2.imread(str(page))
                 if image is None:raise ValueError('Could not read VS media.')
-                if number==1:
-                    days.add(selected_weekday(image))
+                visible_day=readable_weekday(image,number==1 or not days)
+                if visible_day is not None:
+                    days.add(visible_day)
                     if len(days)>1:raise ValueError('Upload one VS day at a time.')
-                    if score_date_for_day(upload_date,next(iter(days)))>upload_date:
-                        raise ValueError('Selected VS day is later than the local upload date.')
-                elif selected_weekday(image,False) not in days:
-                    raise ValueError('The selected VS day changed during the recording. Upload one day at a time.')
                 try:period=estimate_row_height(image)
                 except ValueError:period=189*image.shape[1]/1080
                 rows=read_page(image,total_pages+1,period,round(.225*image.shape[0]),resolve=resolve,master_keys=master_keys)
@@ -539,15 +537,16 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
                         recovered.append(gap)
                         break
             finally:cap.release()
+        day=next(iter(days),None)
         rechecked, found = recheck_missing_players(
             observations, variants, score_variants, page_sources, videos,
             (master_keys or set()) if recheck_keys is None else recheck_keys,
-            master_keys or set(), resolve, next(iter(days)), progress)
+            master_keys or set(), resolve, day, progress)
         reasons = review_flags(observations, variants, score_variants, resolve, master_keys)
         name_warnings = {pos: any('name' in flag.lower() for flag in flags) for pos,flags in reasons.items()}
         confirmed = recheck_neighbors(
             observations, page_sources, name_warnings, resolve, progress,
-            lambda image,anchors: read_vs_neighbor(image,anchors,next(iter(days)),resolve,master_keys))
+            lambda image,anchors: read_vs_neighbor(image,anchors,day,resolve,master_keys))
         for position,row in observations.items():
             row['name_readings'] = sorted(set(row.get('name_readings',[])) | variants.get(position,set()))
             row['point_readings'] = sorted(set(row.get('point_readings',[])) | score_variants.get(position,set()))
@@ -558,9 +557,10 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
                 score_variants.pop(position,None)
 
     if not observations:raise ValueError('No complete VS score rows found.')
-    day=next(iter(days)); earned=score_date_for_day(upload_date,day)
-    if earned>upload_date:
-        raise ValueError('The selected VS day is later than the upload date. Check the daily tab and your local date.')
+    earned=score_date_for_day(upload_date,day) if day is not None else None
+    if earned is not None and earned>upload_date:
+        earned=None
+    score_date=earned.isoformat() if earned else None
     verified_numbers = {pos for pos, fields in confirmed.items()
                         if 'value' in fields and len(score_variants.get(pos, set())) <= 1}
     reasons = review_flags(observations, variants, score_variants, resolve, master_keys, verified_numbers)
@@ -574,8 +574,8 @@ def scan_vs_upload(paths, progress, upload_date: date, corrections=None, master_
                      'name':resolve(row['name']),'ocr_name':row['name'],
                      'point_readings':sorted(set(row.get('point_readings',[])) | score_variants.get(pos,set())),
                      'points':int(row['value']) if row['value'].isdigit() else None,
-                     'review_reasons':reasons[pos],'score_date':earned.isoformat()})
-    return {'rows':rows,'weekday':DAYS[day],'score_date':earned.isoformat(),
+                     'review_reasons':reasons[pos],'score_date':score_date})
+    return {'rows':rows,'weekday':DAYS[day] if earned else '', 'score_date':score_date,
             'upload_date':upload_date.isoformat(),'pages':total_pages,'recovered_positions':recovered,
             'rechecked_missing_players':rechecked,'found_missing_players':found,
             'missing_positions':[p for p in range(1,max(observations)+1) if p not in observations]}

@@ -83,17 +83,17 @@ def load_performance(connect_db, week_start: date):
     monday = week_start - timedelta(days=week_start.weekday())
     with connect_db() as conn, conn.cursor() as cur:
         cur.execute("""SELECT id,player_name AS name,player_rank AS `rank`
-                       FROM `player list` WHERE possibly_removed=FALSE ORDER BY player_name,id""")
+                       FROM `player list` WHERE possibly_removed=FALSE AND archived=FALSE ORDER BY player_name,id""")
         players = cur.fetchall()
         cur.execute("""SELECT p.id AS roster_id,v.score_date,v.points
                        FROM vs_points v JOIN `player list` p ON
                          p.id=v.player_id OR (v.player_id IS NULL AND p.normalized_name=v.normalized_name)
-                       WHERE p.possibly_removed=FALSE AND v.score_date BETWEEN %s AND %s
+                       WHERE p.possibly_removed=FALSE AND p.archived=FALSE AND v.score_date BETWEEN %s AND %s
                        ORDER BY v.player_id IS NULL,v.updated_at DESC,v.id DESC""",
                     (monday-timedelta(weeks=7),monday+timedelta(days=5)))
         scores = cur.fetchall()
         cur.execute(f"""SELECT h.player_id,{HISTORY_FIELDS} FROM player_stat_history h
-                        JOIN `player list` p ON p.id=h.player_id WHERE p.possibly_removed=FALSE
+                        JOIN `player list` p ON p.id=h.player_id WHERE p.possibly_removed=FALSE AND p.archived=FALSE
                         ORDER BY h.recorded_at,h.import_id""")
         history = defaultdict(list)
         for row in cur.fetchall():
