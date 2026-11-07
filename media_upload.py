@@ -86,7 +86,8 @@ def google_picker_config():
 def install_media_upload(app, connect_db, import_players, import_model):
     router = APIRouter(prefix='/api/media', tags=['Media Upload'])
     missing_match = """p.archived=FALSE AND
-        (p.last_import_id=m.last_import_id OR (p.last_import_id IS NULL AND m.last_import_id IS NULL))"""
+        (p.last_import_id=m.last_import_id COLLATE utf8mb4_unicode_ci
+         OR (p.last_import_id IS NULL AND m.last_import_id IS NULL))"""
 
     def schema():
         with connect_db() as conn:

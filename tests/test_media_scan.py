@@ -10,6 +10,13 @@ from app import ImportData
 from test_player_merge_vs import SQLDatabase
 
 
+def review_database():
+    db = SQLDatabase()
+    db.db.create_collation('utf8mb4_unicode_ci',lambda left,right:(left>right)-(left<right))
+    db.db.execute('CREATE TABLE media_missing_players (player_id INTEGER PRIMARY KEY,job_id TEXT,last_import_id TEXT)')
+    return db
+
+
 class Database:
     def __init__(self):
         self.statements = []
@@ -56,11 +63,10 @@ class Database:
 
 class MediaScanTests(unittest.TestCase):
     def test_queue_counts_existing_rows_and_includes_older_reviews(self):
-        db = SQLDatabase()
+        db = review_database()
         for field in ('destination','created_at','progress','result_count','full_capture','started_at','finished_at'):
             db.db.execute(f'ALTER TABLE media_scan_jobs ADD COLUMN {field} TEXT')
         db.db.execute('CREATE TABLE `roster upload` (job_id TEXT)')
-        db.db.execute('CREATE TABLE media_missing_players (player_id INTEGER PRIMARY KEY,job_id TEXT,last_import_id TEXT)')
         recent = [(f'recent-{i}','ready','players') for i in range(36)]
         db.db.executemany('INSERT INTO media_scan_jobs (id,status,destination) VALUES (?,?,?)',
                           [*recent,('a-real','interrupted','vs'),('z-stale','review','vs')])
@@ -120,8 +126,7 @@ class MediaScanTests(unittest.TestCase):
         self.assertFalse(any('INSERT INTO media_missing_players' in sql for sql,args in self.db.statements))
 
     def test_missing_player_decisions_keep_history_and_reject_stale_reviews(self):
-        db=SQLDatabase()
-        db.db.execute('CREATE TABLE media_missing_players (player_id INTEGER PRIMARY KEY,job_id TEXT,last_import_id TEXT)')
+        db=review_database()
         db.db.execute("INSERT INTO media_scan_jobs (id,status) VALUES ('video','review')")
         db.db.executemany('INSERT INTO `player list` (id,player_name,last_import_id) VALUES (?,?,?)',
                           [(1,'Keep',None),(2,'Remove','original'),(3,'Found','new-scan')])
