@@ -308,10 +308,6 @@ html[data-theme="dark"]{color-scheme:dark}
 .workspace-utilities .notification-bell{position:relative;display:inline-grid;place-items:center;flex:0 0 42px;width:42px;min-width:42px;min-height:42px;padding:0;font-size:19px;line-height:1;text-decoration:none}
 .notification-badge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;display:grid;place-items:center;padding:0 4px;border-radius:999px;background:#c73558;color:#fff;font-size:10px;line-height:1;font-weight:800}
 .notification-badge[hidden]{display:none}
-.palette-toggle{display:inline-flex;gap:2px;align-items:center;padding:3px;border:1px solid var(--stroke);border-radius:11px;background:var(--panel2)}
-.palette-toggle button{display:grid;place-items:center;width:36px;height:36px;padding:0;border:1px solid transparent;border-radius:8px;background:transparent;font-size:18px;line-height:1}
-.palette-toggle button[aria-pressed="true"]{background:var(--panel);border-color:var(--violet);box-shadow:0 1px 5px #0002}
-.palette-toggle button:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 @media(max-width:680px){.workspace-utilities .notification-bell{flex:0 0 42px;width:42px;min-width:42px;padding:0;font-size:19px}}
 /* Pink keeps the existing light/dark preference independent of the palette. */
 html[data-palette="pink"][data-theme="dark"]{--bg:#21101d;--panel:#351b2e;--panel2:#48273d;--stroke:#70445f;--text:#fff2fa;--muted:#dbc1d1;--cyan:#ffafd0;--violet:#f1a9d5;--green:#a7ddbd;--amber:#f3ce9a;--red:#ff9baa}
@@ -331,12 +327,11 @@ html[data-palette="pink"][data-theme="light"] :is(.btn,.theme-toggle,.preference
 html[data-palette="pink"][data-theme="light"] .btn.primary{background:linear-gradient(105deg,#f8b5d1,#eebee1);color:#4b2038;border-color:transparent}
 html[data-palette="pink"][data-theme="light"] :is(th,.workspace-tab[aria-selected="true"]){background:#f9e4ee;color:#542c44}
 html[data-palette="pink"][data-theme="light"] tbody tr:nth-child(even){background:#fff5f9}
-html[data-palette="pink"] :is(.palette-toggle,.palette-toggle button[aria-pressed="true"]){border-color:var(--violet)}
 </style>
 </head>
 <body>
 <main class="shell">
-<header class="top"><div class="workspace-brand"><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch appearance" aria-pressed="false">☀️ Light mode</button><div class="palette-toggle" role="group" aria-label="Color theme"><button type="button" id="bluePalette" aria-label="Blue color theme" aria-pressed="true" title="Blue theme">🟦</button><button type="button" id="pinkPalette" aria-label="Pink color theme" aria-pressed="false" title="Pink theme">🩷</button></div></div><div class="workspace-utilities" id="workspaceUtilities"></div></header>
+<header class="top"><div class="workspace-brand"><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch appearance" aria-pressed="false">☀️ Light mode</button><button type="button" id="paletteToggle" class="theme-toggle" aria-label="Switch to pink theme" aria-pressed="false">🩷 Pink theme</button></div><div class="workspace-utilities" id="workspaceUtilities"></div></header>
 <nav class="workspace-tabs" role="tablist" aria-label="Alliance workspace sections">
   <button type="button" class="workspace-tab" id="rosterScannerTab" role="tab" aria-controls="rosterScannerView" aria-selected="true" tabindex="0" data-workspace-tab="scanner"><span class="workspace-tab-icon" aria-hidden="true">▦</span><span>Roster Scanner</span></button>
   <button type="button" class="workspace-tab" id="trainTab" role="tab" aria-controls="trainView" aria-selected="false" tabindex="-1" data-workspace-tab="train"><span class="workspace-tab-icon" aria-hidden="true">♧</span><span>Train Manager</span></button>
@@ -2222,12 +2217,15 @@ document.getElementById('themeToggle').addEventListener('click',()=>{
 function applyPalette(value){
   const palette=value==='pink'?'pink':'blue';
   document.documentElement.dataset.palette=palette;
-  document.getElementById('bluePalette').setAttribute('aria-pressed',String(palette==='blue'));
-  document.getElementById('pinkPalette').setAttribute('aria-pressed',String(palette==='pink'));
+  const btn=document.getElementById('paletteToggle');
+  btn.textContent=palette==='pink'?'🟦 Blue theme':'🩷 Pink theme';
+  btn.setAttribute('aria-label',palette==='pink'?'Switch to blue theme':'Switch to pink theme');
+  btn.setAttribute('aria-pressed',String(palette==='pink'));
   try{localStorage.setItem('lastwar.uiPalette.v1',palette);}catch(e){}
 }
-document.getElementById('bluePalette').addEventListener('click',()=>applyPalette('blue'));
-document.getElementById('pinkPalette').addEventListener('click',()=>applyPalette('pink'));
+document.getElementById('paletteToggle').addEventListener('click',()=>{
+  applyPalette(document.documentElement.dataset.palette==='pink'?'blue':'pink');
+});
 applyPalette(document.documentElement.dataset.palette);
 setUILanguage(uiLanguage);applyUITheme();
 localizationObserver.observe(document.body,{subtree:true,childList:true});
