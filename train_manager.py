@@ -268,7 +268,7 @@ def install_train_manager(app, connect_db):
     stop = Event()
 
     def purge(cur):
-        cur.execute('DELETE FROM train_emails WHERE created_at < UTC_TIMESTAMP() - INTERVAL 30 DAY')
+        return  # Preserve email archives during the workspace migration.
 
     @app.on_event('startup')
     def train_schema():

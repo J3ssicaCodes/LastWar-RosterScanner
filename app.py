@@ -41,6 +41,12 @@ from admin_reset import initialize_admin_state, install_admin_reset
 
 BASE = Path(__file__).parent
 app = FastAPI(title='Alliance Tools Player List API', docs_url=None, redoc_url=None)
+
+@app.middleware('http')
+async def pause_during_workspace_migration(request, call_next):
+    if request.method not in ('GET', 'HEAD', 'OPTIONS'):
+        return JSONResponse({'detail':'The alliance is moving to its workspace. Try again shortly.'}, status_code=503)
+    return await call_next(request)
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='member-list-ocr')
 jobs: dict[str, dict[str, Any]] = {}
 job_lock = threading.RLock()
