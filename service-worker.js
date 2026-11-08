@@ -4,7 +4,7 @@ self.addEventListener('push',event=>{
   const target=typeof message.target==='string'&&message.target.startsWith('/')&&!message.target.startsWith('//')
     ?message.target:'/account';
   event.waitUntil(self.registration.showNotification(message.title,{
-    body:message.body,icon:'/alliance-icon-192.png',badge:'/alliance-icon-192.png',data:{target},
+    body:message.body,icon:'/alliance-icon-192.png?v=2',badge:'/alliance-icon-192.png?v=2',data:{target},
   }));
 });
 self.addEventListener('notificationclick',event=>{
