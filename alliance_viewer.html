@@ -6,6 +6,21 @@
   <meta name="theme-color" content="#17142c">
   <meta name="apple-mobile-web-app-title" content="Alliance Tools">
   <link rel="apple-touch-icon" href="/alliance-icon-192.png?v=2">
+  <script>
+    // Capture the browser's install event as early as possible; it can fire only once.
+    window.allianceInstall={prompt:null};
+    window.addEventListener('beforeinstallprompt',event=>{
+      event.preventDefault();
+      window.allianceInstall.prompt=event;
+      window.dispatchEvent(new Event('alliance-install-ready'));
+    });
+    const allianceMatch=location.pathname.match(/^\/a\/([0-9]+-[a-z0-9]+)\/?$/);
+    if(allianceMatch){
+      const manifest=document.createElement('link');manifest.rel='manifest';
+      manifest.href='/a/'+allianceMatch[1]+'/manifest.webmanifest';document.head.append(manifest);
+    }
+    if('serviceWorker' in navigator)navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
+  </script>
   <title>Alliance Tools</title>
   <style>
     :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#111326;color:#f7f4ff}
@@ -39,5 +54,5 @@
   <p><a href="/account" class="button">Have an invite?</a> <a href="/account" class="button">Want to add your alliance?</a></p>
 </main>
 <dialog id="loginDialog"><form id="loginForm"><h2>Leadership Login</h2><p class="muted">Sign in to manage your alliance.</p><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><p id="loginError" class="error" role="alert"></p><div class="actions"><button type="submit" class="primary">Sign in</button><button id="closeLogin" type="button">Cancel</button></div></form></dialog>
-<dialog id="installDialog"><h2>Install Alliance Tools</h2><p>On iPhone, tap Share in Safari, then choose <strong>Add to Home Screen</strong>.</p><p>On Android, use Install App when offered or choose Add to Home screen from your browser menu.</p><button id="closeInstall" type="button">Close</button></dialog>
+<dialog id="installDialog"><h2>Install Alliance Tools</h2><p id="installMessage">Your browser is not offering installation right now.</p><button id="closeInstall" type="button">Close</button></dialog>
 </body></html>

@@ -2,7 +2,7 @@
   'use strict';
   const slug=location.pathname.split('/')[2];
   const $=id=>document.getElementById(id);
-  let week=null,installPrompt=null;
+  let week=null;
   const showError=error=>{$('pageError').textContent=error.message||String(error);};
   function dayOffset(start,offset){
     const date=new Date(start+'T12:00:00Z');
@@ -93,16 +93,22 @@
       location.href='/a/'+slug+'/manage';
     }catch(error){$('loginError').textContent=error.message;}
   };
-  window.addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt=event;});
+  const installState=window.allianceInstall;
+  function installed(){return window.matchMedia('(display-mode: standalone)').matches||window.navigator.standalone===true;}
+  function updateInstallButton(){ $('installButton').hidden=installed(); }
+  updateInstallButton();
+  window.addEventListener('appinstalled',()=>{installState.prompt=null;$('installButton').hidden=true;});
   $('installButton').onclick=async()=>{
-    if(installPrompt){await installPrompt.prompt();installPrompt=null;}
-    else $('installDialog').showModal();
+    if(installed()){updateInstallButton();return;}
+    const prompt=installState.prompt;
+    if(prompt){
+      installState.prompt=null;
+      try{await prompt.prompt();}catch(error){$('installDialog').showModal();}
+    }else $('installDialog').showModal();
   };
   $('closeInstall').onclick=()=>$('installDialog').close();
   for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('click',event=>{
     if(event.target===dialog)dialog.close();
   });
-  const manifest=document.createElement('link');manifest.rel='manifest';manifest.href='/a/'+slug+'/manifest.webmanifest';document.head.append(manifest);
-  if('serviceWorker' in navigator)navigator.serviceWorker.register('/service-worker.js').catch(()=>{});
   load().catch(showError);
 })();

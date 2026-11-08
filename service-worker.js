@@ -1,3 +1,9 @@
+self.addEventListener('install',event=>event.waitUntil(self.skipWaiting()));
+self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
+// Stay online-only while allowing browsers that require a fetch handler to install.
+self.addEventListener('fetch',event=>{
+  if(event.request.mode==='navigate')event.respondWith(fetch(event.request));
+});
 self.addEventListener('push',event=>{
   let message={title:'Alliance Tools',body:'You have an update.',target:'/account'};
   try{message={...message,...event.data.json()};}catch{}
