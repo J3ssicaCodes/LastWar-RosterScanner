@@ -304,6 +304,7 @@ html[data-theme="dark"]{color-scheme:dark}
   .workspace-tab{transition:none}
 }
 
+.account-workspace iframe{display:block;width:100%;min-height:240px;border:0;background:transparent}
 /* Account picture stays in the upper-right corner on desktop and mobile. */
 .top{position:relative;padding-right:56px}
 .profile-avatar{position:absolute;right:0;top:0;display:grid;place-items:center;width:44px;height:44px;overflow:hidden;border:1px solid var(--stroke);border-radius:50%;background:var(--panel2);font-size:23px;line-height:1;text-decoration:none}
@@ -346,6 +347,7 @@ html[data-palette="pink"][data-theme="light"] tbody tr:nth-child(even){backgroun
   <button type="button" class="workspace-tab" id="performanceTab" role="tab" aria-controls="performanceView" aria-selected="false" tabindex="-1" data-workspace-tab="performance"><span class="workspace-tab-icon" aria-hidden="true">↗</span><span>Player Performance</span></button>
   <button type="button" class="workspace-tab" id="adminTab" role="tab" aria-controls="adminView" aria-selected="false" tabindex="-1" data-workspace-tab="admin"><span class="workspace-tab-icon" aria-hidden="true">⚙</span><span>Admin</span></button>
 </nav>
+<section id="accountView" class="workspace-view account-workspace" aria-label="Account and leadership" hidden><iframe id="accountFrame" title="Account and leadership" scrolling="no"></iframe></section>
 <section id="rosterScannerView" class="workspace-view" role="tabpanel" aria-labelledby="rosterScannerTab" tabindex="0">
 <section class="event-selector panel" aria-labelledby="eventSelectorTitle">
   <div class="event-selector-copy"><div class="eyebrow">Event planning</div><h2 id="eventSelectorTitle">Choose your event</h2><p>Desert Storm and Canyon Storm are built in maps. Customize their priorities, or add another event with assignable buildings and ignored areas. Choose your event before scanning.</p></div>
@@ -2254,15 +2256,16 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     observer.observe(table.firstElementChild);
   }
   function selectTab(tabId,focus=false){
-    if(!Object.hasOwn(views,tabId))tabId='scanner';
+    if(tabId!=='account'&&!Object.hasOwn(views,tabId))tabId='scanner';
     for(const tab of tabs){
       const active=tab.dataset.workspaceTab===tabId;
       tab.setAttribute('aria-selected',String(active));
-      tab.tabIndex=active?0:-1;
+      tab.tabIndex=active || (tabId==='account' && tab===tabs[0])?0:-1;
       if(active&&focus)tab.focus();
     }
     for(const [id,view] of Object.entries(views))view.hidden=id!==tabId;
-    try{localStorage.setItem(storageKey,tabId);}catch(e){}
+    document.getElementById('accountView').hidden=tabId!=='account';
+    if(tabId!=='account')try{localStorage.setItem(storageKey,tabId);}catch(e){}
   }
   for(const [index,tab] of tabs.entries()){
     tab.addEventListener('click',()=>selectTab(tab.dataset.workspaceTab));
@@ -2274,6 +2277,22 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       selectTab(tabs[next].dataset.workspaceTab,true);
     });
   }
+  const accountFrame=document.getElementById('accountFrame');
+  let accountResizeObserver;
+  accountFrame.addEventListener('load',()=>{
+    accountResizeObserver?.disconnect();
+    const body=accountFrame.contentDocument?.body;
+    if(!body)return;
+    const resize=()=>{accountFrame.style.height=Math.max(240,body.scrollHeight)+'px';};
+    accountResizeObserver=new ResizeObserver(resize);
+    accountResizeObserver.observe(body);
+    resize();
+  });
+  window.openLeadershipAccount=(options={})=>{
+    const params=new URLSearchParams({alliance:window.workspaceSlug||'',embedded:'1',...options});
+    if(!accountFrame.getAttribute('src')||Object.keys(options).length)accountFrame.src='/account?'+params;
+    selectTab('account');
+  };
   let saved='scanner';
   try{saved=localStorage.getItem(storageKey)||'scanner';}catch(e){}
   selectTab(saved);

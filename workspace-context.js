@@ -32,6 +32,11 @@
       account.href='/account?alliance='+encodeURIComponent(slug);
       account.setAttribute('aria-label','Account and leadership');
       account.title='Account & leadership';
+      account.addEventListener('click',event=>{
+        if(window.openLeadershipAccount && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey){
+          event.preventDefault();window.openLeadershipAccount();
+        }
+      });
       const fallback=document.createElement('span');fallback.textContent='👤';fallback.setAttribute('aria-hidden','true');
       const picture=document.createElement('img');picture.alt='';picture.hidden=true;
       picture.onload=()=>{picture.hidden=false;fallback.hidden=true;};
@@ -46,12 +51,23 @@
       const notifications=document.createElement('a');
       notifications.className='btn notification-bell';notifications.href='/account?alliance='+encodeURIComponent(slug)+'&notifications=1';
       notifications.setAttribute('aria-label','Notifications');
+      notifications.addEventListener('click',event=>{
+        if(window.openLeadershipAccount && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey){
+          event.preventDefault();window.openLeadershipAccount({notifications:'1'});
+        }
+      });
       const bell=document.createElement('span');bell.textContent='🔔';bell.setAttribute('aria-hidden','true');
       const badge=document.createElement('span');badge.className='notification-badge';badge.hidden=true;badge.setAttribute('aria-hidden','true');
       notifications.append(bell,badge);
       utilities.append(notifications);
       originalFetch('/api/auth/notifications',{cache:'no-store'}).then(response=>response.ok?response.json():null)
         .then(data=>{if(data?.unread){badge.textContent=data.unread>99?'99+':String(data.unread);badge.hidden=false;notifications.setAttribute('aria-label',`Notifications, ${data.unread} unread`);}}).catch(()=>{});
+      window.addEventListener('message',event=>{
+        const frame=document.getElementById('accountFrame');
+        if(event.origin===location.origin && event.source===frame?.contentWindow && event.data?.type==='alliance-avatar-changed'){
+          picture.src='/api/auth/avatar?v='+Date.now();
+        }
+      });
     }
     const exportLink=document.getElementById('plExport');
     if(exportLink)exportLink.href=window.workspaceApi('/api/player-list/export.csv');

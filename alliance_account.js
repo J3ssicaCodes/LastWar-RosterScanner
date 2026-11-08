@@ -16,13 +16,19 @@
   }
   function serialize(form){return Object.fromEntries(new FormData(form).entries());}
   function link(container,label,url){
-    const a=document.createElement('a');a.href=url;a.textContent=label;container.append(a);return a;
+    const a=document.createElement('a');a.href=url;a.textContent=label;if(window.parent!==window&&url.startsWith('/a/'))a.target='_top';container.append(a);return a;
   }
   function showInvite(token,kind,destination){
     const prefix={referral:'new-alliance',leadership:'join',claim:'claim'}[kind];
     const url=location.origin+'/'+prefix+'/'+encodeURIComponent(token);
     destination.replaceChildren();link(destination,url,url);
   }
+  function navigate(url){
+    const destination=new URL(url,location.href);
+    if(window.parent!==window&&destination.origin===location.origin&&destination.pathname.startsWith('/a/'))window.top.location.href=destination.href;
+    else location.href=destination.href;
+  }
+  function avatarChanged(){if(window.parent!==window)window.parent.postMessage({type:'alliance-avatar-changed'},location.origin);}
   async function inspect(){
     if(!inviteCode)return null;
     const invite=await api('/inspect-invite',{code:inviteCode});
@@ -37,10 +43,10 @@
     if(invite.kind==='referral'){$('createAlliance').hidden=false;return;}
     if(invite.kind==='leadership'){
       if(account.workspaces.some(workspace=>workspace.slug===invite.alliance.slug)){
-        location.href='/a/'+invite.alliance.slug+'/manage';return;
+        navigate('/a/'+invite.alliance.slug+'/manage');return;
       }
       const result=await api('/redeem',{code:inviteCode});
-      location.href='/a/'+result.slug+'/manage';return;
+      navigate('/a/'+result.slug+'/manage');return;
     }
     $('claimSection').hidden=false;
     const roster=await api('/claims/roster',{code:inviteCode});
@@ -106,12 +112,12 @@
       const response=await fetch('/api/auth/avatar',{method:'POST',body:data});
       const result=await response.json();
       if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'Could not save your picture.');
-      $('avatarFile').value='';status.textContent='Profile picture saved.';status.className='message';loadAvatar();
+      $('avatarFile').value='';status.textContent='Profile picture saved.';status.className='message';loadAvatar();avatarChanged();
     }catch(error){status.textContent=error.message;status.className='message error';}
   };
   $('removeAvatar').onclick=async()=>{
     const status=$('avatarStatus');
-    try{await api('/avatar',undefined,'DELETE');status.textContent='Profile picture removed.';status.className='message';loadAvatar();}
+    try{await api('/avatar',undefined,'DELETE');status.textContent='Profile picture removed.';status.className='message';loadAvatar();avatarChanged();}
     catch(error){status.textContent=error.message;status.className='message error';}
   };
   async function loadReferrals(){
@@ -268,7 +274,7 @@
       const button=document.createElement('button');
       button.textContent=(notification.read_at?'':'● ')+notification.title;
       button.onclick=async()=>{
-        try{await api('/notifications/'+notification.id+'/read',{});location.href=notification.target;}
+        try{await api('/notifications/'+notification.id+'/read',{});navigate(notification.target);}
         catch(error){message(error.message,true);}
       };
       row.append(button);$('notificationList').append(row);
@@ -401,7 +407,7 @@
     event.preventDefault();
     try{
       const result=await api('/register',{...serialize(event.currentTarget),code:inviteCode});
-      if(result.invite_kind==='leadership'){location.href='/a/'+result.slug+'/manage';return;}
+      if(result.invite_kind==='leadership'){navigate('/a/'+result.slug+'/manage');return;}
       await refresh();
     }catch(error){message(error.message,true);}
   };
@@ -453,7 +459,7 @@
   };
   $('createAllianceForm').onsubmit=async event=>{
     event.preventDefault();
-    try{const values=serialize(event.currentTarget);values.server=Number(values.server);const result=await api('/create-alliance',{...values,code:inviteCode});location.href='/a/'+result.slug+'/manage';}
+    try{const values=serialize(event.currentTarget);values.server=Number(values.server);const result=await api('/create-alliance',{...values,code:inviteCode});navigate('/a/'+result.slug+'/manage');}
     catch(error){message(error.message,true);}
   };
   $('passwordForm').onsubmit=async event=>{
@@ -461,7 +467,7 @@
     try{await api('/change-password',serialize(event.currentTarget));event.currentTarget.reset();message('Password changed.');}
     catch(error){message(error.message,true);}
   };
-  $('logoutButton').onclick=async()=>{try{await api('/logout',{});location.href=alliance?'/a/'+alliance:'/account';}catch(e){message(e.message,true);}};
+  $('logoutButton').onclick=async()=>{try{await api('/logout',{});navigate(alliance?'/a/'+alliance:'/account');}catch(e){message(e.message,true);}};
   async function createInvite(kind,output,slug){
     try{const result=await api('/invites',{kind,alliance_slug:slug||null});showInvite(result.code,kind,output);if(alliance)await refresh();}
     catch(error){message(error.message,true);}

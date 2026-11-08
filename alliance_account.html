@@ -2,6 +2,14 @@
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#17142c"><title>Account · Alliance Tools</title>
+<script>
+function syncAccountAppearance(){
+  try{document.documentElement.dataset.theme=localStorage.getItem('lastwar.uiTheme.v2')==='light'?'light':'dark';document.documentElement.dataset.palette=localStorage.getItem('lastwar.uiPalette.v1')==='pink'?'pink':'blue';}
+  catch(e){document.documentElement.dataset.theme='dark';document.documentElement.dataset.palette='blue';}
+}
+syncAccountAppearance();window.addEventListener('storage',event=>{if(['lastwar.uiTheme.v2','lastwar.uiPalette.v1'].includes(event.key))syncAccountAppearance();});
+if(window.self!==window.top)document.documentElement.classList.add('embedded-account');
+</script>
 <style>
 :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#111326;color:#f7f4ff}*{box-sizing:border-box}body{margin:0}main{max-width:850px;margin:auto;padding:30px 18px 70px}
 h1{font-size:clamp(2rem,7vw,3rem);margin:.2rem 0}.eyebrow{color:#e6a1d5;font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;font-weight:700}.muted{color:#bcb9d2}
@@ -12,6 +20,23 @@ ul{padding-left:1.2rem}li{margin:.6rem 0}.row{display:flex;gap:12px;align-items:
  .account-picture{display:grid;place-items:center;width:80px;height:80px;overflow:hidden;border:2px solid #ac8caa;border-radius:50%;background:#342b4c;font-size:38px}
 .account-picture img{width:100%;height:100%;object-fit:cover}.account-picture [hidden]{display:none}
 .picture-controls{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.picture-controls input{max-width:310px}.picture-controls form{flex:1 1 220px}
+
+/* Match the workspace appearance, including its independent pink palette. */
+:root{--account-bg:#11101c;--account-panel:#1a1a2d;--account-input:#24233a;--account-border:#625b7b;--account-text:#f5f3ff;--account-muted:#b6b4cc;--account-accent:#c6abed;--account-primary:#cbb4f2;--account-primary-text:#1c1b2b;background:var(--account-bg);color:var(--account-text)}
+html[data-theme="light"]{color-scheme:light;--account-bg:#f8f7fb;--account-panel:#fff;--account-input:#f2eff7;--account-border:#b9afcc;--account-text:#27253a;--account-muted:#626278;--account-accent:#70519b;--account-primary:#ded0f5;--account-primary-text:#252338}
+html[data-theme="dark"][data-palette="pink"]{--account-bg:#21101d;--account-panel:#351b2e;--account-input:#48273d;--account-border:#875a74;--account-text:#fff2fa;--account-muted:#dbc1d1;--account-accent:#ffafd0;--account-primary:#ffb7d4;--account-primary-text:#3b1830}
+html[data-theme="light"][data-palette="pink"]{--account-bg:#fff5f9;--account-panel:#fffafd;--account-input:#fce8f1;--account-border:#dfb3c9;--account-text:#442638;--account-muted:#775a69;--account-accent:#a52f67;--account-primary:#f8b5d1;--account-primary-text:#4b2038}
+body{background:var(--account-bg);color:var(--account-text)}
+.card{background:var(--account-panel);border-color:var(--account-border)}
+input,select,textarea{background:var(--account-input);color:var(--account-text);border-color:var(--account-border)}
+button,a.button{background:var(--account-input);color:var(--account-text);border-color:var(--account-border)}
+button.primary{background:var(--account-primary);color:var(--account-primary-text);border-color:var(--account-primary)}
+.eyebrow{color:var(--account-accent)}.muted{color:var(--account-muted)}.message{color:var(--account-accent)}.message.error{color:#d84d6b}
+.account-picture{background:var(--account-input);border-color:var(--account-border)}
+a:not(.button){color:var(--account-accent)}
+html.embedded-account,html.embedded-account body{background:transparent}
+html.embedded-account main{max-width:none;padding:0 0 30px}
+html.embedded-account main>.eyebrow{display:none}
 </style>
 <script defer src="/alliance_account.js"></script>
 </head><body><main>
