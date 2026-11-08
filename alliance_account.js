@@ -71,6 +71,7 @@
     $('myClaimsSection').hidden=!account;
     $('platformSection').hidden=!account?.platform_admin;
     if(!account)return;
+    loadAvatar();
     preparePush();
     await loadNotifications();
     await loadMyClaims();
@@ -89,6 +90,30 @@
     if(membership){await loadLeadership(membership);await loadClaims(membership);await loadAudit();await loadCoordination();await loadAnalytics();}
     if(invite)await resumeInvite(invite);
   }
+  function loadAvatar(){
+    const preview=$('avatarPreview'),fallback=$('avatarFallback');
+    preview.onload=()=>{preview.hidden=false;fallback.hidden=true;$('removeAvatar').hidden=false;};
+    preview.onerror=()=>{preview.hidden=true;fallback.hidden=false;$('removeAvatar').hidden=true;};
+    preview.src='/api/auth/avatar?v='+Date.now();
+  }
+  $('avatarForm').onsubmit=async event=>{
+    event.preventDefault();
+    const status=$('avatarStatus'),file=$('avatarFile').files[0];
+    if(!file)return;
+    if(file.size>6*1024*1024){status.textContent='Choose an image smaller than 6 MB.';status.className='message error';return;}
+    const data=new FormData();data.append('picture',file);
+    try{
+      const response=await fetch('/api/auth/avatar',{method:'POST',body:data});
+      const result=await response.json();
+      if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'Could not save your picture.');
+      $('avatarFile').value='';status.textContent='Profile picture saved.';status.className='message';loadAvatar();
+    }catch(error){status.textContent=error.message;status.className='message error';}
+  };
+  $('removeAvatar').onclick=async()=>{
+    const status=$('avatarStatus');
+    try{await api('/avatar',undefined,'DELETE');status.textContent='Profile picture removed.';status.className='message';loadAvatar();}
+    catch(error){status.textContent=error.message;status.className='message error';}
+  };
   async function loadReferrals(){
     const data=await api('/referrals',undefined,'GET');
     $('platformReferrals').replaceChildren();

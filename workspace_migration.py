@@ -107,7 +107,7 @@ def inventory(cursor):
     existing = {next(iter(row.values())) for row in cursor.fetchall()}
     managed = set(TABLES.values()) | {
         "alliance_workspaces", "alliance_accounts", "alliance_memberships",
-        "alliance_audit_log", "alliance_migrations", "alliance_sessions",
+        "alliance_audit_log", "alliance_migrations", "alliance_sessions", "alliance_account_avatars",
         "alliance_login_attempts", "alliance_invites",
         "alliance_claims", "alliance_player_claims", "alliance_claim_comments",
         "alliance_notifications",

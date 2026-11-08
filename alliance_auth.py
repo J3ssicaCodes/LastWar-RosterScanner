@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from io import BytesIO
 import hmac
 import json
 import re
@@ -11,7 +12,8 @@ from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFile
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
 from pymysql.err import IntegrityError
 
@@ -23,6 +25,11 @@ HASH_LIMIT = BoundedSemaphore(2)
 DUMMY_HASH = PASSWORDS.hash(secrets.token_urlsafe(20))
 
 ACCOUNT_SCHEMA = (
+    """CREATE TABLE IF NOT EXISTS alliance_account_avatars (
+        account_id BIGINT UNSIGNED PRIMARY KEY, image MEDIUMBLOB NOT NULL,
+        updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+        FOREIGN KEY (account_id) REFERENCES alliance_accounts(id)
+    ) ENGINE=InnoDB""",
     """CREATE TABLE IF NOT EXISTS alliance_sessions (
         token_hash BINARY(32) PRIMARY KEY, account_id BIGINT UNSIGNED NOT NULL,
         expires_at DATETIME(6) NOT NULL, created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -267,6 +274,48 @@ def install_accounts(app, connect_db):
             workspaces = cur.fetchall()
         return {"username":account["username"], "display_name":account["display_name"],
                 "platform_admin":bool(account["platform_admin"]), "workspaces":workspaces}
+
+    @router.get("/avatar")
+    def get_avatar(request: Request):
+        account=require_account(connect_db,request)
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute("SELECT image FROM alliance_account_avatars WHERE account_id=%s",(account["id"],))
+            row=cur.fetchone()
+        if not row:
+            raise HTTPException(404,"No profile picture yet.")
+        return Response(content=row["image"],media_type="image/jpeg",headers={"Cache-Control":"private, no-store", "X-Content-Type-Options":"nosniff"})
+
+    @router.post("/avatar")
+    def set_avatar(request: Request, picture: UploadFile=File(...)):
+        csrf_check(request)
+        account=require_account(connect_db,request)
+        data=picture.file.read(6*1024*1024+1)
+        if not data or len(data)>6*1024*1024:
+            raise HTTPException(413,"Choose an image smaller than 6 MB.")
+        try:
+            with Image.open(BytesIO(data)) as image:
+                if image.format not in ("JPEG","PNG","WEBP","GIF") or image.width*image.height>25000000:
+                    raise HTTPException(422,"Choose a JPG, PNG, WebP, or GIF image under 25 megapixels.")
+                image=ImageOps.exif_transpose(image).convert("RGB")
+                image=ImageOps.fit(image,(512,512),method=Image.Resampling.LANCZOS)
+                output=BytesIO()
+                image.save(output,format="JPEG",quality=88,optimize=True)
+        except (UnidentifiedImageError,OSError,ValueError,Image.DecompressionBombError) as exc:
+            raise HTTPException(422,"That image could not be opened. Try another picture.") from exc
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute("""INSERT INTO alliance_account_avatars (account_id,image) VALUES (%s,%s)
+                ON DUPLICATE KEY UPDATE image=VALUES(image)""",(account["id"],output.getvalue()))
+            conn.commit()
+        return {"ok":True}
+
+    @router.delete("/avatar")
+    def delete_avatar(request: Request):
+        csrf_check(request)
+        account=require_account(connect_db,request)
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM alliance_account_avatars WHERE account_id=%s",(account["id"],))
+            conn.commit()
+        return {"ok":True}
 
     @router.post("/logout")
     def logout(request: Request, response: Response):

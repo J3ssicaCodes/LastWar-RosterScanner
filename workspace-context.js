@@ -28,10 +28,16 @@
     const utilities=document.getElementById('workspaceUtilities');
     if(utilities){
       const account=document.createElement('a');
-      account.className='btn';
+      account.className='profile-avatar';
       account.href='/account?alliance='+encodeURIComponent(slug);
-      account.textContent='Account & leadership';
-      utilities.append(account);
+      account.setAttribute('aria-label','Account and leadership');
+      account.title='Account & leadership';
+      const fallback=document.createElement('span');fallback.textContent='👤';fallback.setAttribute('aria-hidden','true');
+      const picture=document.createElement('img');picture.alt='';picture.hidden=true;
+      picture.onload=()=>{picture.hidden=false;fallback.hidden=true;};
+      picture.onerror=()=>{picture.hidden=true;fallback.hidden=false;};
+      picture.src='/api/auth/avatar';account.append(fallback,picture);
+      document.querySelector('.top')?.append(account);
       const viewer=document.createElement('a');
       viewer.className='btn';
       viewer.href='/a/'+slug;

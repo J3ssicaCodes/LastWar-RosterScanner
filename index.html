@@ -304,6 +304,12 @@ html[data-theme="dark"]{color-scheme:dark}
   .workspace-tab{transition:none}
 }
 
+/* Account picture stays in the upper-right corner on desktop and mobile. */
+.top{position:relative;padding-right:56px}
+.profile-avatar{position:absolute;right:0;top:0;display:grid;place-items:center;width:44px;height:44px;overflow:hidden;border:1px solid var(--stroke);border-radius:50%;background:var(--panel2);font-size:23px;line-height:1;text-decoration:none}
+.profile-avatar img{width:100%;height:100%;object-fit:cover}
+.profile-avatar [hidden]{display:none}
+.profile-avatar:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 /* Compact notifications and an independent color preference. */
 .workspace-utilities .notification-bell{position:relative;display:inline-grid;place-items:center;flex:0 0 42px;width:42px;min-width:42px;min-height:42px;padding:0;font-size:19px;line-height:1;text-decoration:none}
 .notification-badge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;display:grid;place-items:center;padding:0 4px;border-radius:999px;background:#c73558;color:#fff;font-size:10px;line-height:1;font-weight:800}

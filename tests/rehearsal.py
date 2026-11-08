@@ -76,6 +76,26 @@ with TestClient(app,raise_server_exceptions=True) as admin:
         assert len(pilot.get("/a/1440-test/api/player-list").json()["players"])==1
         rubies=admin.get("/a/1439-rvby/api/player-list").json()["players"]
         assert len(rubies)==rubies_count
+        from io import BytesIO
+        from PIL import Image
+        def test_image(color):
+            picture=BytesIO()
+            Image.new("RGB",(30,60),color).save(picture,"PNG")
+            return picture.getvalue()
+        assert pilot.get("/api/auth/avatar").status_code==404
+        assert admin.post("/api/auth/avatar",headers=origin,files={"picture":("one.png",test_image("red"),"image/png")}).status_code==200
+        admin_avatar=admin.get("/api/auth/avatar")
+        assert admin_avatar.status_code==200 and admin_avatar.headers["content-type"]=="image/jpeg"
+        with Image.open(BytesIO(admin_avatar.content)) as picture:
+            assert picture.size==(512,512)
+        assert pilot.get("/api/auth/avatar").status_code==404
+        assert pilot.post("/api/auth/avatar",headers={"Origin":"https://wrong.example"},files={"picture":("two.png",test_image("blue"),"image/png")}).status_code==403
+        assert pilot.post("/api/auth/avatar",headers=origin,files={"picture":("two.png",test_image("blue"),"image/png")}).status_code==200
+        assert pilot.get("/api/auth/avatar").content!=admin_avatar.content
+        assert pilot.delete("/api/auth/avatar",headers=origin).status_code==200
+        assert pilot.get("/api/auth/avatar").status_code==404 and admin.get("/api/auth/avatar").content==admin_avatar.content
+        assert pilot.post("/api/auth/avatar",headers=origin,files={"picture":("bad.png",b"not an image","image/png")}).status_code==422
+        print("Profile pictures are private to each account")
         settings=pilot.get("/a/1440-test/api/train/settings")
         assert settings.status_code==200 and settings.json()["alliance_name"]=="Pilot",settings.text
         templates=pilot.get("/a/1440-test/api/train/email-templates")
