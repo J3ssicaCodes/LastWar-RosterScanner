@@ -29,4 +29,13 @@ def initialize_workspace(connect_db):
             migrate_rubies(conn,database,backup,password,setup_token=code)
         for statement in (*ACCOUNT_SCHEMA,*CLAIM_SCHEMA,*LEADERSHIP_SCHEMA,*PUSH_SCHEMA):
             cur.execute(statement)
+        for field, definition in (
+            ('has_t11', 'BOOLEAN NOT NULL DEFAULT FALSE'),
+            ('away_start', 'DATE NULL'),
+            ('away_end', 'DATE NULL'),
+            ('player_notes', 'TEXT NULL'),
+        ):
+            cur.execute('SHOW COLUMNS FROM `workspace_players` LIKE %s', (field,))
+            if not cur.fetchone():
+                cur.execute(f'ALTER TABLE `workspace_players` ADD COLUMN `{field}` {definition}')
         conn.commit()

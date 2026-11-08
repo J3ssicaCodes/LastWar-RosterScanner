@@ -28,7 +28,7 @@ def _authorize(connect_db, request, slug, api_path):
     if role != "R5" and (api_path.startswith("/api/admin/clear-data") or
                           (api_path == "/api/train/settings" and request.method != "GET")):
         return None
-    return {"id":workspace["id"], "slug":slug, "name":workspace["name"], "role":role, "actor":account,
+    return {"id":workspace["id"], "slug":slug, "name":workspace["name"], "timezone":workspace.get("timezone") or "UTC", "role":role, "actor":account,
             "action":request.method + " " + api_path}
 
 

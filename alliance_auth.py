@@ -160,7 +160,7 @@ def require_leader(cursor, alliance_id, account_id, r5=False):
 
 
 def workspace_by_slug(cursor, slug, lock=False):
-    cursor.execute("SELECT id,slug,name,tag,server_number FROM alliance_workspaces WHERE slug=%s" +
+    cursor.execute("SELECT id,slug,name,tag,server_number,timezone FROM alliance_workspaces WHERE slug=%s" +
                    (" FOR UPDATE" if lock else ""), (slug,))
     workspace = cursor.fetchone()
     if not workspace:

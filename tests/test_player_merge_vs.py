@@ -20,7 +20,8 @@ class SQLDatabase:
             id INTEGER PRIMARY KEY AUTOINCREMENT,player_name TEXT,normalized_name TEXT UNIQUE,
             player_rank TEXT,power_millions REAL,power INTEGER,kills INTEGER,donations INTEGER,
             hq_level INTEGER,avatar_image BLOB,avatar_mime TEXT,avatar_updated_at TEXT,
-            birthday TEXT,is_new INTEGER,possibly_removed INTEGER,archived INTEGER NOT NULL DEFAULT 0,first_seen_at TEXT,
+            birthday TEXT,is_new INTEGER,possibly_removed INTEGER,archived INTEGER NOT NULL DEFAULT 0,
+            has_t11 INTEGER NOT NULL DEFAULT 0,away_start TEXT,away_end TEXT,player_notes TEXT,first_seen_at TEXT,
             last_seen_at TEXT,updated_at TEXT,last_import_id TEXT);
             CREATE TABLE player_list_imports (id TEXT,is_full_capture INTEGER,scanned_count INTEGER,
             created_count INTEGER,updated_count INTEGER,possible_removed_count INTEGER);

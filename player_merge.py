@@ -44,7 +44,7 @@ def merge_player_records(connect_db, keep_id, body):
             with conn.cursor() as cur:
                 cur.execute("""SELECT id,player_name,power,power_millions,kills,donations,hq_level,birthday,
                                       avatar_mime,avatar_updated_at,avatar_image,first_seen_at,last_seen_at,
-                                      is_new,possibly_removed FROM `player list`
+                                      is_new,possibly_removed,has_t11,away_start,away_end,player_notes FROM `player list`
                                WHERE id IN (%s,%s) ORDER BY id FOR UPDATE""", ids)
                 players = {row['id']:row for row in cur.fetchall()}
                 if len(players) != 2:
@@ -54,6 +54,15 @@ def merge_player_records(connect_db, keep_id, body):
                 if (keep, duplicate) != (body.expected_name, body.expected_duplicate_name):
                     raise HTTPException(409, detail='A player name changed. Refresh and confirm the two names again.')
                 keep_key, duplicate_key = name_key(keep), name_key(duplicate)
+                retained_away=(retained['away_start'],retained['away_end'])
+                source_away=(source['away_start'],source['away_end'])
+                if any(retained_away) and any(source_away) and retained_away!=source_away:
+                    raise HTTPException(409,detail='These profiles have different away dates. Resolve them before merging.')
+                notes=[value for value in (retained['player_notes'],source['player_notes']) if value]
+                combined_notes='\n\n'.join(dict.fromkeys(notes))
+                if len(combined_notes)>5000:
+                    raise HTTPException(409,detail='Combined player notes exceed 5000 characters. Shorten them before merging.')
+                away=retained_away if any(retained_away) else source_away
 
                 # Keep one score per day. A score on the retained record takes priority.
                 cur.execute("""SELECT id,score_date,player_id,normalized_name FROM vs_points
@@ -92,10 +101,12 @@ def merge_player_records(connect_db, keep_id, body):
                 portrait = retained if retained['avatar_image'] is not None else source
                 cur.execute("""UPDATE `player list` SET power=%s,power_millions=%s,kills=%s,donations=%s,
                                hq_level=%s,birthday=%s,avatar_mime=%s,avatar_updated_at=%s,avatar_image=%s,
+                               has_t11=%s,away_start=%s,away_end=%s,player_notes=%s,
                                first_seen_at=LEAST(first_seen_at,%s),last_seen_at=GREATEST(last_seen_at,%s),
                                is_new=is_new AND %s,possibly_removed=possibly_removed AND %s,
                                updated_at=UTC_TIMESTAMP(6) WHERE id=%s""",
                             (*combined,portrait['avatar_mime'],portrait['avatar_updated_at'],portrait['avatar_image'],
+                             bool(retained['has_t11'] or source['has_t11']),*away,combined_notes or None,
                              source['first_seen_at'],source['last_seen_at'],source['is_new'],source['possibly_removed'],keep_id))
                 for field in ('conductor_id','vip_id'):
                     cur.execute(f'UPDATE train_assignments SET {field}=%s WHERE {field}=%s',

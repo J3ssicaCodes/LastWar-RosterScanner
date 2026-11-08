@@ -29,6 +29,8 @@
     .player-profile-name h2{margin:0;min-width:0;overflow-wrap:anywhere}
     .player-profile-name input{flex:1;min-width:0}
     .player-profile-name .row-edit-trigger{flex:none}
+    .player-extra{margin:16px 0;padding:12px;border:1px solid var(--stroke);border-radius:10px}
+    .player-extra label{display:block;margin:10px 0}.player-extra input[type="date"],.player-extra textarea{display:block;width:100%;max-width:100%;padding:8px;border:1px solid var(--stroke);border-radius:6px;background:var(--panel2);color:var(--text);font:inherit}.player-extra textarea{min-height:90px;resize:vertical}
     .player-profile-name input,[aria-label="Player profile"] select{padding:6px 8px;background:var(--panel2);color:var(--text);border:1px solid var(--stroke);border-radius:6px;font:inherit}
   `;
   document.head.append(styles);
@@ -119,6 +121,7 @@
         ['Kills',number(p.kills)],['Donations',number(p.donations)],['HQ',number(p.hq_level)],
         ['Birthday',p.birthday||'—'],['Last seen',p.last_seen_at?new Date(p.last_seen_at+'Z').toLocaleDateString():'—']
       ].map(([label,value])=>'<dt>'+label+'</dt><dd style="margin:0">'+esc(value)+'</dd>').join('')+'</dl>'+
+      (edit?'':'<form class="player-extra" data-player-details><h3>Player details</h3><label><input type="checkbox" name="has_t11" '+(p.has_t11?'checked':'')+'> Has T11</label><label>Away from<input type="date" name="away_start" value="'+esc(p.away_start||'')+'"></label><label>Away through<input type="date" name="away_end" value="'+esc(p.away_end||'')+'"></label><label>Player notes<textarea name="notes" maxlength="5000">'+esc(p.player_notes||'')+'</textarea></label><button type="submit" class="btn primary">Save details</button><p data-details-status role="status"></p></form>')+
       (edit?'':'<p><label><input type="checkbox" data-train-restriction disabled> Disable train assignments</label> <span data-train-restriction-status role="status"></span></p><button type="button" class="btn" data-merge>Merge duplicate</button> <button type="button" class="btn" data-claim-vs>Claim VS entry</button><p data-merge-message role="status" hidden></p>')+
       '<section class="profile-history" data-history></section>';
     renderHistory();
@@ -132,7 +135,22 @@
       input.focus();
       input.select();
     });
-    dialog.querySelector('form')?.addEventListener('submit',async event=>{
+    dialog.querySelector('[data-player-details]')?.addEventListener('submit',async event=>{
+      event.preventDefault();const form=event.currentTarget,button=form.querySelector('button'),status=form.querySelector('[data-details-status]'),edited=player;
+      const start=form.elements.away_start.value||null,end=form.elements.away_end.value||null;
+      if(Boolean(start)!==Boolean(end)||start&&end<start){status.textContent='Enter both dates, with the end on or after the start.';return;}
+      button.disabled=true;status.textContent='Saving…';
+      try{
+        const response=await fetch('/api/player-list/'+edited.id+'/details',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          has_t11:form.elements.has_t11.checked,away_start:start,away_end:end,notes:form.elements.notes.value,
+          expected_has_t11:!!edited.has_t11,expected_away_start:edited.away_start||null,expected_away_end:edited.away_end||null,expected_notes:edited.player_notes||''})});
+        const result=await response.json();if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'Could not save player details.');
+        Object.assign(edited,result);if(form.isConnected)status.textContent='Saved.';
+        await window.playerListRefresh?.();window.dispatchEvent(new Event('player-profile-updated'));
+      }catch(error){if(form.isConnected)status.textContent=error.message;}
+      finally{button.disabled=false;}
+    });
+    dialog.querySelector('form:not([data-player-details])')?.addEventListener('submit',async event=>{
       event.preventDefault();const form=event.target,button=form.querySelector('[type="submit"]');button.disabled=true;
       const edited=player;
       try{

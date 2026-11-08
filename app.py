@@ -22,6 +22,7 @@ import uuid
 from contextlib import nullcontext
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from decimal import Decimal
 from urllib.parse import unquote, urlsplit
 from pathlib import Path
@@ -31,7 +32,7 @@ import pymysql
 from pymysql.cursors import DictCursor
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from player_identity import match_master, name_key, corrected_name, load_name_corrections, learn_name_correction
 from player_list_ocr import scan_upload
@@ -165,6 +166,10 @@ def initialize_db():
                     ('kills','BIGINT UNSIGNED NULL'),
                     ('donations','BIGINT UNSIGNED NULL'),
                     ('archived','BOOLEAN NOT NULL DEFAULT FALSE'),
+                    ('has_t11','BOOLEAN NOT NULL DEFAULT FALSE'),
+                    ('away_start','DATE NULL'),
+                    ('away_end','DATE NULL'),
+                    ('player_notes','TEXT NULL'),
                 ):
                     cur.execute('SHOW COLUMNS FROM `player list` LIKE %s',(field,))
                     if not cur.fetchone():
@@ -268,6 +273,7 @@ def list_players():
             with conn.cursor() as cur:
                 cur.execute("""SELECT id, player_name AS name, player_rank AS `rank`,
                     power_millions, power, kills, donations, hq_level, birthday, is_new, possibly_removed,
+                    has_t11, away_start, away_end, player_notes,
                     avatar_image IS NOT NULL AS has_avatar, avatar_updated_at,
                     first_seen_at, last_seen_at, updated_at
                     FROM `player list`
@@ -276,7 +282,18 @@ def list_players():
                     power_millions IS NULL, power_millions DESC, LOWER(player_name)
                     LIMIT 10000""")
                 rows=cur.fetchall()
+        scope=current_workspace.get() or {}
+        try:
+            today=datetime.now(ZoneInfo(scope.get('timezone') or 'UTC')).date()
+        except (ZoneInfoNotFoundError, ValueError):
+            today=datetime.now(ZoneInfo('UTC')).date()
         for row in rows:
+            row['has_t11'] = bool(row['has_t11'])
+            start, end = row['away_start'], row['away_end']
+            row['away_today'] = bool(start and end and start <= today <= end)
+            row['away_start'] = start.isoformat() if start else None
+            row['away_end'] = end.isoformat() if end else None
+            row['player_notes'] = row['player_notes'] or ''
             if isinstance(row['power_millions'], Decimal):
                 row['power_millions'] = float(row['power_millions'])
             row['is_new'] = bool(row['is_new'])
@@ -597,6 +614,51 @@ def update_player_profile(player_id: int, body: PlayerProfileUpdate):
         raise
     except Exception as exc:
         raise HTTPException(503, detail='Could not save player profile.') from exc
+
+
+class PlayerDetailsUpdate(BaseModel):
+    has_t11: bool
+    away_start: date | None = None
+    away_end: date | None = None
+    notes: str = Field(default='', max_length=5000)
+    expected_has_t11: bool
+    expected_away_start: date | None = None
+    expected_away_end: date | None = None
+    expected_notes: str = Field(default='', max_length=5000)
+
+    @model_validator(mode='after')
+    def validate_dates(self):
+        if bool(self.away_start) != bool(self.away_end):
+            raise ValueError('Enter both away dates, or clear both dates.')
+        if self.away_start and self.away_end < self.away_start:
+            raise ValueError('End date must be on or after start date.')
+        return self
+
+
+@app.patch('/api/player-list/{player_id}/details')
+def update_player_details(player_id: int, body: PlayerDetailsUpdate):
+    try:
+        with db_connect() as conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute('SELECT id,has_t11,away_start,away_end,player_notes FROM `player list` WHERE id=%s FOR UPDATE',(player_id,))
+                    player=cur.fetchone()
+                    if not player: raise HTTPException(404,detail='Player not found.')
+                    actual=(bool(player['has_t11']),player['away_start'],player['away_end'],player['player_notes'] or '')
+                    expected=(body.expected_has_t11,body.expected_away_start,body.expected_away_end,body.expected_notes)
+                    if actual!=expected: raise HTTPException(409,detail='These details changed. Reopen the profile to see the latest version.')
+                    cur.execute('UPDATE `player list` SET has_t11=%s,away_start=%s,away_end=%s,player_notes=%s,updated_at=UTC_TIMESTAMP(6) WHERE id=%s',
+                        (body.has_t11,body.away_start,body.away_end,body.notes or None,player_id))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+        return {'id':player_id,'has_t11':body.has_t11,'away_start':body.away_start,
+                'away_end':body.away_end,'player_notes':body.notes}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503,detail='Could not save player details.') from exc
 
 
 class ImportData(BaseModel):
