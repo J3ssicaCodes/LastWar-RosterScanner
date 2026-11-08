@@ -5,7 +5,7 @@
     {group:'Everyone',title:'Open your alliance and sign in',body:`
       <p class="alliance-help-path">Alliance page → Leadership Login → Sign in</p>
       <ol><li>Open the alliance link shared by your leadership. The viewer shows VS standings and train assignments.</li><li>R4s and R5s: tap <strong>Leadership Login</strong> at the top of the page.</li><li>Enter your own username and password, then tap <strong>Sign in</strong>. In the workspace, tap your profile picture for account and leadership tools.</li></ol>
-      <figure><img src="/help-images/viewer.webp" alt="Alliance viewer showing Leadership Login beside Install App and Help" loading="lazy"><figcaption>On the alliance page, tap Leadership Login to open your workspace.</figcaption></figure>
+      <figure><img src="/help-images/viewer.webp" alt="Alliance viewer with the Leadership Login button near the top" loading="lazy"><figcaption>On the alliance page, tap Leadership Login to open your workspace.</figcaption></figure>
       <figure><img src="/help-images/signin.webp" alt="Sign-in screen with username and password fields and an invite entry box" loading="lazy"><figcaption>Enter your own account details here. If you received an invite code, use Have an invite?</figcaption></figure>
       <p>The viewer link is shareable: anyone who receives it can see what the alliance has chosen to make public.</p>`},
     {group:'Everyone',title:'Claim your player profile and add your birthday',body:`
@@ -46,11 +46,14 @@
   ];
   function init(){
     if(window.self!==window.top)return; // The workspace already has a Help button above embedded account tools.
-    const target=document.getElementById('workspaceUtilities')||document.querySelector('header .actions')||document.querySelector('main');
+    const workspace=document.getElementById('workspaceUtilities');
+    const target=(workspace&&document.querySelector('.top'))||document.querySelector('header .actions')||document.querySelector('main');
     if(!target)return;
     const style=document.createElement('style');style.textContent=`
       .alliance-help-trigger{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:42px;padding:8px 13px;border:1px solid var(--stroke,var(--account-border,#72688d));border-radius:10px;background:var(--panel2,var(--account-input,#342b4c));color:var(--text,var(--account-text,#fff));font:inherit;font-weight:750;cursor:pointer}
-      .workspace-utilities .alliance-help-trigger{flex:0 0 auto;width:auto;min-width:0}
+      .alliance-help-trigger{width:42px;height:42px;min-width:42px;padding:0;font-size:20px;line-height:1}
+      .top:has(.alliance-help-trigger){padding-right:108px}
+      .top>.alliance-help-trigger{position:absolute;right:54px;top:0}
       dialog.alliance-help-dialog{width:min(760px,calc(100vw - 24px));max-width:760px;max-height:min(88vh,900px);overflow:auto;padding:20px;border:1px solid var(--stroke,var(--account-border,#625b7b));border-radius:16px;background:var(--panel,var(--account-panel,#1c2038));color:var(--text,var(--account-text,#f7f4ff));box-shadow:0 20px 70px #0008}
       dialog.alliance-help-dialog::backdrop{background:#090615b8}
       .alliance-help-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.alliance-help-head h2{margin:0 0 4px}.alliance-help-head p{margin:0;color:var(--muted,var(--account-muted,#bcb9d2))}
@@ -61,10 +64,10 @@
       .alliance-help-dialog summary{cursor:pointer;font-weight:750;line-height:1.4}.alliance-help-group{display:block;margin-bottom:3px;color:var(--cyan,var(--account-accent,#e6a1d5));font-size:11px;letter-spacing:.05em;text-transform:uppercase}
       .alliance-help-dialog p,.alliance-help-dialog li{font-size:14px;line-height:1.55}.alliance-help-dialog ol{padding-left:22px}.alliance-help-dialog li+li{margin-top:6px}
       .alliance-help-dialog :focus-visible,.alliance-help-trigger:focus-visible{outline:2px solid var(--cyan,var(--account-accent,#e6a1d5));outline-offset:2px}
-      @media(max-width:600px){dialog.alliance-help-dialog{padding:15px;max-height:90vh}.alliance-help-shortcuts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0 18px}.alliance-help-shortcuts button{padding:12px;text-align:left;border:1px solid var(--stroke,var(--account-border,#625b7b));border-radius:10px;background:var(--panel2,var(--account-input,#342b4c));color:inherit;font:inherit;font-weight:700;cursor:pointer}.alliance-help-shortcuts button span{display:block;margin-top:4px;font-size:12px;font-weight:400;color:var(--muted,var(--account-muted,#bcb9d2))}.alliance-help-heading{font-size:15px;margin:18px 0 8px}.alliance-help-path{padding:9px 11px;border-left:3px solid var(--cyan,var(--account-accent,#c6abed));background:var(--panel,var(--account-panel,#1c2038));border-radius:4px;font-weight:700;overflow-wrap:anywhere}.alliance-help-dialog figure{margin:16px 0}.alliance-help-dialog figure img{display:block;width:100%;height:auto;border:1px solid var(--stroke,var(--account-border,#625b7b));border-radius:8px}.alliance-help-dialog figcaption{margin-top:6px;color:var(--muted,var(--account-muted,#bcb9d2));font-size:12px;line-height:1.4}
-      .alliance-help-dialog details{padding:11px}.alliance-help-dialog p,.alliance-help-dialog li{font-size:14px}}
+      @media(max-width:600px){dialog.alliance-help-dialog{padding:15px;max-height:90vh}.alliance-help-dialog details{padding:11px}.alliance-help-dialog p,.alliance-help-dialog li{font-size:14px}}
+
     `;document.head.append(style);
-    const button=document.createElement('button');button.type='button';button.className='alliance-help-trigger';button.textContent='? Help';button.setAttribute('aria-haspopup','dialog');
+    const button=document.createElement('button');button.type='button';button.className='alliance-help-trigger';button.textContent='?';button.title='Help';button.setAttribute('aria-label','Help');button.setAttribute('aria-haspopup','dialog');
     if(target.matches('main'))target.insertBefore(button,target.firstChild);else target.append(button);
     const dialog=document.createElement('dialog');dialog.className='alliance-help-dialog';dialog.setAttribute('aria-labelledby','allianceHelpTitle');
     dialog.innerHTML=`<div class="alliance-help-head"><div><h2 id="allianceHelpTitle">Alliance Tools Help</h2><p>What would you like to do? Choose a guide or search below.</p></div><button type="button" class="alliance-help-close" aria-label="Close help">×</button></div><label class="alliance-help-search">Search guides<input type="search" placeholder="Try birthday, scans, trains…" autocomplete="off"></label><div class="alliance-help-start"><h3 class="alliance-help-heading">Popular guides</h3><div class="alliance-help-shortcuts"><button type="button" data-guide="1">🎂 Add my birthday<span>Claim your player profile</span></button><button type="button" data-guide="2">🔗 Share a birthday link<span>Create a link for players</span></button><button type="button" data-guide="4">📷 Upload a scan<span>Upload and review results</span></button><button type="button" data-guide="8">🚂 Assign a train<span>Choose a conductor and VIP</span></button></div><h3 class="alliance-help-heading">All guides</h3></div><p class="alliance-help-empty" hidden>No matching guides. Try another word.</p><div class="alliance-help-guides"></div>`;
