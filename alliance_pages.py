@@ -43,6 +43,10 @@ def install_alliance_pages(app, connect_db):
     def account_script():
         return FileResponse(BASE/"alliance_account.js",media_type="application/javascript",headers={"Cache-Control":"no-cache"})
 
+    @app.get("/alliance_help.js")
+    def help_script():
+        return FileResponse(BASE/"alliance_help.js",media_type="application/javascript",headers={"Cache-Control":"no-cache"})
+
     @app.get("/a/{slug}/manifest.webmanifest")
     def manifest(slug: str):
         with connect_db() as conn, conn.cursor() as cur:

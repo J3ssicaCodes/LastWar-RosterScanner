@@ -18,7 +18,7 @@ COPY train_manager.py train_manager.js player_merge.py player_performance.py pla
      scan_rankings.py ranking_ocr_engine.py extract_ranking_pages.py tested_rankings_adapter.py rank_badge_templates.npz player_profile.js review_validation.js admin_reset.py admin_ui.js ./
 COPY workspace_migration.py workspace_bootstrap.py scoped_db.py workspace_security.py alliance_auth.py alliance_pages.py \
      alliance_claims.py alliance_leadership.py alliance_push.py alliance_analytics.py alliance_viewer.html alliance_ui.js alliance_account.html alliance_account.js \
-     workspace-context.js service-worker.js alliance-icon-192.png alliance-icon-512.png ./
+     workspace-context.js alliance_help.js service-worker.js alliance-icon-192.png alliance-icon-512.png ./
 
 EXPOSE 10000
 CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1"]
