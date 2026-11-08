@@ -49,7 +49,7 @@ def install_alliance_pages(app, connect_db):
 
     @app.get("/help-images/{name}.webp")
     def help_image(name: str):
-        if name not in {"viewer", "signin"}:
+        if name not in {"viewer", "signin", "upload", "tabs", "train"}:
             raise HTTPException(404, "Image not found.")
         return FileResponse(BASE / "help-images" / f"{name}.webp", media_type="image/webp",
                             headers={"Cache-Control": "public, max-age=86400"})

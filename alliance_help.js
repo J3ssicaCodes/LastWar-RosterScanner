@@ -19,17 +19,21 @@
       <p>Approval links the account to the existing player and saves the month and day. Warnings identify competing claims or names already claimed; review those carefully before replacing anything. Leadership discussion stays with the claim.</p>`},
     {group:'Leadership',title:'Upload media and use Scan Queue',body:`
       <ol><li>Choose the appropriate upload action for <strong>Roster Scanner</strong>, <strong>Player List</strong>, or <strong>VS Points</strong>.</li><li>Select screenshots or a supported recording and start the upload. Storm Roster accepts screenshots; Player List and VS also accept video.</li><li>Open <strong>Scan Queue</strong> to see progress, errors, and work needing review. Open a review, correct flagged rows, and save or dismiss them.</li></ol>
+      <figure><img src="/help-images/upload.webp" alt="Media Upload and Scan Queue buttons in the workspace" loading="lazy"><figcaption>Look for Media Upload and Scan Queue near the top of the workspace. Their arrangement can vary by screen size.</figcaption></figure>
       <p>If a scan fails, check the message and try uploading again. If Google Drive selection is unavailable, use your device’s file picker. Make sure the scan is finished before removing an original file.</p>`},
     {group:'Leadership',title:'Plan Storm rosters and event maps',body:`
       <ol><li>In <strong>Roster Scanner</strong>, choose an event and upload screenshots of Task Force A, B, or both. Keep the team heading visible.</li><li>Review names, ranks, power, participants, and substitutes; use the pencil to correct a row.</li><li>Adjust Phase 1 and Phase 2 assignments, then generate and download the maps. Use <strong>Manage events</strong> to adjust event layouts and priorities.</li></ol>`},
     {group:'Leadership',title:'Update the Player List and manage archives',body:`
       <p>Use <strong>Player List</strong> to browse, sort, export, and open player profiles. Upload leaderboard screenshots or a recording to update stats; review flagged changes before saving.</p>
+      <figure><img src="/help-images/tabs.webp" alt="Workspace tabs including Player List, VS Points, Train Manager and Admin" loading="lazy"><figcaption>Choose Player List from the workspace tabs.</figcaption></figure>
       <p>For a full roster video, review any prompts about missing or returning players. Archived players are hidden from active counts while their history is preserved. Find <strong>Player Archive</strong> in Admin to reactivate them.</p>`},
     {group:'Leadership',title:'View and review VS scores',body:`
       <p>Open <strong>VS Points</strong> to move between weeks and export scores. Upload a Daily Rank screenshot or recording, check the identified day, and review flagged rows before saving. If the scan cannot identify the weekday, choose it during review.</p>
+      <figure><img src="/help-images/viewer.webp" alt="Alliance viewer showing weekly VS standings and week navigation" loading="lazy"><figcaption>The alliance viewer also shows weekly VS standings. Use the Previous and Next buttons to change weeks.</figcaption></figure>
       <p>A dash means a score was not recorded; <strong>0</strong> is a recorded zero. On a player profile, the weekly chart compares this week and last week against the dotted 7.2M goal line.</p>`},
     {group:'Leadership',title:'Assign a train and handle a dice-roll winner',body:`
       <ol><li>Open <strong>Train Manager</strong>, choose the date and goal, and review the nominees and eligibility reasons.</li><li>Choose a Conductor and select <strong>Wheel of Fortune</strong>, <strong>Manual VIP</strong>, or <strong>Dice Roll</strong>.</li><li>Save the assignment. For a dice roll, save with VIP pending, then return to the assignment and record the winner when known.</li></ol>
+      <figure><img src="/help-images/train.webp" alt="Train Manager screen with assignment date and Push or Save weekly goal" loading="lazy"><figcaption>Start in Train Manager by choosing an assignment date and weekly goal.</figcaption></figure>
       <p>Check train history and rotation before assigning. An R4 or R5 can also manage restrictions in Admin’s <strong>Naughty List</strong>.</p>`},
     {group:'Leadership',title:'Prepare and reuse train emails',body:`
       <p>In <strong>Train Manager</strong>, choose an email template or the random option, generate the draft, review it, and copy it for posting in-game. You can edit the draft before sharing.</p>
@@ -53,6 +57,7 @@
       .alliance-help-trigger{display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:42px;padding:8px 13px;border:1px solid var(--stroke,var(--account-border,#72688d));border-radius:10px;background:var(--panel2,var(--account-input,#342b4c));color:var(--text,var(--account-text,#fff));font:inherit;font-weight:750;cursor:pointer}
       .alliance-help-trigger{width:42px;height:42px;min-width:42px;padding:0;font-size:20px;line-height:1}
       .top:has(.alliance-help-trigger){padding-right:108px}
+      @media(max-width:680px){.top:has(.alliance-help-trigger){padding-right:0}}
       .top>.alliance-help-trigger{position:absolute;right:54px;top:0}
       dialog.alliance-help-dialog{width:min(760px,calc(100vw - 24px));max-width:760px;max-height:min(88vh,900px);overflow:auto;padding:20px;border:1px solid var(--stroke,var(--account-border,#625b7b));border-radius:16px;background:var(--panel,var(--account-panel,#1c2038));color:var(--text,var(--account-text,#f7f4ff));box-shadow:0 20px 70px #0008}
       dialog.alliance-help-dialog::backdrop{background:#090615b8}

@@ -317,6 +317,25 @@ html[data-theme="dark"]{color-scheme:dark}
 .notification-badge{position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;display:grid;place-items:center;padding:0 4px;border-radius:999px;background:#c73558;color:#fff;font-size:10px;line-height:1;font-weight:800}
 .notification-badge[hidden]{display:none}
 @media(max-width:680px){.workspace-utilities .notification-bell{flex:0 0 42px;width:42px;min-width:42px;padding:0;font-size:19px}}
+/* Keep the title and account controls together without squeezing the rows below. */
+@media(max-width:680px){
+  .top,.top:has(.alliance-help-trigger){padding-right:0;gap:10px}
+  .top .workspace-brand{padding-right:104px;min-height:48px}
+  .workspace-brand .eyebrow{font-size:9px;letter-spacing:1.4px}
+  .workspace-brand h1{font-size:clamp(22px,6.2vw,28px);white-space:nowrap;letter-spacing:-.8px}
+  .workspace-brand .version-mark{font-size:10px;padding:2px 6px;margin-left:2px}
+  .header-preferences{gap:7px}
+  .header-preferences .preference-control{flex:1 1 auto;max-width:190px;padding:0;border:0;background:transparent}
+  .header-preferences .preference-control select{width:100%;min-width:0;max-width:none;min-height:42px}
+  .header-preferences .theme-toggle{width:42px;height:42px;flex-basis:42px;font-size:19px}
+  .top .workspace-utilities{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) 44px;gap:7px}
+  .workspace-utilities #mediaUploadButton{grid-column:1}
+  .workspace-utilities #mediaQueueButton{grid-column:2 / 4}
+  .workspace-utilities .btn:not(#mediaUploadButton):not(#mediaQueueButton):not(.notification-bell){grid-column:1 / 3;text-align:center;text-decoration:none}
+  .workspace-utilities .notification-bell{grid-column:3;width:44px;min-width:44px}
+  .workspace-utilities .btn{min-width:0;width:100%;min-height:42px;margin:0;padding:7px 6px;font-size:13px}
+}
+@media(max-width:360px){.workspace-brand .version-mark{display:none}.workspace-brand h1{font-size:22px}}
 /* Pink keeps the existing light/dark preference independent of the palette. */
 html[data-palette="pink"][data-theme="dark"]{--bg:#21101d;--panel:#351b2e;--panel2:#48273d;--stroke:#70445f;--text:#fff2fa;--muted:#dbc1d1;--cyan:#ffafd0;--violet:#f1a9d5;--green:#a7ddbd;--amber:#f3ce9a;--red:#ff9baa}
 html[data-palette="pink"][data-theme="light"]{--bg:#fff5f9;--panel:#fffafd;--panel2:#fce8f1;--stroke:#e7bfd2;--text:#442638;--muted:#775a69;--cyan:#a52f67;--violet:#a13b78;--green:#207c5b;--amber:#895b22;--red:#a52d4b}
@@ -339,7 +358,7 @@ html[data-palette="pink"][data-theme="light"] tbody tr:nth-child(even){backgroun
 </head>
 <body>
 <main class="shell">
-<header class="top"><div class="workspace-brand"><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Dark mode; switch to light mode" aria-pressed="false">🌙</button><button type="button" id="paletteToggle" class="theme-toggle" aria-label="Blue theme; switch to pink theme" aria-pressed="false">🟦</button></div><div class="workspace-utilities" id="workspaceUtilities"></div></header>
+<header class="top"><div class="workspace-brand"><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Dark mode; switch to light mode" aria-pressed="false">🌙</button><button type="button" id="paletteToggle" class="theme-toggle" aria-label="Blue theme; switch to pink theme" aria-pressed="false">🟦</button></div><div class="workspace-utilities" id="workspaceUtilities"></div></header>
 <nav class="workspace-tabs" role="tablist" aria-label="Alliance workspace sections">
   <button type="button" class="workspace-tab" id="rosterScannerTab" role="tab" aria-controls="rosterScannerView" aria-selected="true" tabindex="0" data-workspace-tab="scanner"><span class="workspace-tab-icon" aria-hidden="true">▦</span><span>Roster Scanner</span></button>
   <button type="button" class="workspace-tab" id="trainTab" role="tab" aria-controls="trainView" aria-selected="false" tabindex="-1" data-workspace-tab="train"><span class="workspace-tab-icon" aria-hidden="true">♧</span><span>Train Manager</span></button>
