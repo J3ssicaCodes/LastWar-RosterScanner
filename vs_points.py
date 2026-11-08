@@ -5,6 +5,7 @@ from difflib import SequenceMatcher
 import csv
 import io
 import json
+import os
 
 import cv2
 import numpy as np
@@ -213,6 +214,8 @@ def install_vs_points(app, connect_db):
 
     @app.on_event('startup')
     def schema_vs():
+        if os.getenv('ALLIANCE_WORKSPACE_MODE','').lower() == 'true':
+            return
         with connect_db() as conn:
             with conn.cursor() as cur:
                 cur.execute('''CREATE TABLE IF NOT EXISTS vs_points (

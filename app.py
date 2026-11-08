@@ -38,15 +38,11 @@ from player_list_ocr import scan_upload
 from player_merge import PlayerMerge, merge_player_records
 from player_performance import HISTORY_FIELDS, load_performance, stat_series
 from admin_reset import initialize_admin_state, install_admin_reset
+from scoped_db import WorkspaceConnection, current_workspace
 
 BASE = Path(__file__).parent
+WORKSPACE_MODE = os.getenv('ALLIANCE_WORKSPACE_MODE','').lower() == 'true'
 app = FastAPI(title='Alliance Tools Player List API', docs_url=None, redoc_url=None)
-
-@app.middleware('http')
-async def pause_during_workspace_migration(request, call_next):
-    if request.method not in ('GET', 'HEAD', 'OPTIONS'):
-        return JSONResponse({'detail':'The alliance is moving to its workspace. Try again shortly.'}, status_code=503)
-    return await call_next(request)
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='member-list-ocr')
 jobs: dict[str, dict[str, Any]] = {}
 job_lock = threading.RLock()
@@ -100,11 +96,22 @@ def _db_config():
             'password': password, 'database': database}
 
 
-def db_connect():
+def raw_db_connect():
     params = _db_config()
     return pymysql.connect(**params, charset='utf8mb4', cursorclass=DictCursor,
                            connect_timeout=9, read_timeout=20, write_timeout=20,
                            autocommit=False)
+
+
+def db_connect():
+    if not WORKSPACE_MODE:
+        return raw_db_connect()
+    scope = current_workspace.get()
+    if not scope:
+        raise RuntimeError('Alliance scope is required.')
+    return WorkspaceConnection(scope=scope, **_db_config(), charset='utf8mb4',
+                               connect_timeout=9, read_timeout=20, write_timeout=20,
+                               autocommit=False)
 
 
 def initialize_db():
@@ -211,12 +218,27 @@ def initialize_db():
 @app.on_event('startup')
 def startup():
     # Never interrupt the original Roster Scanner if the DB is unavailable.
-    initialize_db()
+    if WORKSPACE_MODE:
+        from workspace_bootstrap import initialize_workspace
+        initialize_workspace(raw_db_connect)
+    else:
+        initialize_db()
+
+
+@app.middleware('http')
+async def pause_legacy_writes(request,call_next):
+    if (not WORKSPACE_MODE and os.getenv('ALLIANCE_WRITE_PAUSED','').lower()=='true'
+            and request.method not in ('GET','HEAD','OPTIONS')):
+        return JSONResponse({'detail':'The alliance is moving to its workspace. Try again shortly.'},status_code=503)
+    return await call_next(request)
 
 
 @app.get('/')
 @app.head('/')
 def home():
+    if WORKSPACE_MODE:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse('/a/1439-rvby',status_code=307)
     return FileResponse(BASE / 'index.html', media_type='text/html', headers={'Cache-Control': 'no-cache'})
 
 
@@ -225,9 +247,10 @@ def health():
     try:
         with db_connect() as conn:
             with conn.cursor() as cur:
-                cur.execute('SHOW TABLES LIKE %s', ('player list',))
-                if not cur.fetchone():
-                    raise RuntimeError('Player List table is missing.')
+                if not WORKSPACE_MODE:
+                    cur.execute('SHOW TABLES LIKE %s', ('player list',))
+                    if not cur.fetchone():
+                        raise RuntimeError('Player List table is missing.')
                 cur.execute('SELECT COUNT(*) AS n FROM `player list`')
                 count = int(cur.fetchone()['n'])
         return {'online': True, 'database': 'connected', 'table_ready': True,
@@ -260,7 +283,8 @@ def list_players():
             row['possibly_removed'] = bool(row['possibly_removed'])
             row['has_avatar'] = bool(row['has_avatar'])
             row['birthday'] = row['birthday'].strftime('%m-%d') if row['birthday'] else None
-            row['avatar_url'] = f"/api/player-list/avatar/{row['id']}" if row['has_avatar'] else None
+            prefix = f"/a/{current_workspace.get()['slug']}" if WORKSPACE_MODE else ''
+            row['avatar_url'] = f"{prefix}/api/player-list/avatar/{row['id']}" if row['has_avatar'] else None
         return {'players': rows, 'total': len(rows)}
     except Exception as exc:
         raise HTTPException(503, detail='Database unavailable. Check Render MySQL connection settings.') from exc
@@ -454,7 +478,12 @@ async def upload_scan(files:list[UploadFile]=File(...)):
     job_id=str(uuid.uuid4())
     with job_lock:
         jobs[job_id]={'created_at':time.time(),'status':'queued','message':'Video cached on server; waiting for OCR worker…','progress':1,'players':[], 'warnings':[]}
-    executor.submit(_run_scan,job_id,saved,tempdir)
+    if WORKSPACE_MODE:
+        from contextvars import copy_context
+        jobs[job_id]['workspace_id']=current_workspace.get()['id']
+        executor.submit(copy_context().run,_run_scan,job_id,saved,tempdir)
+    else:
+        executor.submit(_run_scan,job_id,saved,tempdir)
     return {'job_id':job_id}
 
 
@@ -462,7 +491,8 @@ async def upload_scan(files:list[UploadFile]=File(...)):
 def scan_status(job_id:str):
     with job_lock:
         job=jobs.get(job_id)
-        if not job:raise HTTPException(404,detail='Scan not found or expired.')
+        if not job or (WORKSPACE_MODE and job.get('workspace_id') != current_workspace.get()['id']):
+            raise HTTPException(404,detail='Scan not found or expired.')
         return {k:v for k,v in job.items() if k!='created_at'}
 
 
@@ -764,7 +794,7 @@ from vs_points import install_vs_points
 install_vs_points(app, db_connect)
 
 from media_upload import install_media_upload
-install_media_upload(app, db_connect, merge_players, ImportData)
+install_media_upload(app, db_connect, merge_players, ImportData, raw_db_connect if WORKSPACE_MODE else None)
 
 @app.get('/vs_ui.js')
 def vs_ui_script():
@@ -789,8 +819,30 @@ def admin_ui_script():
 from train_manager import install_train_manager
 install_train_manager(app, db_connect)
 
+if WORKSPACE_MODE:
+    from alliance_auth import install_accounts
+    from alliance_claims import install_claims
+    from alliance_leadership import install_leadership
+    from alliance_push import install_push
+    from alliance_analytics import install_analytics
+    from alliance_pages import install_alliance_pages
+    from workspace_security import WorkspaceBoundary
+    install_accounts(app,raw_db_connect)
+    install_claims(app,raw_db_connect)
+    install_leadership(app,raw_db_connect)
+    install_push(app,raw_db_connect)
+    install_analytics(app,raw_db_connect)
+    install_alliance_pages(app,raw_db_connect)
+    app.add_middleware(WorkspaceBoundary,connect_db=raw_db_connect)
+
 
 @app.get('/train_manager.js')
 def train_manager_script():
     return FileResponse(BASE / 'train_manager.js', media_type='application/javascript',
+                        headers={'Cache-Control':'no-cache'})
+
+
+@app.get('/workspace-context.js')
+def workspace_context_script():
+    return FileResponse(BASE/'workspace-context.js',media_type='application/javascript',
                         headers={'Cache-Control':'no-cache'})

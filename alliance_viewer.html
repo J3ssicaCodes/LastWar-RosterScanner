@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#17142c">
+  <link rel="apple-touch-icon" href="/alliance-icon-192.png">
+  <title>Alliance Tools</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#111326;color:#f7f4ff}
+    *{box-sizing:border-box}body{margin:0}main{max-width:1050px;margin:auto;padding:26px 18px 64px}
+    h1{font-size:clamp(2rem,7vw,3rem);margin:.2rem 0}h2{font-size:1.25rem}
+    .eyebrow{color:#e6a1d5;font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;font-weight:700}
+    .muted{color:#bcb9d2}header,.actions,.week{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    header{justify-content:space-between;margin-bottom:24px}.card{background:#1c2038;border:1px solid #3c3d60;border-radius:16px;padding:20px;margin:18px 0}
+    button,a.button{border:1px solid #72688d;border-radius:10px;background:#342b4c;color:#fff;padding:10px 14px;text-decoration:none;font:inherit;cursor:pointer}
+    button.primary{background:#e7add6;color:#291729;border-color:#e7add6;font-weight:700}button:disabled{opacity:.5;cursor:default}
+    table{border-collapse:collapse;width:100%;white-space:nowrap}th,td{padding:9px 10px;text-align:right;border-bottom:1px solid #3a3c57}th:first-child,td:first-child{text-align:left}
+    .scroll{overflow:auto}.week{justify-content:space-between}dialog{max-width:430px;width:calc(100% - 32px);background:#24263d;color:white;border:1px solid #676184;border-radius:16px}
+    dialog::backdrop{background:#000b}label{display:block;margin:12px 0}input{width:100%;padding:10px;border-radius:8px;border:1px solid #706a87;background:#17182d;color:#fff}
+    .error{color:#ffb6c2;min-height:1.2em}ul{padding-left:1.2rem}li{margin:.5rem 0}
+  </style>
+  <script defer src="/alliance_ui.js"></script>
+</head>
+<body><main>
+  <header>
+    <div><div class="eyebrow">Last War · Alliance Tools</div><h1 id="allianceName">Alliance</h1><div id="allianceTag" class="muted"></div></div>
+    <div class="actions"><button id="installButton" type="button">Install App</button><button id="leadershipButton" type="button" class="primary">Leadership Login</button></div>
+  </header>
+  <p id="pageError" class="error" role="alert"></p>
+  <section class="card" aria-labelledby="standingsTitle">
+    <div class="week"><div><div class="eyebrow">Alliance duel</div><h2 id="standingsTitle">VS standings</h2></div><div class="actions"><button id="previousWeek" type="button">← Previous</button><span id="weekLabel"></span><button id="nextWeek" type="button">Next →</button></div></div>
+    <div class="scroll"><table><thead><tr><th>Player</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th><th>Total</th></tr></thead><tbody id="standings"></tbody></table></div>
+    <p id="noScores" class="muted" hidden>No scores recorded for this week yet.</p>
+  </section>
+  <section class="card"><div class="eyebrow">All aboard</div><h2>Train assignments</h2><ul id="trains"></ul><p id="noTrains" class="muted" hidden>No assignments yet.</p></section>
+  <section class="card" id="rosterSection" hidden><div class="eyebrow">Alliance</div><h2>Roster</h2><div class="scroll"><table><thead id="rosterHead"></thead><tbody id="rosterRows"></tbody></table></div></section>
+  <p><a href="/account" class="button">Have an invite?</a> <a href="/account" class="button">Want to add your alliance?</a></p>
+</main>
+<dialog id="loginDialog"><form id="loginForm"><h2>Leadership Login</h2><p class="muted">Sign in to manage your alliance.</p><label>Username<input name="username" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><p id="loginError" class="error" role="alert"></p><div class="actions"><button type="submit" class="primary">Sign in</button><button id="closeLogin" type="button">Cancel</button></div></form></dialog>
+<dialog id="installDialog"><h2>Install Alliance Tools</h2><p>On iPhone, tap Share in Safari, then choose <strong>Add to Home Screen</strong>.</p><p>On Android, use Install App when offered or choose Add to Home screen from your browser menu.</p><button id="closeInstall" type="button">Close</button></dialog>
+</body></html>

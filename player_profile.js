@@ -295,6 +295,7 @@
     const link=event.target.closest('[data-open-player-profile]');
     if(link)openProfile(Number(link.dataset.openPlayerProfile));
   });
+  window.openPlayerProfile=openProfile;
   directory.addEventListener('click',event=>{
     if(event.target.closest('[data-player-birthday]'))return;
     const row=event.target.closest('tr[data-player-profile]');

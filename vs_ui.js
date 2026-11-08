@@ -47,7 +47,7 @@
     const unmatched=rows.filter(row=>!row.rosterId).length;
     $('vsSummary').textContent=rows.length+' players · '+rows.reduce((sum,row)=>sum+row.total,0n).toLocaleString()+' points shown'+
       (unmatched?' · '+unmatched+' unmatched '+(unmatched===1?'name':'names')+' in red':'');
-    $('vsExport').href='/api/vs-points/export.csv?week_start='+encodeURIComponent(selectedWeek);
+    $('vsExport').href=window.workspaceApi('/api/vs-points/export.csv?week_start='+encodeURIComponent(selectedWeek));
   }
   async function load(){
     const chosen=selectedWeek;
@@ -58,7 +58,7 @@
       displayedWeek=null;
       rows.innerHTML='<tr><td colspan="8" class="pl-empty">Loading scores…</td></tr>';
       $('vsSummary').textContent='';
-      $('vsExport').href='/api/vs-points/export.csv?week_start='+encodeURIComponent(chosen);
+      $('vsExport').href=window.workspaceApi('/api/vs-points/export.csv?week_start='+encodeURIComponent(chosen));
     }
     rows.setAttribute('aria-busy','true');
     try{

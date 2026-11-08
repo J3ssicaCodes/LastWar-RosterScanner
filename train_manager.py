@@ -2,6 +2,8 @@
 import csv
 import io
 import logging
+import os
+import json
 import re
 from datetime import date, datetime, timedelta
 from threading import Event, Thread
@@ -12,8 +14,22 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from pymysql.err import IntegrityError
+from pymysql.cursors import DictCursor
 
 from player_identity import corrected_name, load_name_corrections, name_key
+
+
+def audit_train(conn, action, day, before, after):
+    from scoped_db import current_workspace
+    scope=current_workspace.get()
+    if not scope:
+        return
+    actor=scope.get("actor")
+    with conn.cursor(DictCursor) as cur:
+        cur.execute("""INSERT INTO alliance_audit_log (alliance_id,actor_id,actor_name,action,details)
+            VALUES (%s,%s,%s,%s,%s)""",
+            (scope["id"],actor["id"] if actor else None,actor["display_name"] if actor else "System",
+             action,json.dumps({"date":str(day),"before":before,"after":after},ensure_ascii=False)))
 
 DEFAULTS = {'alliance_name':'Rubies','cooldown_weeks':4,'spin_seconds':3}
 EVENTS = ('Desert Storm','Canyon Storm','Zombie Siege','Marshalls','Sky Predator')
@@ -164,7 +180,12 @@ def validate_template(body):
 
 def read_settings(cur):
     cur.execute('SELECT alliance_name,cooldown_weeks,spin_seconds FROM train_settings WHERE id=1')
-    return cur.fetchone() or DEFAULTS.copy()
+    settings=cur.fetchone()
+    if settings:
+        return settings
+    from scoped_db import current_workspace
+    workspace=current_workspace.get()
+    return {**DEFAULTS,'alliance_name':workspace['name']} if workspace else DEFAULTS.copy()
 
 
 def nominations(players, points, last_awards, day, cooldown, goal, target):
@@ -268,10 +289,15 @@ def install_train_manager(app, connect_db):
     stop = Event()
 
     def purge(cur):
-        return  # Preserve email archives during the workspace migration.
+        if (os.getenv('ALLIANCE_WORKSPACE_MODE','').lower() == 'true'
+                or os.getenv('ALLIANCE_WRITE_PAUSED','').lower() == 'true'):
+            return
+        cur.execute('DELETE FROM train_emails WHERE created_at < UTC_TIMESTAMP() - INTERVAL 30 DAY')
 
     @app.on_event('startup')
     def train_schema():
+        if os.getenv('ALLIANCE_WORKSPACE_MODE','').lower() == 'true':
+            return
         with connect_db() as conn, conn.cursor() as cur:
             for sql in (
                 """CREATE TABLE IF NOT EXISTS train_settings (
@@ -425,6 +451,8 @@ def install_train_manager(app, connect_db):
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (body.day,conductor['id'],vip['id'],conductor['name'],vip['name'],
                      conductor['reason'],vip_reason,body.goal,body.target,conductor['points'],vip['points'],method))
+                audit_train(conn,'train_assigned',body.day,None,
+                            {'conductor':conductor['name'],'vip':vip['name']})
                 conn.commit()
             except IntegrityError as exc:
                 conn.rollback()
@@ -444,11 +472,12 @@ def install_train_manager(app, connect_db):
         if day != today:
             raise HTTPException(422,detail='Only today’s assignment can be cleared.')
         with connect_db() as conn, conn.cursor() as cur:
-            cur.execute('SELECT conductor_id,vip_id FROM train_assignments WHERE assignment_date=%s FOR UPDATE',(day,))
+            cur.execute('SELECT conductor_id,vip_id,conductor_name,vip_name FROM train_assignments WHERE assignment_date=%s FOR UPDATE',(day,))
             current = cur.fetchone()
             if not current or (current['conductor_id'],current['vip_id']) != (conductor_id,vip_id):
                 raise HTTPException(409,detail='Today’s assignment changed. Refresh it and try again.')
             cur.execute('DELETE FROM train_assignments WHERE assignment_date=%s',(day,))
+            audit_train(conn,'train_cleared',day,{'conductor':current['conductor_name'],'vip':current['vip_name']},None)
             conn.commit()
         return {'day':day}
 
@@ -461,12 +490,15 @@ def install_train_manager(app, connect_db):
             player = cur.fetchone()
             if not player:
                 raise HTTPException(422,detail='Choose a winner from the Player List.')
-            cur.execute('SELECT conductor_id,vip_id,vip_method FROM train_assignments WHERE assignment_date=%s FOR UPDATE',(day,))
+            cur.execute('SELECT conductor_id,vip_id,vip_method,conductor_name,vip_name FROM train_assignments WHERE assignment_date=%s FOR UPDATE',(day,))
             current = cur.fetchone()
             if not current or current['conductor_id'] != body.conductor_id or current['vip_method'] != 'dice' or current['vip_id'] is not None:
                 raise HTTPException(409,detail='This assignment changed. Refresh it and try again.')
             cur.execute('UPDATE train_assignments SET vip_id=%s,vip_name=%s WHERE assignment_date=%s',
                         (body.vip_id,player['player_name'],day))
+            audit_train(conn,'train_dice_winner',day,
+                        {'conductor':current['conductor_name'],'vip':current['vip_name']},
+                        {'conductor':current['conductor_name'],'vip':player['player_name']})
             conn.commit()
         return {'day':day}
 
@@ -516,13 +548,18 @@ def install_train_manager(app, connect_db):
                 return player_id,name,reason,None
 
             try:
+                new_conductor=values('conductor',body.conductor_id)
+                new_vip=values('vip',body.vip_id)
                 cur.execute("""UPDATE train_assignments SET assignment_date=%s,
                     conductor_id=%s,conductor_name=%s,conductor_reason=%s,conductor_points=%s,
                     vip_id=%s,vip_name=%s,vip_reason=%s,vip_points=%s,vip_method=%s WHERE assignment_date=%s""",
-                    (body.day,*values('conductor',body.conductor_id),*values('vip',body.vip_id),
+                    (body.day,*new_conductor,*new_vip,
                      previous['vip_method'] if previous['vip_method']=='dice' or body.vip_id==previous['vip_id'] else 'manual',original_day))
                 if body.day != original_day:
                     cur.execute('UPDATE train_emails SET assignment_date=%s WHERE assignment_date=%s',(body.day,original_day))
+                audit_train(conn,'train_edited',body.day,
+                            {'conductor':previous['conductor_name'],'vip':previous['vip_name']},
+                            {'conductor':new_conductor[1],'vip':new_vip[1]})
                 conn.commit()
             except IntegrityError as exc:
                 conn.rollback()
