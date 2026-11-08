@@ -548,6 +548,8 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
         job_id=str(uuid.uuid4())
         from scoped_db import current_workspace
         scope=current_workspace.get()
+        if scope:
+            scope['job_id']=job_id
         try:
             with connect_db() as conn:
                 with conn.cursor() as cur:
@@ -612,6 +614,8 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
             job_id = str(uuid.uuid4())
             from scoped_db import current_workspace
             scope=current_workspace.get()
+            if scope:
+                scope['job_id']=job_id
             with connect_db() as conn:
                 with conn.cursor() as cur:
                     if scope:
