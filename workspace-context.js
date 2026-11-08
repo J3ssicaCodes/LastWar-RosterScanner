@@ -38,11 +38,14 @@
       viewer.textContent='Viewer page';
       utilities.append(viewer);
       const notifications=document.createElement('a');
-      notifications.className='btn';notifications.href='/account?alliance='+encodeURIComponent(slug)+'&notifications=1';
-      notifications.textContent='🔔';
+      notifications.className='btn notification-bell';notifications.href='/account?alliance='+encodeURIComponent(slug)+'&notifications=1';
+      notifications.setAttribute('aria-label','Notifications');
+      const bell=document.createElement('span');bell.textContent='🔔';bell.setAttribute('aria-hidden','true');
+      const badge=document.createElement('span');badge.className='notification-badge';badge.hidden=true;badge.setAttribute('aria-hidden','true');
+      notifications.append(bell,badge);
       utilities.append(notifications);
       originalFetch('/api/auth/notifications',{cache:'no-store'}).then(response=>response.ok?response.json():null)
-        .then(data=>{if(data?.unread)notifications.textContent='🔔 '+data.unread;}).catch(()=>{});
+        .then(data=>{if(data?.unread){badge.textContent=data.unread>99?'99+':String(data.unread);badge.hidden=false;notifications.setAttribute('aria-label',`Notifications, ${data.unread} unread`);}}).catch(()=>{});
     }
     const exportLink=document.getElementById('plExport');
     if(exportLink)exportLink.href=window.workspaceApi('/api/player-list/export.csv');
