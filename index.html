@@ -129,7 +129,7 @@ body{background:radial-gradient(ellipse 100% 46% at 45% -8%,#302b4c 0,transparen
 .header-preferences{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto}
 .preference-control{display:flex;align-items:center;gap:9px;border:1px solid #55506e;background:#24233a;padding:6px 9px;border-radius:11px;font-size:12px;font-weight:750;color:#e8e4fa}
 .preference-label{white-space:nowrap}.preference-control select{background:#19192b;border:1px solid #605878;border-radius:7px;color:#f6f3ff;min-height:34px;padding:5px 7px;font-size:13px;max-width:152px}
-.theme-toggle{border:1px solid #625b7b;background:#2b2943;color:#f7f3ff;border-radius:11px;padding:11px 13px;font-weight:750;font-size:12px;min-height:47px;white-space:nowrap}
+.theme-toggle{display:inline-grid;place-items:center;width:47px;height:47px;flex:0 0 47px;border:1px solid #625b7b;background:#2b2943;color:#f7f3ff;border-radius:11px;padding:0;font-size:20px;line-height:1}
 .theme-toggle:hover,.preference-control select:focus-visible{border-color:#c0abd9}
 .btn.primary{background:linear-gradient(105deg,#aee8e7,#cbb4f2);color:#1c1b2b;box-shadow:0 5px 20px #8f8dd52e}
 .team-section.team-A{border-top-color:#86d6df}.team-section.team-B{border-top-color:#c6abed}
@@ -331,7 +331,7 @@ html[data-palette="pink"][data-theme="light"] tbody tr:nth-child(even){backgroun
 </head>
 <body>
 <main class="shell">
-<header class="top"><div class="workspace-brand"><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Switch appearance" aria-pressed="false">☀️ Light mode</button><button type="button" id="paletteToggle" class="theme-toggle" aria-label="Switch to pink theme" aria-pressed="false">🩷 Pink theme</button></div><div class="workspace-utilities" id="workspaceUtilities"></div></header>
+<header class="top"><div class="workspace-brand"><div class="eyebrow">Last War · Alliance Tools</div><h1>Alliance Tools <span class="version-mark">v2</span> <span aria-hidden="true">✦</span></h1><p class="subtitle">Organize rosters, plan event maps, and build your alliance toolkit in one place.</p></div><div class="header-preferences" role="group" aria-label="Display preferences"><label class="preference-control" for="languageSelect"><span class="preference-label">🌐 <span data-l10n="languageLabel">Language</span></span><select id="languageSelect" aria-label="Choose interface language"><option value="en">🇺🇸 English</option><option value="fr">🇫🇷 Français</option><option value="de">🇩🇪 Deutsch</option><option value="it">🇮🇹 Italiano</option><option value="da">🇩🇰 Dansk</option><option value="es">🇪🇸 Español</option></select></label><button type="button" id="themeToggle" class="theme-toggle" aria-label="Dark mode; switch to light mode" aria-pressed="false">🌙</button><button type="button" id="paletteToggle" class="theme-toggle" aria-label="Blue theme; switch to pink theme" aria-pressed="false">🟦</button></div><div class="workspace-utilities" id="workspaceUtilities"></div></header>
 <nav class="workspace-tabs" role="tablist" aria-label="Alliance workspace sections">
   <button type="button" class="workspace-tab" id="rosterScannerTab" role="tab" aria-controls="rosterScannerView" aria-selected="true" tabindex="0" data-workspace-tab="scanner"><span class="workspace-tab-icon" aria-hidden="true">▦</span><span>Roster Scanner</span></button>
   <button type="button" class="workspace-tab" id="trainTab" role="tab" aria-controls="trainView" aria-selected="false" tabindex="-1" data-workspace-tab="train"><span class="workspace-tab-icon" aria-hidden="true">♧</span><span>Train Manager</span></button>
@@ -2201,11 +2201,10 @@ function setUILanguage(value){
 function applyUITheme(){
   const light=document.documentElement.dataset.theme==='light';
   const btn=document.getElementById('themeToggle');
-  btn.textContent=(light?'🌙 ':'☀️ ')+translateValue(light?'Dark mode':'Light mode');
+  btn.textContent=light?'☀️':'🌙';
+  btn.setAttribute('aria-label',light?'Light mode; switch to dark mode':'Dark mode; switch to light mode');
+  btn.title=light?'Light mode':'Dark mode';
   btn.setAttribute('aria-pressed',String(light));
-  // Button text is intentionally reset each time so this text can be translated.
-  textOriginals.delete(btn.firstChild);
-  translateUI(btn);
 }
 document.getElementById('languageSelect').addEventListener('change',e=>{setUILanguage(e.target.value);applyUITheme();});
 document.getElementById('themeToggle').addEventListener('click',()=>{
@@ -2218,8 +2217,9 @@ function applyPalette(value){
   const palette=value==='pink'?'pink':'blue';
   document.documentElement.dataset.palette=palette;
   const btn=document.getElementById('paletteToggle');
-  btn.textContent=palette==='pink'?'🟦 Blue theme':'🩷 Pink theme';
-  btn.setAttribute('aria-label',palette==='pink'?'Switch to blue theme':'Switch to pink theme');
+  btn.textContent=palette==='pink'?'🩷':'🟦';
+  btn.setAttribute('aria-label',palette==='pink'?'Pink theme; switch to blue theme':'Blue theme; switch to pink theme');
+  btn.title=palette==='pink'?'Pink theme':'Blue theme';
   btn.setAttribute('aria-pressed',String(palette==='pink'));
   try{localStorage.setItem('lastwar.uiPalette.v1',palette);}catch(e){}
 }
