@@ -66,6 +66,10 @@ class DismissRows(BaseModel):
     ids: list[int] = Field(min_length=1, max_length=2000)
 
 
+class ManualArchiveRequest(BaseModel):
+    expected_name: str = Field(min_length=1,max_length=255)
+
+
 class GoogleDriveImport(BaseModel):
     destination: str = Field(pattern=r'^(storm|players|vs)$')
     file_id: str = Field(min_length=8,max_length=256)
@@ -756,6 +760,20 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
         cur.execute("""UPDATE `player list` SET archived=FALSE,possibly_removed=FALSE,updated_at=UTC_TIMESTAMP(6)
                        WHERE id=%s AND archived=TRUE""",(player_id,))
         return cur.rowcount
+
+    @router.put('/players/{player_id}/archive')
+    def archive_player(player_id:int, body:ManualArchiveRequest):
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute('SELECT id,player_name,archived FROM `player list` WHERE id=%s FOR UPDATE',(player_id,))
+            player=cur.fetchone()
+            if not player:
+                raise HTTPException(404,detail='Player not found.')
+            if player['archived'] or player['player_name']!=body.expected_name:
+                raise HTTPException(409,detail='This player changed. Refresh the player list and try again.')
+            cur.execute('UPDATE `player list` SET archived=TRUE,updated_at=UTC_TIMESTAMP(6) WHERE id=%s',(player_id,))
+            cur.execute('DELETE FROM media_missing_players WHERE player_id=%s',(player_id,))
+            conn.commit()
+        return {'id':player_id,'archived':True}
 
     @router.get('/archived-players')
     def list_archived_players():

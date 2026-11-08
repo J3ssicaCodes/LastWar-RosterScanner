@@ -270,6 +270,7 @@
     return Promise.all([refreshMissingPlayers(),refreshJobs(),window.playerListRefresh?.(),
       window.vsPointsRefresh?.(),archiveSection.open?refreshArchive():null]);
   }
+  window.addEventListener('player-archive-changed',()=>{refreshMissingPlayers();if(archiveSection.open)refreshArchive();});
   archiveSection.addEventListener('toggle',()=>{
     if(archiveSection.open){$('playerArchiveStatus').textContent='';refreshArchive();}
   });

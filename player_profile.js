@@ -122,12 +122,26 @@
         ['Birthday',p.birthday||'—'],['Last seen',p.last_seen_at?new Date(p.last_seen_at+'Z').toLocaleDateString():'—']
       ].map(([label,value])=>'<dt>'+label+'</dt><dd style="margin:0">'+esc(value)+'</dd>').join('')+'</dl>'+
       (edit?'':'<form class="player-extra" data-player-details><h3>Player details</h3><label><input type="checkbox" name="has_t11" '+(p.has_t11?'checked':'')+'> Has T11</label><label>Away from<input type="date" name="away_start" value="'+esc(p.away_start||'')+'"></label><label>Away through<input type="date" name="away_end" value="'+esc(p.away_end||'')+'"></label><label>Player notes<textarea name="notes" maxlength="5000">'+esc(p.player_notes||'')+'</textarea></label><button type="submit" class="btn primary">Save details</button><p data-details-status role="status"></p></form>')+
-      (edit?'':'<p><label><input type="checkbox" data-train-restriction disabled> Disable train assignments</label> <span data-train-restriction-status role="status"></span></p><button type="button" class="btn" data-merge>Merge duplicate</button> <button type="button" class="btn" data-claim-vs>Claim VS entry</button><p data-merge-message role="status" hidden></p>')+
+      (edit?'':'<p><label><input type="checkbox" data-train-restriction disabled> Disable train assignments</label> <span data-train-restriction-status role="status"></span></p><button type="button" class="btn" data-merge>Merge duplicate</button> <button type="button" class="btn" data-claim-vs>Claim VS entry</button> <button type="button" class="btn" data-archive-player>Archive player</button><p data-merge-message role="status" hidden></p>')+
       '<section class="profile-history" data-history></section>';
     renderHistory();
     loadTrainRestriction(p);
     dialog.querySelector('[data-merge]')?.addEventListener('click',openMerge);
     dialog.querySelector('[data-claim-vs]')?.addEventListener('click',openVSClaim);
+    dialog.querySelector('[data-archive-player]')?.addEventListener('click',async event=>{
+      const selected=player;
+      if(!window.confirm('Archive '+selected.name+'? They will be hidden from the active player list and analytics. Their history will be kept, and you can reactivate them in Admin → Player Archive.'))return;
+      const button=event.currentTarget;button.disabled=true;
+      try{
+        const response=await fetch('/api/media/players/'+selected.id+'/archive',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({expected_name:selected.name})});
+        const result=await response.json();if(!response.ok)throw Error(typeof result.detail==='string'?result.detail:'Could not archive this player.');
+        if(player===selected&&dialog.open)dialog.close();
+        await Promise.all([window.playerListRefresh?.(),window.vsPointsRefresh?.()]);
+        window.dispatchEvent(new Event('player-archive-changed'));
+        window.dispatchEvent(new Event('player-profile-updated'));
+      }catch(error){const message=dialog.querySelector('[data-merge-message]');if(message){message.hidden=false;message.textContent=error.message;}}
+      finally{button.disabled=false;}
+    });
     dialog.querySelector('[data-close]').onclick=()=>dialog.close();
     dialog.querySelector('[data-edit]')?.addEventListener('click',()=>{
       render(true);
