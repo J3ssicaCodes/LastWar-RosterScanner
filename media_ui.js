@@ -7,7 +7,7 @@
   let destination='storm',files=[],busy=false,pending=[],notified=new Set(),driveSelection=null;
   const destinationLabel=value=>value==='storm'?'Storm Roster':value==='vs'?'VS Points':'Player List';
   const localDate=()=>{const d=new Date();return [d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');};
-  const NOTIFICATIONS='lastwar.media.notified.v1';
+  const NOTIFICATIONS=window.workspaceKey('lastwar.media.notified.v1');
   try{notified=new Set(JSON.parse(localStorage.getItem(NOTIFICATIONS)||'[]'));}catch{}
   const css=document.createElement('style');
   css.textContent=`
@@ -752,7 +752,7 @@
         ['ready','approved'].includes(job.status)?' · '+count+' results':'';
       const reviewButton=needsReview(job)?'<button type="button" class="btn smallbtn" data-open-scan-review="'+escape(job.id)+
         '" data-review-destination="'+escape(job.destination)+'">Review in '+escape(label(job))+'</button>':'';
-      return '<li class="media-queue-entry"><div class="media-queue-line"><strong>'+
+      return '<li class="media-queue-entry" data-scan-job="'+escape(job.id)+'"><div class="media-queue-line"><strong>'+
         escape(label(job))+'</strong><span class="media-queue-state">'+escape(statusText+position+countText)+
         '</span></div><small>'+escape(time)+'</small>'+timer+
         (['queued','scanning'].includes(job.status)?'<progress max="100" value="'+pct+
@@ -831,7 +831,19 @@
   setInterval(refreshJobs,8000);
   setInterval(()=>{if(queueDialog.open)tickScanTimers();},1000);
   window.loadServerStormRoster?.();
-  window.refreshMediaUploads();
+  window.refreshMediaUploads().then(()=>{
+    const jobId=new URLSearchParams(location.search).get('job');
+    if(!jobId)return;
+    if(!queueDialog.open)queueDialog.showModal();
+    const review=[...$('mediaQueueEntries').querySelectorAll('[data-open-scan-review]')]
+      .find(button=>button.dataset.openScanReview===jobId);
+    if(review)review.click();
+    else{
+      const row=[...$('mediaQueueEntries').querySelectorAll('[data-scan-job]')]
+        .find(item=>item.dataset.scanJob===jobId);
+      row?.scrollIntoView({block:'center'});
+    }
+  });
   window.addEventListener('player-profile-updated',async()=>{
     try{const data=await getJson('/api/player-list');reviewNames.roster(data.players);}catch{}
   });

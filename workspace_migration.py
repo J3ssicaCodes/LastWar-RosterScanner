@@ -49,6 +49,9 @@ WORKSPACE_SCHEMA = (
         server_number INT UNSIGNED NOT NULL,
         tag VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
         name VARCHAR(80) NOT NULL,
+        referred_by BIGINT UNSIGNED NULL,
+        timezone VARCHAR(80) NOT NULL DEFAULT 'UTC',
+        viewer_roster_fields JSON NULL,
         created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
         UNIQUE KEY uq_alliance_server_tag (server_number, tag)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
@@ -61,6 +64,7 @@ WORKSPACE_SCHEMA = (
         setup_required BOOLEAN NOT NULL DEFAULT FALSE,
         setup_token_hash BINARY(32) NULL,
         setup_expires_at DATETIME(6) NULL,
+        setup_device_hash BINARY(32) NULL,
         created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""",
     """CREATE TABLE IF NOT EXISTS alliance_memberships (
@@ -103,7 +107,13 @@ def inventory(cursor):
     existing = {next(iter(row.values())) for row in cursor.fetchall()}
     managed = set(TABLES.values()) | {
         "alliance_workspaces", "alliance_accounts", "alliance_memberships",
-        "alliance_audit_log", "alliance_migrations",
+        "alliance_audit_log", "alliance_migrations", "alliance_sessions",
+        "alliance_login_attempts", "alliance_invites",
+        "alliance_claims", "alliance_player_claims", "alliance_claim_comments",
+        "alliance_notifications",
+        "alliance_wall_posts", "alliance_wall_replies", "alliance_tasks", "alliance_task_occurrences",
+        "alliance_push_subscriptions", "alliance_push_deliveries",
+        "platform_audit_log",
     }
     expected = set(TABLES) | SHARED_TABLES
     missing = expected - existing
@@ -162,7 +172,13 @@ def prepare_shadow(cursor, source, target):
             clauses.append(f"ADD UNIQUE KEY {identifier(key)} ({field_sql})")
         cursor.execute(f"ALTER TABLE {identifier(target)} " + ", ".join(clauses))
         target_columns = columns(cursor, target)
-    if set(target_columns) != set(original) | {"alliance_id"}:
+    extra={"alliance_id"}
+    if source=="media_scan_jobs":
+        if "uploaded_by" not in target_columns:
+            cursor.execute(f"ALTER TABLE {identifier(target)} ADD COLUMN uploaded_by BIGINT UNSIGNED NULL")
+            target_columns=columns(cursor,target)
+        extra.add("uploaded_by")
+    if set(target_columns) != set(original) | extra:
         raise RuntimeError(f"Shadow schema for {source} differs from the source columns.")
     for field, definition in original.items():
         comparable = ("Type", "Collation", "Null", "Default", "Extra")
@@ -200,11 +216,13 @@ def copy_and_verify(cursor, source, target, fields, primary, alliance_id):
     return inserted
 
 
-def migrate_rubies(connection, expected_database, backup_sha256, temporary_password):
+def migrate_rubies(connection, expected_database, backup_sha256, temporary_password, setup_token=None):
     """Copy legacy rows and seed the owner in one transaction after shadow DDL."""
     if not re.fullmatch(r"[0-9a-f]{64}", backup_sha256):
         raise ValueError("Provide the verified backup's lowercase SHA-256 digest.")
-    setup_token = token_urlsafe(32)
+    setup_token = setup_token or token_urlsafe(32)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{32,128}",setup_token):
+        raise ValueError("Use a secure setup code.")
     password_hash = PasswordHasher(time_cost=2, memory_cost=19456, parallelism=1).hash(temporary_password)
     setup_hash = sha256(setup_token.encode()).digest()
     expires_at = (datetime.now(timezone.utc) + timedelta(days=1)).replace(tzinfo=None)

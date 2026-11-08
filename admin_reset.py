@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Literal
+import os
 
 # Legacy tables predate the reset marker. Mark new user tables with
 # COMMENT='alliance_tools:user_data' in their CREATE TABLE statement.
@@ -24,6 +25,16 @@ USER_TABLES = {
     'train_emails': 'Saved Alliance Emails',
     'train_email_templates': 'Alliance Email Template Changes',
 }
+WORKSPACE_EXTRA_TABLES = {
+    'alliance_claims':'Player Claims',
+    'alliance_player_claims':'Player Profile Links',
+    'alliance_claim_comments':'Claim Discussions',
+    'alliance_notifications':'Notifications',
+    'alliance_wall_posts':'Leadership Wall',
+    'alliance_wall_replies':'Leadership Wall Replies',
+    'alliance_tasks':'Tasks',
+    'alliance_task_occurrences':'Task Occurrences',
+}
 PRESERVED_TABLES = {'player_name_dictionary', 'alliance_admin_state', 'vs_vision_usage'}
 USER_DATA_MARKER = 'alliance_tools:user_data'
 CLEAR_PATH = '/api/admin/clear-data'
@@ -38,6 +49,8 @@ def initialize_admin_state(cursor):
 
 
 def reset_tables(cursor):
+    if os.getenv('ALLIANCE_WORKSPACE_MODE','').lower() == 'true':
+        return {name:'InnoDB' for name in (*USER_TABLES,*WORKSPACE_EXTRA_TABLES)}
     cursor.execute("""SELECT TABLE_NAME AS name, TABLE_COMMENT AS comment, ENGINE AS engine
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE'""")
@@ -49,7 +62,7 @@ def reset_tables(cursor):
 
 
 def table_label(name):
-    return USER_TABLES.get(name, name.replace('_', ' ').title())
+    return USER_TABLES.get(name,WORKSPACE_EXTRA_TABLES.get(name,name.replace('_', ' ').title()))
 
 
 def reset_order(cursor, selected):
@@ -64,6 +77,29 @@ def reset_order(cursor, selected):
             raise HTTPException(409, 'Pending Player List Reviews depend on Scan Queue and History. Finish the reviews or select both tables.')
     if any(engine != 'InnoDB' for engine in tables.values()):
         raise HTTPException(409, 'Every reset table must support transactional deletion.')
+    if os.getenv('ALLIANCE_WORKSPACE_MODE','').lower() == 'true':
+        dependencies={
+            'player list':('alliance_claims','alliance_player_claims'),
+            'alliance_claims':('alliance_claim_comments','alliance_player_claims'),
+            'alliance_wall_posts':('alliance_wall_replies',),
+            'alliance_tasks':('alliance_task_occurrences',),
+            'media_scan_jobs':('roster upload','vs_scan_rows','media_missing_players','media_scan_audit'),
+        }
+        for parent,children in dependencies.items():
+            if parent not in tables:continue
+            for child in children:
+                if child in tables:continue
+                cursor.execute(f'SELECT 1 FROM `{child}` LIMIT 1')
+                if cursor.fetchone():
+                    raise HTTPException(409,f'Select {table_label(child)} too, or finish that work before clearing {table_label(parent)}.')
+        ordered=[]
+        remaining=set(tables)
+        while remaining:
+            ready=sorted(name for name in remaining if not (set(dependencies.get(name,())) & remaining))
+            if not ready:raise HTTPException(409,'The selected data has circular dependencies.')
+            ordered.extend(ready)
+            remaining.difference_update(ready)
+        return ordered
     cursor.execute("""SELECT TABLE_SCHEMA AS child_schema, TABLE_NAME AS child,
         REFERENCED_TABLE_NAME AS parent, DATABASE() AS app_schema
         FROM information_schema.KEY_COLUMN_USAGE
@@ -139,7 +175,10 @@ def install_admin_reset(app, connect_db, jobs, job_lock):
     @app.post(CLEAR_PATH)
     def clear_data(body: ClearData):
         with job_lock:
-            if any(job['status'] in ('queued', 'scanning') for job in jobs.values()):
+            from scoped_db import current_workspace
+            workspace=current_workspace.get()
+            if any(job['status'] in ('queued', 'scanning') and
+                   (not workspace or job.get('workspace_id') == workspace['id']) for job in jobs.values()):
                 raise HTTPException(409, 'Wait for active and queued scans to finish.')
             try:
                 with connect_db() as conn:
@@ -163,5 +202,10 @@ def install_admin_reset(app, connect_db, jobs, job_lock):
             except Exception as exc:
                 raise HTTPException(503, 'Clear Data failed. No changes were committed.') from exc
             if 'media_scan_jobs' in ordered:
-                jobs.clear()
+                if workspace:
+                    for job_id in list(jobs):
+                        if jobs[job_id].get('workspace_id') == workspace['id']:
+                            del jobs[job_id]
+                else:
+                    jobs.clear()
         return {'tables_cleared': len(ordered), 'rows_deleted': deleted}

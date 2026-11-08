@@ -83,7 +83,7 @@ def google_picker_config():
 
 
 
-def install_media_upload(app, connect_db, import_players, import_model):
+def install_media_upload(app, connect_db, import_players, import_model, shared_connect_db=None):
     router = APIRouter(prefix='/api/media', tags=['Media Upload'])
     review_match = """p.archived=m.reactivate AND
         (m.reactivate=TRUE OR p.last_import_id=m.last_import_id COLLATE utf8mb4_unicode_ci
@@ -203,6 +203,8 @@ def install_media_upload(app, connect_db, import_players, import_model):
 
     @app.on_event('startup')
     def startup_media():
+        if os.getenv('ALLIANCE_WORKSPACE_MODE','').lower() == 'true':
+            return
         try:
             schema()
         except Exception as exc:
@@ -224,6 +226,15 @@ def install_media_upload(app, connect_db, import_players, import_model):
         with connect_db() as conn:
             with conn.cursor() as cur:
                 cur.execute('UPDATE media_scan_jobs SET ' + ','.join(fields) + ' WHERE id=%s', (*values, job_id))
+            from scoped_db import current_workspace
+            scope=current_workspace.get()
+            if scope and scope.get('worker') and status in ('review','error'):
+                from pymysql.cursors import DictCursor
+                from alliance_claims import notify
+                with conn.cursor(DictCursor) as cur:
+                    notify(cur,scope['id'],scope['uploader_id'],'scan',
+                           'Scan needs review' if status=='review' else 'Upload failed',
+                           '/a/'+scope['slug']+'/manage?job='+job_id)
             conn.commit()
 
     def run_job(job_id: str, destination: str, paths: list[Path], tempdir: Path, drive=None, upload_date=None):
@@ -253,7 +264,7 @@ def install_media_upload(app, connect_db, import_players, import_model):
                 if upload_date is None:raise ValueError('Upload date is missing. Select the file again.')
                 recheck_keys = {name_key(row['player_name']) for row in roster if not row['possibly_removed'] and not row.get('archived')}
                 result=scan_vs_upload(paths,report,upload_date,corrections,master_keys,recheck_keys=recheck_keys)
-                recheck_vs_rows(result,os.getenv('GOOGLE_VISION_API_KEY'),connect_db,corrections,master_keys,report)
+                recheck_vs_rows(result,os.getenv('GOOGLE_VISION_API_KEY'),shared_connect_db or connect_db,corrections,master_keys,report)
                 counts=stage_vs_result(connect_db,job_id,result)
                 saved,pending=counts['saved'],counts['pending']
                 gaps = result.get('missing_positions', [])
@@ -535,17 +546,30 @@ def install_media_upload(app, connect_db, import_players, import_model):
                     raise HTTPException(429,detail='The scan queue is full. Try again when another scan finishes.')
         work=Path(tempfile.mkdtemp(prefix='alliance_drive_media_'))
         job_id=str(uuid.uuid4())
+        from scoped_db import current_workspace
+        scope=current_workspace.get()
         try:
             with connect_db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("""INSERT INTO media_scan_jobs
-                        (id,destination,status,progress,message,full_capture,upload_date)
-                        VALUES (%s,%s,'queued',0,'Waiting to scan selected Google Drive file',FALSE,%s)""",
-                        (job_id,body.destination,body.upload_date))
+                    if scope:
+                        cur.execute("""INSERT INTO media_scan_jobs
+                            (id,destination,status,progress,message,full_capture,upload_date,uploaded_by)
+                            VALUES (%s,%s,'queued',0,'Waiting to scan selected Google Drive file',FALSE,%s,%s)""",
+                            (job_id,body.destination,body.upload_date,scope["actor"]["id"]))
+                    else:
+                        cur.execute("""INSERT INTO media_scan_jobs
+                            (id,destination,status,progress,message,full_capture,upload_date)
+                            VALUES (%s,%s,'queued',0,'Waiting to scan selected Google Drive file',FALSE,%s)""",
+                            (job_id,body.destination,body.upload_date))
                 conn.commit()
             token_data={'file_id':body.file_id,'access_token':body.access_token,
                         'move_to_trash':body.move_to_trash}
-            executor.submit(run_job,job_id,body.destination,[],work,token_data,body.upload_date)
+            if os.getenv('ALLIANCE_WORKSPACE_MODE','').lower() == 'true':
+                from contextvars import copy_context
+                from scoped_db import run_worker
+                executor.submit(copy_context().run,run_worker,job_id,run_job,job_id,body.destination,[],work,token_data,body.upload_date)
+            else:
+                executor.submit(run_job,job_id,body.destination,[],work,token_data,body.upload_date)
             return {'job_id':job_id,'destination':body.destination,
                     'message':'Google Drive file queued for scanning.'}
         except Exception:
@@ -586,14 +610,27 @@ def install_media_upload(app, connect_db, import_players, import_model):
                         f.write(data)
                 saved.append(dest)
             job_id = str(uuid.uuid4())
+            from scoped_db import current_workspace
+            scope=current_workspace.get()
             with connect_db() as conn:
                 with conn.cursor() as cur:
-                    cur.execute('''INSERT INTO media_scan_jobs
-                        (id,destination,status,progress,message,full_capture,upload_date)
-                        VALUES (%s,%s,'queued',0,'Waiting to scan',%s,%s)''',
-                        (job_id,destination,False,upload_date))
+                    if scope:
+                        cur.execute('''INSERT INTO media_scan_jobs
+                            (id,destination,status,progress,message,full_capture,upload_date,uploaded_by)
+                            VALUES (%s,%s,'queued',0,'Waiting to scan',%s,%s,%s)''',
+                            (job_id,destination,False,upload_date,scope["actor"]["id"]))
+                    else:
+                        cur.execute('''INSERT INTO media_scan_jobs
+                            (id,destination,status,progress,message,full_capture,upload_date)
+                            VALUES (%s,%s,'queued',0,'Waiting to scan',%s,%s)''',
+                            (job_id,destination,False,upload_date))
                 conn.commit()
-            executor.submit(run_job,job_id,destination,saved,work,upload_date=upload_date)
+            if os.getenv('ALLIANCE_WORKSPACE_MODE','').lower() == 'true':
+                from contextvars import copy_context
+                from scoped_db import run_worker
+                executor.submit(copy_context().run,run_worker,job_id,run_job,job_id,destination,saved,work,upload_date=upload_date)
+            else:
+                executor.submit(run_job,job_id,destination,saved,work,upload_date=upload_date)
             return {'job_id':job_id,'destination':destination,'message':'Upload accepted. Waiting to scan.'}
         except Exception:
             shutil.rmtree(work,ignore_errors=True)

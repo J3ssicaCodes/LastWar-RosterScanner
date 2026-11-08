@@ -374,7 +374,7 @@
   $('trainDay').value=localDate(new Date());
   const weekKey=()=>{
     const start=new Date(day()+'T12:00:00');start.setDate(start.getDate()-(start.getDay()+6)%7);
-    return 'lastwar.trainGoal.'+localDate(start);
+    return window.workspaceKey('lastwar.trainGoal.'+localDate(start));
   };
   function loadGoal(){
     let saved;

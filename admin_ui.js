@@ -9,15 +9,19 @@
   const checkedTables=()=>[...tableList.querySelectorAll('input:checked')];
   const syncButton=()=>{clearButton.disabled=clearing||!checkedTables().length;};
   tableList.addEventListener('change',syncButton);
-  const resetKey='lastwar.adminReset.v1';
-  const dictionaryKey='lastwar.ocrNameDictionary.v1';
-  const completedKey='lastwar.adminResetCompleted';
+  const resetKey=window.workspaceKey('lastwar.adminReset.v1');
+  const dictionaryKey=window.workspaceKey('lastwar.ocrNameDictionary.v1');
+  const completedKey=window.workspaceKey('lastwar.adminResetCompleted');
 
   function applyReset(resetId){
     if(!resetId||localStorage.getItem(resetKey)===resetId)return false;
+    if(window.workspaceSlug&&localStorage.getItem(resetKey)===null){
+      localStorage.setItem(resetKey,resetId);
+      return false;
+    }
     for(const store of [localStorage,sessionStorage]){
       for(const key of Object.keys(store)){
-        if(key.startsWith('lastwar.')&&key!==dictionaryKey&&key!==resetKey){
+        if(key.startsWith(window.workspaceKey('lastwar.'))&&key!==dictionaryKey&&key!==resetKey){
           store.removeItem(key);
         }
       }

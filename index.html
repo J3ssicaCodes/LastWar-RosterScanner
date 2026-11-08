@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light dark">
+<script src="/workspace-context.js"></script>
 <script>try{document.documentElement.dataset.theme=localStorage.getItem("lastwar.uiTheme.v2")==="light"?"light":"dark";}catch(e){document.documentElement.dataset.theme="dark";}</script>
 <title>Last War | Alliance Tools v2</title>
 <style>
@@ -562,7 +563,7 @@ let mapTemplatePromise=null,mapTemplateSource=null;
 
 // Events are local configuration, not server data. The embedded map is used
 // when there are no saved events or whenever a map has not been customized.
-const EVENTS_STORAGE_KEY='lastwar.eventPlanner.v1';
+const EVENTS_STORAGE_KEY=window.workspaceKey('lastwar.eventPlanner.v1');
 const EVENT_ID_BASE='default-map';
 const EVENT_ID_CANYON='canyon-storm';
 const EVENT_MAX_SLOTS=20;
@@ -764,7 +765,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 
 // Store explicitly corrected OCR spellings. Similar names are independently
 // rescanned; they never become dictionary rules without a user correction.
-const DICTIONARY_STORAGE_KEY = 'lastwar.ocrNameDictionary.v1';
+const DICTIONARY_STORAGE_KEY = window.workspaceKey('lastwar.ocrNameDictionary.v1');
 let dictionaryStorageAvailable=true;
 const nameDictionary=new Map();
 let editingRowId=null, rowDraft=null, rowSnapshot=null;
@@ -2195,7 +2196,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 
 <script id="workspaceNavigation">
 (() => {
-  const storageKey='lastwar.workspaceTab.v1';
+  const storageKey=window.workspaceKey('lastwar.workspaceTab.v1');
   const tabs=[...document.querySelectorAll('[data-workspace-tab]')];
   const views={scanner:document.getElementById('rosterScannerView'),train:document.getElementById('trainView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView'),performance:document.getElementById('performanceView'),admin:document.getElementById('adminView')};
   for(const table of document.querySelectorAll('[data-scroll-table]')){
@@ -2308,7 +2309,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 
   // Scan jobs run on Render, not on the phone. Keep the id so Android can close
   // or suspend this tab after the upload receives a server job id.
-  const pendingScanKey='lastwar.playerList.pendingScan.v1';
+  const pendingScanKey=window.workspaceKey('lastwar.playerList.pendingScan.v1');
   function rememberScan(job_id){
     try{localStorage.setItem(pendingScanKey,JSON.stringify({
       job_id,full_capture:$('plFullCapture').checked,created_at:Date.now()
@@ -2483,7 +2484,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     finally{state.busy=false;$('plSyncBtn').disabled=false;}
   }
 
-  const collapsedRanks=new Set((()=>{try{return JSON.parse(localStorage.getItem('lastwar.playerList.collapsedRanks.v1')||'[]');}catch{return [];}})());
+  const collapsedRanks=new Set((()=>{try{return JSON.parse(localStorage.getItem(window.workspaceKey('lastwar.playerList.collapsedRanks.v1'))||'[]');}catch{return [];}})());
   function formatTablePower(player){
     const power=player.power ?? (player.power_millions==null?null:Math.round(player.power_millions*1000000));
     if(power==null)return '—';
@@ -2586,13 +2587,13 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
     const btn=event.target.closest('[data-rank-toggle]');if(!btn)return;
     const rank=btn.dataset.rankToggle;
     if(collapsedRanks.has(rank))collapsedRanks.delete(rank);else collapsedRanks.add(rank);
-    try{localStorage.setItem('lastwar.playerList.collapsedRanks.v1',JSON.stringify([...collapsedRanks]));}catch{}
+    try{localStorage.setItem(window.workspaceKey('lastwar.playerList.collapsedRanks.v1'),JSON.stringify([...collapsedRanks]));}catch{}
     renderDirectory();
   });
   $('plSearch').addEventListener('input',renderDirectory);
   $('plFilter').addEventListener('change',renderDirectory);
   window.playerListRefresh=loadDirectory;
-  try{localStorage.removeItem('lastwar.playerList.pendingScan.v1');}catch{}
+  try{localStorage.removeItem(window.workspaceKey('lastwar.playerList.pendingScan.v1'));}catch{}
   status();loadDirectory();
 })();
 
