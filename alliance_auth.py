@@ -36,6 +36,13 @@ ACCOUNT_SCHEMA = (
         KEY idx_session_account (account_id), KEY idx_session_expiry (expires_at),
         FOREIGN KEY (account_id) REFERENCES alliance_accounts(id)
     ) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS alliance_support_sessions (
+        session_hash BINARY(32) PRIMARY KEY, target_id BIGINT UNSIGNED NOT NULL,
+        alliance_id BIGINT UNSIGNED NOT NULL, expires_at DATETIME(6) NOT NULL,
+        FOREIGN KEY (session_hash) REFERENCES alliance_sessions(token_hash) ON DELETE CASCADE,
+        FOREIGN KEY (target_id) REFERENCES alliance_accounts(id),
+        FOREIGN KEY (alliance_id) REFERENCES alliance_workspaces(id)
+    ) ENGINE=InnoDB""",
     """CREATE TABLE IF NOT EXISTS alliance_login_attempts (
         fingerprint BINARY(32) PRIMARY KEY, attempts INT UNSIGNED NOT NULL,
         started_at DATETIME(6) NOT NULL
@@ -103,6 +110,8 @@ def csrf_check(request):
 
 
 def audit(cursor, alliance_id, actor, action, details):
+    if actor and actor.get("support_actor_name"):
+        details = {**details, "support_actor": actor["support_actor_name"], "support_actor_id": actor["support_actor_id"]}
     cursor.execute("""INSERT INTO alliance_audit_log
         (alliance_id, actor_id, actor_name, action, details) VALUES (%s,%s,%s,%s,%s)""",
         (alliance_id, actor["id"] if actor else None,
@@ -114,10 +123,19 @@ def current_account(connect_db, request):
     if len(token) < 30 or len(token) > 128:
         return None
     with connect_db() as conn, conn.cursor() as cur:
-        cur.execute("""SELECT a.id,a.username,a.display_name,a.platform_admin,a.setup_required
+        cur.execute("""SELECT a.id,a.username,a.display_name,a.platform_admin,a.setup_required,
+            target.id AS support_target_id,target.username AS support_target_username,
+            target.display_name AS support_target_name
             FROM alliance_sessions s JOIN alliance_accounts a ON a.id=s.account_id
+            LEFT JOIN alliance_support_sessions ss ON ss.session_hash=s.token_hash AND ss.expires_at>UTC_TIMESTAMP(6)
+            LEFT JOIN alliance_accounts target ON target.id=ss.target_id AND a.platform_admin=TRUE
             WHERE s.token_hash=%s AND s.expires_at>UTC_TIMESTAMP(6)""", (token_hash(token),))
-        return cur.fetchone()
+        account=cur.fetchone()
+        if account and account["support_target_id"]:
+            return {"id":account["support_target_id"], "username":account["support_target_username"],
+                "display_name":account["support_target_name"], "platform_admin":False, "setup_required":False,
+                "support_actor_id":account["id"], "support_actor_name":account["display_name"]}
+        return account
 
 
 def require_account(connect_db, request):
@@ -171,6 +189,15 @@ class Login(BaseModel):
 
 class PasswordChange(BaseModel):
     current_password: str = Field(max_length=128)
+    new_password: str = Field(max_length=128)
+
+
+class SupportRequest(BaseModel):
+    username: str = Field(max_length=40)
+    support_reason: str = Field(min_length=1, max_length=240)
+
+
+class SupportPassword(SupportRequest):
     new_password: str = Field(max_length=128)
 
 
@@ -273,7 +300,95 @@ def install_accounts(app, connect_db):
                 WHERE m.account_id=%s ORDER BY w.name""", (account["id"],))
             workspaces = cur.fetchall()
         return {"username":account["username"], "display_name":account["display_name"],
-                "platform_admin":bool(account["platform_admin"]), "workspaces":workspaces}
+                "platform_admin":bool(account["platform_admin"]), "workspaces":workspaces,
+                "support_actor":account.get("support_actor_name")}
+
+    def platform_admin(request):
+        actor=require_account(connect_db,request)
+        if not actor["platform_admin"] or actor.get("support_actor_id"):
+            raise HTTPException(403,"Platform admin access is required.")
+        return actor
+
+    @router.get("/platform/alliances")
+    def platform_alliances(request: Request):
+        platform_admin(request)
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute("""SELECT w.slug,w.name,w.tag,w.server_number,a.username,a.display_name,a.platform_admin,m.role
+                FROM alliance_workspaces w LEFT JOIN alliance_memberships m ON m.alliance_id=w.id
+                LEFT JOIN alliance_accounts a ON a.id=m.account_id
+                ORDER BY w.server_number,w.name,a.display_name""")
+            return {"alliances":cur.fetchall()}
+
+    @router.post("/platform/alliances/{slug}/support")
+    def start_support(slug: str, body: SupportRequest, request: Request):
+        csrf_check(request)
+        actor=platform_admin(request)
+        reason=body.support_reason.strip()
+        if not reason: raise HTTPException(422,"Enter a support reason.")
+        username=normalize_username(body.username)
+        with connect_db() as conn, conn.cursor() as cur:
+            workspace=workspace_by_slug(cur,slug)
+            cur.execute("""SELECT a.id,a.display_name FROM alliance_accounts a JOIN alliance_memberships m
+                ON m.account_id=a.id WHERE m.alliance_id=%s AND a.username=%s AND a.platform_admin=FALSE""",
+                (workspace["id"],username))
+            target=cur.fetchone()
+            if not target: raise HTTPException(404,"Alliance user not found.")
+            cur.execute("""INSERT INTO alliance_support_sessions (session_hash,target_id,alliance_id,expires_at)
+                VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE target_id=VALUES(target_id),
+                alliance_id=VALUES(alliance_id),expires_at=VALUES(expires_at)""",
+                (token_hash(request.cookies[COOKIE_NAME]),target["id"],workspace["id"],utcnow()+timedelta(minutes=30)))
+            details={"username":username,"reason":reason}
+            cur.execute("INSERT INTO platform_audit_log (actor_id,alliance_id,action,details) VALUES (%s,%s,%s,%s)",
+                (actor["id"],workspace["id"],"support_started",json.dumps(details)))
+            audit(cur,workspace["id"],actor,"support_started",details)
+            conn.commit()
+        return {"slug":slug}
+
+    @router.post("/platform/support/stop")
+    def stop_support(request: Request):
+        csrf_check(request)
+        token=request.cookies.get(COOKIE_NAME,"")
+        if not token: raise HTTPException(401,"Sign in to continue.")
+        with connect_db() as conn, conn.cursor() as cur:
+            cur.execute("""SELECT a.id,a.display_name,ss.alliance_id,t.username FROM alliance_sessions s
+                JOIN alliance_accounts a ON a.id=s.account_id AND a.platform_admin=TRUE
+                JOIN alliance_support_sessions ss ON ss.session_hash=s.token_hash
+                JOIN alliance_accounts t ON t.id=ss.target_id
+                WHERE s.token_hash=%s AND s.expires_at>UTC_TIMESTAMP(6) FOR UPDATE""",(token_hash(token),))
+            row=cur.fetchone()
+            if not row: raise HTTPException(403,"No support session is active.")
+            cur.execute("DELETE FROM alliance_support_sessions WHERE session_hash=%s",(token_hash(token),))
+            details={"username":row["username"]}
+            cur.execute("INSERT INTO platform_audit_log (actor_id,alliance_id,action,details) VALUES (%s,%s,%s,%s)",
+                (row["id"],row["alliance_id"],"support_ended",json.dumps(details)))
+            audit(cur,row["alliance_id"],row,"support_ended",details)
+            conn.commit()
+        return {"ok":True}
+
+    @router.post("/platform/alliances/{slug}/reset-password")
+    def support_password(slug: str, body: SupportPassword, request: Request):
+        csrf_check(request)
+        actor=platform_admin(request)
+        reason=body.support_reason.strip()
+        if not reason: raise HTTPException(422,"Enter a support reason.")
+        username=normalize_username(body.username)
+        validate_password(body.new_password)
+        with HASH_LIMIT: encoded=PASSWORDS.hash(body.new_password)
+        with connect_db() as conn, conn.cursor() as cur:
+            workspace=workspace_by_slug(cur,slug)
+            cur.execute("""SELECT a.id FROM alliance_accounts a JOIN alliance_memberships m ON m.account_id=a.id
+                WHERE m.alliance_id=%s AND a.username=%s AND a.platform_admin=FALSE FOR UPDATE""",(workspace["id"],username))
+            target=cur.fetchone()
+            if not target: raise HTTPException(404,"Alliance user not found.")
+            cur.execute("""UPDATE alliance_accounts SET password_hash=%s,setup_required=FALSE,setup_token_hash=NULL,
+                setup_expires_at=NULL,setup_device_hash=NULL WHERE id=%s""",(encoded,target["id"]))
+            cur.execute("DELETE FROM alliance_sessions WHERE account_id=%s",(target["id"],))
+            details={"username":username,"reason":reason}
+            cur.execute("INSERT INTO platform_audit_log (actor_id,alliance_id,action,details) VALUES (%s,%s,%s,%s)",
+                (actor["id"],workspace["id"],"password_reset",json.dumps(details)))
+            audit(cur,workspace["id"],actor,"support_password_reset",details)
+            conn.commit()
+        return {"ok":True}
 
     @router.get("/avatar")
     def get_avatar(request: Request):
@@ -332,6 +447,8 @@ def install_accounts(app, connect_db):
     def change_password(body: PasswordChange, request: Request, response: Response):
         csrf_check(request)
         actor = require_account(connect_db, request)
+        if actor.get("support_actor_id"):
+            raise HTTPException(403, "Exit support mode to manage passwords.")
         validate_password(body.new_password)
         with connect_db() as conn, conn.cursor() as cur:
             cur.execute("SELECT password_hash FROM alliance_accounts WHERE id=%s FOR UPDATE", (actor["id"],))

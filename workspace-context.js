@@ -69,6 +69,15 @@
         }
       });
     }
+    originalFetch('/api/auth/me',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(account=>{
+      if(!account?.support_actor)return;
+      const banner=document.createElement('div');banner.setAttribute('role','status');
+      banner.style.cssText='padding:12px;margin:12px 0;background:#ffe3a3;color:#241800;border-radius:8px;font-weight:700';
+      banner.append(document.createTextNode('Support mode: viewing as '+account.display_name+' ('+account.username+'). '));
+      const button=document.createElement('button');button.type='button';button.textContent='Return to platform admin';
+      button.onclick=async()=>{const response=await originalFetch('/api/auth/platform/support/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});if(response.ok)location.href='/account';else alert('Could not exit support mode.');};
+      banner.append(button);document.querySelector('main')?.prepend(banner);
+    }).catch(()=>{});
     const exportLink=document.getElementById('plExport');
     if(exportLink)exportLink.href=window.workspaceApi('/api/player-list/export.csv');
     const train=new URLSearchParams(location.search).get('train');

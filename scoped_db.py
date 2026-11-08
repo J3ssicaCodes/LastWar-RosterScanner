@@ -136,6 +136,8 @@ class WorkspaceConnection(Connection):
         if self.writes:
             actor = self.workspace_scope.get("actor")
             details = {"counts": self.writes}
+            if actor and actor.get("support_actor_id"):
+                details.update(support_actor=actor["support_actor_name"], support_actor_id=actor["support_actor_id"])
             if self.workspace_scope.get("job_id"):
                 details["job_id"] = self.workspace_scope["job_id"]
             with super().cursor(DictCursor) as cursor:

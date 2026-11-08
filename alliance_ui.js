@@ -90,6 +90,13 @@
       const result=await response.json();
       if(!response.ok)throw Error(result.detail||'Could not sign in.');
       history.replaceState(null,'',location.pathname);
+      const profile=await fetch('/api/auth/me',{cache:'no-store'});
+      if(!profile.ok)throw Error('Signed in, but your account could not be loaded. Try again.');
+      const account=await profile.json();
+      if(!account.workspaces.some(workspace=>workspace.slug===slug)){
+        $('loginError').textContent='Signed in, but this account does not have leadership access to this alliance. Open Account to see your alliances.';
+        const accountLink=document.createElement('a');accountLink.href='/account';accountLink.textContent=' Open Account';$('loginError').append(accountLink);return;
+      }
       location.href='/a/'+slug+'/manage';
     }catch(error){$('loginError').textContent=error.message;}
   };

@@ -76,6 +76,8 @@
     $('pushSection').hidden=!account;
     $('myClaimsSection').hidden=!account;
     $('platformSection').hidden=!account?.platform_admin;
+    $('supportBanner').hidden=!account?.support_actor;
+    if(account?.support_actor)$('supportIdentity').textContent='Support mode: viewing as '+account.display_name+' ('+account.username+')';
     if(!account)return;
     loadAvatar();
     preparePush();
@@ -83,7 +85,7 @@
     await loadMyClaims();
     $('accountName').textContent=account.display_name+' · '+account.username;
     $('platformRole').textContent=account.platform_admin?'Platform Admin':'';
-    if(account.platform_admin)await loadReferrals();
+    if(account.platform_admin){await loadReferrals();await loadPlatformAlliances();}
     $('workspaces').replaceChildren();
     for(const workspace of account.workspaces){
       const li=document.createElement('li');
@@ -120,6 +122,28 @@
     try{await api('/avatar',undefined,'DELETE');status.textContent='Profile picture removed.';status.className='message';loadAvatar();avatarChanged();}
     catch(error){status.textContent=error.message;status.className='message error';}
   };
+  $('endSupport').onclick=async()=>{try{await api('/platform/support/stop',{});navigate('/account');}catch(e){message(e.message,true);}};
+  async function loadPlatformAlliances(){
+    const data=await api('/platform/alliances',undefined,'GET'), container=$('platformAlliances');
+    container.replaceChildren();
+    let last=null;
+    for(const row of data.alliances){
+      if(last!==row.slug){const heading=document.createElement('h4');heading.textContent=row.name+' ['+row.tag+'] · Server '+row.server_number;container.append(heading);last=row.slug;}
+      if(!row.username){const label=document.createElement('p');label.textContent='No leadership accounts';container.append(label);continue;}
+      const section=document.createElement('div'),title=document.createElement('p');
+      title.textContent=row.display_name+' · '+row.username+' · '+row.role;section.append(title);
+      if(row.platform_admin){const note=document.createElement('p');note.textContent='Platform admin account';section.append(note);container.append(section);continue;}
+      const form=document.createElement('form'),reason=document.createElement('input'),pass=document.createElement('input');
+      reason.placeholder='Support reason';reason.required=true;reason.maxLength=240;reason.setAttribute('aria-label','Support reason for '+row.username);
+      pass.type='password';pass.placeholder='New password (12+ characters)';pass.minLength=12;pass.maxLength=128;pass.autocomplete='new-password';pass.setAttribute('aria-label','New password for '+row.username);
+      const view=document.createElement('button'),reset=document.createElement('button');
+      view.type='button';view.textContent='View as user';reset.type='button';reset.textContent='Reset password';
+      view.onclick=async()=>{if(!form.reportValidity())return;try{await api('/platform/alliances/'+row.slug+'/support',{username:row.username,support_reason:reason.value});navigate('/a/'+row.slug+'/manage');}catch(e){message(e.message,true);}};
+      reset.onclick=async()=>{if(!form.reportValidity()||!pass.value){message('Enter a support reason and a new password.',true);return;}try{await api('/platform/alliances/'+row.slug+'/reset-password',{username:row.username,support_reason:reason.value,new_password:pass.value});pass.value='';message('Password reset for '+row.username+'. They can sign in with the new password.');}catch(e){message(e.message,true);}};
+      form.append(reason,pass,view,reset);section.append(form);container.append(section);
+    }
+    if(!data.alliances.length)container.textContent='No alliances found.';
+  }
   async function loadReferrals(){
     const data=await api('/referrals',undefined,'GET');
     $('platformReferrals').replaceChildren();
