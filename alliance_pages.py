@@ -47,12 +47,12 @@ def install_alliance_pages(app, connect_db):
     def manifest(slug: str):
         with connect_db() as conn, conn.cursor() as cur:
             workspace=workspace_by_slug(cur,slug)
-        return JSONResponse({"id":"/a/"+slug,"name":workspace["name"]+" Alliance Tools",
-            "short_name":workspace["tag"]+" Tools","start_url":"/a/"+slug,"scope":"/",
+        return JSONResponse({"id":"/a/"+slug,"name":"Alliance Tools",
+            "short_name":"Alliance Tools","start_url":"/a/"+slug,"scope":"/",
             "display":"standalone","background_color":"#111326","theme_color":"#17142c",
             "icons":[{"src":"/alliance-icon-192.png?v=2","sizes":"192x192","type":"image/png"},
                      {"src":"/alliance-icon-512.png?v=2","sizes":"512x512","type":"image/png"}]},
-            media_type="application/manifest+json")
+            media_type="application/manifest+json",headers={"Cache-Control":"no-cache"})
 
     @app.get("/service-worker.js")
     def service_worker():
