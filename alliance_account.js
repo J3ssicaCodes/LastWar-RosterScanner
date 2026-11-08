@@ -126,13 +126,17 @@
   async function loadPlatformAlliances(){
     const data=await api('/platform/alliances',undefined,'GET'), container=$('platformAlliances');
     container.replaceChildren();
-    let last=null;
+    let last=null,allianceSection=null;
     for(const row of data.alliances){
-      if(last!==row.slug){const heading=document.createElement('h4');heading.textContent=row.name+' ['+row.tag+'] · Server '+row.server_number;container.append(heading);last=row.slug;}
-      if(!row.username){const label=document.createElement('p');label.textContent='No leadership accounts';container.append(label);continue;}
-      const section=document.createElement('div'),title=document.createElement('p');
+      if(last!==row.slug){
+        allianceSection=document.createElement('details');allianceSection.className='platform-details';
+        const heading=document.createElement('summary');heading.textContent=row.name+' ['+row.tag+'] · Server '+row.server_number;
+        allianceSection.append(heading);container.append(allianceSection);last=row.slug;
+      }
+      if(!row.username){const label=document.createElement('p');label.textContent='No leadership accounts';allianceSection.append(label);continue;}
+      const section=document.createElement('details'),title=document.createElement('summary');section.className='platform-details';
       title.textContent=row.display_name+' · '+row.username+' · '+row.role;section.append(title);
-      if(row.platform_admin){const note=document.createElement('p');note.textContent='Platform admin account';section.append(note);container.append(section);continue;}
+      if(row.platform_admin){const note=document.createElement('p');note.textContent='Platform admin account';section.append(note);allianceSection.append(section);continue;}
       const form=document.createElement('form'),reason=document.createElement('input'),pass=document.createElement('input');
       reason.placeholder='Support reason';reason.required=true;reason.maxLength=240;reason.setAttribute('aria-label','Support reason for '+row.username);
       pass.type='password';pass.placeholder='New password (12+ characters)';pass.minLength=12;pass.maxLength=128;pass.autocomplete='new-password';pass.setAttribute('aria-label','New password for '+row.username);
@@ -140,7 +144,7 @@
       view.type='button';view.textContent='View as user';reset.type='button';reset.textContent='Reset password';
       view.onclick=async()=>{if(!form.reportValidity())return;try{await api('/platform/alliances/'+row.slug+'/support',{username:row.username,support_reason:reason.value});navigate('/a/'+row.slug+'/manage');}catch(e){message(e.message,true);}};
       reset.onclick=async()=>{if(!form.reportValidity()||!pass.value){message('Enter a support reason and a new password.',true);return;}try{await api('/platform/alliances/'+row.slug+'/reset-password',{username:row.username,support_reason:reason.value,new_password:pass.value});pass.value='';message('Password reset for '+row.username+'. They can sign in with the new password.');}catch(e){message(e.message,true);}};
-      form.append(reason,pass,view,reset);section.append(form);container.append(section);
+      form.append(reason,pass,view,reset);section.append(form);allianceSection.append(section);
     }
     if(!data.alliances.length)container.textContent='No alliances found.';
   }
