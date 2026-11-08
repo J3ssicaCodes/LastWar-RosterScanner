@@ -47,6 +47,13 @@ def install_alliance_pages(app, connect_db):
     def help_script():
         return FileResponse(BASE/"alliance_help.js",media_type="application/javascript",headers={"Cache-Control":"no-cache"})
 
+    @app.get("/help-images/{name}.webp")
+    def help_image(name: str):
+        if name not in {"viewer", "signin"}:
+            raise HTTPException(404, "Image not found.")
+        return FileResponse(BASE / "help-images" / f"{name}.webp", media_type="image/webp",
+                            headers={"Cache-Control": "public, max-age=86400"})
+
     @app.get("/a/{slug}/manifest.webmanifest")
     def manifest(slug: str):
         with connect_db() as conn, conn.cursor() as cur:

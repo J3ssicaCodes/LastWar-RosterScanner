@@ -20,5 +20,7 @@ COPY workspace_migration.py workspace_bootstrap.py scoped_db.py workspace_securi
      alliance_claims.py alliance_leadership.py alliance_push.py alliance_analytics.py alliance_viewer.html alliance_ui.js alliance_account.html alliance_account.js \
      workspace-context.js alliance_help.js service-worker.js alliance-icon-192.png alliance-icon-512.png ./
 
+COPY help-images ./help-images
+
 EXPOSE 10000
 CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1"]
