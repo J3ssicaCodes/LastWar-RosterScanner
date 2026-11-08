@@ -28,6 +28,13 @@
     if(window.parent!==window&&destination.origin===location.origin&&destination.pathname.startsWith('/a/'))window.top.location.href=destination.href;
     else location.href=destination.href;
   }
+  function revealTarget(element){
+    if(!element)return;
+    for(let parent=element.parentElement;parent;parent=parent.parentElement){
+      if(parent.tagName==='DETAILS')parent.open=true;
+    }
+    element.scrollIntoView();
+  }
   function avatarChanged(){if(window.parent!==window)window.parent.postMessage({type:'alliance-avatar-changed'},location.origin);}
   async function inspect(){
     if(!inviteCode)return null;
@@ -79,6 +86,7 @@
     $('supportBanner').hidden=!account?.support_actor;
     if(account?.support_actor)$('supportIdentity').textContent='Support mode: viewing as '+account.display_name+' ('+account.username+')';
     if(!account)return;
+    if(new URLSearchParams(location.search).has('notifications'))$('notificationSection').querySelector('details').open=true;
     loadAvatar();
     preparePush();
     await loadNotifications();
@@ -247,7 +255,7 @@
     }
     if(!data.occurrences.length)$('taskItems').textContent='No tasks in this view.';
     const id=new URLSearchParams(location.search).get('task');
-    if(id)document.getElementById('task-'+id)?.scrollIntoView();
+    if(id)revealTarget(document.getElementById('task-'+id));
   }
   async function loadWall(){
     const data=await api('/alliances/'+alliance+'/wall',undefined,'GET');
@@ -336,7 +344,7 @@
     }
     $('myClaimsSection').hidden=!data.claims.length;
     const claimId=new URLSearchParams(location.search).get('claim');
-    if(claimId&&!alliance)document.getElementById('my-claim-'+claimId)?.scrollIntoView();
+    if(claimId&&!alliance)revealTarget(document.getElementById('my-claim-'+claimId));
   }
   async function loadClaims(member){
     const data=await api('/alliances/'+alliance+'/claims',undefined,'GET');
@@ -378,7 +386,7 @@
     }
     if(!data.claims.length)$('claimReviews').textContent='No player claims yet.';
     const claimId=new URLSearchParams(location.search).get('claim');
-    if(claimId)document.getElementById('claim-'+claimId)?.scrollIntoView();
+    if(claimId)revealTarget(document.getElementById('claim-'+claimId));
   }
   async function loadLeadership(member){
     $('leadershipSection').hidden=false;
