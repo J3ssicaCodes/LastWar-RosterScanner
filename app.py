@@ -269,6 +269,11 @@ def health():
 @app.get('/api/player-list')
 def list_players():
     try:
+        scope=current_workspace.get() or {}
+        try:
+            today=datetime.now(ZoneInfo(scope.get('timezone') or 'UTC')).date()
+        except (ZoneInfoNotFoundError, ValueError):
+            today=datetime.now(ZoneInfo('UTC')).date()
         with db_connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("""SELECT id, player_name AS name, player_rank AS `rank`,
@@ -282,12 +287,18 @@ def list_players():
                     power_millions IS NULL, power_millions DESC, LOWER(player_name)
                     LIMIT 10000""")
                 rows=cur.fetchall()
-        scope=current_workspace.get() or {}
-        try:
-            today=datetime.now(ZoneInfo(scope.get('timezone') or 'UTC')).date()
-        except (ZoneInfoNotFoundError, ValueError):
-            today=datetime.now(ZoneInfo('UTC')).date()
+                last_train={}
+                for role in ('conductor','vip'):
+                    cur.execute(f'''SELECT {role}_id AS player_id, MAX(assignment_date) AS last_date
+                                    FROM train_assignments WHERE assignment_date<=%s AND {role}_id IS NOT NULL
+                                    GROUP BY {role}_id''',(today,))
+                    for assignment in cur.fetchall():
+                        last_train.setdefault(assignment['player_id'],{})[role]=assignment['last_date']
         for row in rows:
+            dates=last_train.get(row['id'],{})
+            for role in ('conductor','vip'):
+                value=dates.get(role)
+                row['last_train_'+role]=value.isoformat() if value else None
             row['has_t11'] = bool(row['has_t11'])
             start, end = row['away_start'], row['away_end']
             row['away_today'] = bool(start and end and start <= today <= end)

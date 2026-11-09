@@ -435,7 +435,7 @@ html[data-palette="pink"][data-theme="light"] tbody tr:nth-child(even){backgroun
     <div class="pl-title-row"><div><div class="eyebrow">Shared database</div><h2 id="plDirectoryTitle">Current player list</h2></div><div class="pl-dir-actions"><button class="btn" type="button" id="plRefresh">↻ Refresh</button><a class="btn" href="/api/player-list/export.csv" id="plExport">↓ Export CSV</a></div></div>
     <div class="pl-summary"><div><small>Total</small><strong id="plTotal">0</strong></div><div><small>New</small><strong id="plNew">0</strong></div><div><small>Possibly removed</small><strong id="plMissing">0</strong></div><div><small>Active</small><strong id="plActive">0</strong></div></div>
     <div class="pl-filters"><input id="plSearch" type="search" placeholder="Search player names…" aria-label="Search player names"><select id="plFilter" aria-label="Filter players by status"><option value="all">All players</option><option value="new">New players</option><option value="removed">Possibly removed</option><option value="active">Active</option></select></div>
-    <p class="workspace-table-hint" hidden>Scroll horizontally for more columns.</p><div class="pl-table-wrap" data-scroll-table role="region" aria-labelledby="plDirectoryTitle"><table class="pl-table"><thead><tr id="plSortHeaders"><th scope="col"><button type="button" class="sort-column" data-sort="photo">Photo <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="name">Player name <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="power">Power <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="kills">Kills <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="donations">Donations <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="hq_level">HQ <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="birthday">Birthday <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="status">Status <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="8" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
+    <p class="workspace-table-hint" hidden>Scroll horizontally for more columns.</p><div class="pl-table-wrap" data-scroll-table role="region" aria-labelledby="plDirectoryTitle"><table class="pl-table"><thead><tr id="plSortHeaders"><th scope="col"><button type="button" class="sort-column" data-sort="photo">Photo <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="name">Player name <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="power">Power <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="kills">Kills <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="donations">Donations <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="hq_level">HQ <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="birthday">Birthday <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="last_train_conductor">Last conductor <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="last_train_vip">Last VIP <span aria-hidden="true">↕</span></button></th><th scope="col"><button type="button" class="sort-column" data-sort="status">Status <span aria-hidden="true">↕</span></button></th></tr></thead><tbody id="plDirectoryBody"><tr><td colspan="10" class="pl-empty">Connecting to player database…</td></tr></tbody></table></div>
     <p class="pl-hint">Players are matched by their names, ignoring capitalization and spaces. Power, Kills and Donations uploads update this master record. Stats absent from an upload and birthdays are preserved.</p>
   </section>
 </section>
@@ -2599,7 +2599,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       const avatar=p.has_avatar?`<img class="pl-avatar" loading="lazy" src="${escape(p.avatar_url)}?v=${encodeURIComponent(p.avatar_updated_at||'1')}" alt="${escape(p.name)} video portrait">`:'<span class="pl-avatar-empty" title="No video portrait yet">♡</span>';
       return `<tr data-player-profile="${p.id}"><td>${avatar}</td><td class="pl-player-name"><button type="button" class="player-profile-link" data-player-profile="${p.id}" aria-label="View ${escape(p.name)} profile">${escape(p.name)}</button>${p.away_today?` <span role="img" aria-label="Away" title="Away ${escape(p.away_start)} through ${escape(p.away_end)}">💤</span>`:''}</td><td>${escape(formatTablePower(p))}</td><td>${p.kills!=null?escape(Number(p.kills).toLocaleString()):'—'}</td><td>${p.donations!=null?escape(Number(p.donations).toLocaleString()):'—'}</td><td>${p.hq_level==null?'—':'Lv.'+escape(p.hq_level)}</td>
        <td><div class="pl-birthday-wrap"><span class="pl-birthday-date" title="${escape(p.birthday||'Birthday not set')}">${escape(birthday)}</span><button type="button" class="pl-calendar-btn" data-player-birthday="${p.id}" aria-label="Edit ${escape(p.name)} birthday" title="Set birthday">📅</button></div></td>
-       <td><span class="pl-status ${cls}">${status}</span></td></tr>`;
+       <td>${escape(p.last_train_conductor||'—')}</td><td>${escape(p.last_train_vip||'—')}</td><td><span class="pl-status ${cls}">${status}</span></td></tr>`;
     };
     const today=new Date();today.setHours(0,0,0,0);
     const sortValue=(p,key)=>{
@@ -2614,10 +2614,10 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       const group=sortDirectory(selected.filter(p=>p.rank===rank),sortValue);
       if(!group.length)continue;
       const collapsed=collapsedRanks.has(rank);
-      html+=`<tr class="pl-rank-heading"><th colspan="8"><button type="button" data-rank-toggle="${rank}" aria-expanded="${!collapsed}"><span><strong>${rank}</strong> · ${group.length} players</span><small>${collapsed?'▸ Expand':'▾ Collapse'}</small></button></th></tr>`;
+      html+=`<tr class="pl-rank-heading"><th colspan="10"><button type="button" data-rank-toggle="${rank}" aria-expanded="${!collapsed}"><span><strong>${rank}</strong> · ${group.length} players</span><small>${collapsed?'▸ Expand':'▾ Collapse'}</small></button></th></tr>`;
       if(!collapsed)html+=group.map(renderPlayer).join('');
     }
-    $('plDirectoryBody').innerHTML=html||'<tr><td colspan="8" class="pl-empty">No players to display.</td></tr>';
+    $('plDirectoryBody').innerHTML=html||'<tr><td colspan="10" class="pl-empty">No players to display.</td></tr>';
   }
   async function loadDirectory(){
     try{
@@ -2625,7 +2625,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
       state.players=result.players||[];
       renderDirectory();
     }catch(err){
-      $('plDirectoryBody').innerHTML='<tr><td colspan="8" class="pl-empty">Could not load the Player List. Try Refresh.</td></tr>';
+      $('plDirectoryBody').innerHTML='<tr><td colspan="10" class="pl-empty">Could not load the Player List. Try Refresh.</td></tr>';
     }
   }
   $('plDrop').addEventListener('click',()=>{$('plFiles').click();});
@@ -2641,6 +2641,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
   $('plAddRow').addEventListener('click',()=>{state.candidates.push({name:'',rank:'R3',power_millions:null,hq_level:null,included:true});renderReview();});
   $('plSyncBtn').addEventListener('click',sync);
   $('plRefresh').addEventListener('click',()=>{status();loadDirectory();});
+  new MutationObserver(()=>{if(!$('playerListView').hidden){status();loadDirectory();}}).observe($('playerListView'),{attributes:true,attributeFilter:['hidden']});
   // A birthday is a month and day; no birth year is requested.
   const birthdayDialog=document.createElement('dialog');
   birthdayDialog.style.cssText='max-width:94vw;border:1px solid var(--stroke);border-radius:14px;padding:24px;background:var(--panel);color:var(--text)';
@@ -2676,7 +2677,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
   $('plFilter').addEventListener('change',renderDirectory);
   window.playerListRefresh=loadDirectory;
   try{localStorage.removeItem(window.workspaceKey('lastwar.playerList.pendingScan.v1'));}catch{}
-  status();loadDirectory();
+  if(!$('playerListView').hidden){status();loadDirectory();}
 })();
 
 </script>

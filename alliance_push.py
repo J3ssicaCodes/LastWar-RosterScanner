@@ -51,6 +51,10 @@ def dispatch_push(cursor):
     private=os.getenv("ALLIANCE_VAPID_PRIVATE_KEY","")
     if not private:
         return
+    subject=os.getenv("ALLIANCE_VAPID_SUBJECT","").strip() or "https://lastwar-rosterscanner.onrender.com"
+    parsed=urlsplit(subject)
+    if parsed.scheme == 'https' and parsed.netloc and parsed.path == '/' and not parsed.query and not parsed.fragment:
+        subject=subject[:-1]
     cursor.execute("""INSERT IGNORE INTO alliance_push_deliveries (notification_id,subscription_id)
         SELECT n.id,s.id FROM alliance_notifications n JOIN alliance_push_subscriptions s ON s.account_id=n.account_id
         WHERE n.created_at>=UTC_TIMESTAMP(6)-INTERVAL 1 DAY""")
@@ -64,7 +68,7 @@ def dispatch_push(cursor):
             if isinstance(info,str):info=json.loads(info)
             webpush(subscription_info=info,data=json.dumps({"title":"Alliance Tools",
                 "body":row["title"],"target":row["target"]}),vapid_private_key=private,
-                vapid_claims={"sub":os.getenv("ALLIANCE_VAPID_SUBJECT","https://lastwar-rosterscanner.onrender.com/")},
+                vapid_claims={"sub":subject},
                 ttl=86400,headers={"Topic":"alliance-"+str(row["id"])},timeout=8)
             cursor.execute("""UPDATE alliance_push_deliveries SET sent_at=UTC_TIMESTAMP(6)
                 WHERE notification_id=%s AND subscription_id=%s""",(row["id"],row["subscription_id"]))

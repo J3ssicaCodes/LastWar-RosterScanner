@@ -303,7 +303,8 @@
   });
   const view=$('vsPointsView');
   new MutationObserver(()=>{if(!view.hidden)refresh();}).observe(view,{attributes:true,attributeFilter:['hidden']});
-  window.addEventListener('focus',refresh);refresh();
+  window.addEventListener('focus',()=>{if(!view.hidden)refresh();});
+  if(!view.hidden)refresh();
   window.addEventListener('player-profile-updated',async()=>{
     try{const data=await api('/api/player-list');reviewNames.roster(data.players);refreshFocusedSuggestions();}catch{}
   });

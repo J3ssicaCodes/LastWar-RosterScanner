@@ -18,7 +18,6 @@ class PerformanceDB(SQLDatabase):
         self.db.create_function('LEAST',2,lambda a,b: min(a,b) if a and b else a or b)
         self.db.create_function('GREATEST',2,lambda a,b: max(a,b) if a and b else a or b)
         self.db.executescript('''CREATE TABLE `roster upload` (player_name TEXT,ocr_name TEXT);
-            CREATE TABLE train_assignments (conductor_id INTEGER,vip_id INTEGER);
             CREATE TABLE train_restrictions (player_id INTEGER PRIMARY KEY,reason TEXT);''')
 
     def cursor(self):

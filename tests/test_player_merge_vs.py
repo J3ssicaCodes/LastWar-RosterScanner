@@ -35,6 +35,7 @@ class SQLDatabase:
             CREATE TABLE vs_scan_rows (id INTEGER PRIMARY KEY,job_id TEXT,upload_date TEXT,
             score_date TEXT,weekday TEXT,player_name TEXT,points INTEGER,review_reasons TEXT,evidence_base64 TEXT,ocr_name TEXT);
             CREATE TABLE media_scan_jobs (id TEXT PRIMARY KEY,status TEXT,message TEXT,updated_at TEXT,updated_player_ids TEXT);
+            CREATE TABLE train_assignments (assignment_date TEXT,conductor_id INTEGER,vip_id INTEGER);
         ''')
     def __call__(self):return self
     def __enter__(self):return self
@@ -67,6 +68,7 @@ class Cursor:
             if 'upload_date' in row:row['upload_date']=date.fromisoformat(row['upload_date'])
             if row.get('score_date'):row['score_date']=date.fromisoformat(row['score_date'])
             if row.get('birthday'):row['birthday']=date.fromisoformat(row['birthday'])
+            if row.get('last_date'):row['last_date']=date.fromisoformat(row['last_date'])
             rows.append(row)
         return rows
     @property
@@ -109,6 +111,17 @@ class PlayerMergeTests(unittest.TestCase):
         app.update_birthday(player_id,app.BirthdayUpdate(birthday=None))
         row=self.db.db.execute('SELECT birthday,power FROM `player list`').fetchone()
         self.assertEqual(tuple(row),(None,123))
+
+    def test_last_train_dates_are_separate_and_exclude_future(self):
+        app.import_players(app.ImportData(players=[app.Member(name='Jess',rank='R4'),
+                                                  app.Member(name='Fur',rank='R3')]))
+        ids={row['player_name']:row['id'] for row in self.db.db.execute('SELECT id,player_name FROM `player list`')}
+        self.db.db.executemany('INSERT INTO train_assignments VALUES (?,?,?)',[
+            ('2020-01-01',ids['Jess'],ids['Fur']),('2020-02-02',ids['Fur'],ids['Jess']),
+            ('2020-03-03',ids['Jess'],None),('2999-01-01',ids['Jess'],ids['Jess'])])
+        rows={p['name']:p for p in app.list_players()['players']}
+        self.assertEqual((rows['Jess']['last_train_conductor'],rows['Jess']['last_train_vip']),('2020-03-03','2020-02-02'))
+        self.assertEqual((rows['Fur']['last_train_conductor'],rows['Fur']['last_train_vip']),('2020-02-02','2020-01-01'))
 
     def test_power_and_kills_history_keeps_changes(self):
         for power,kills in [(100,None),(None,20),(125,None),(125,None)]:

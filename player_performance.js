@@ -120,6 +120,6 @@
   picker.addEventListener('change',load);
   $('performanceMetric').addEventListener('change',renderGrowth);
   $('performanceSearch').addEventListener('input',renderTable);
-  window.addEventListener('player-profile-updated',load);
-  load();
+  window.addEventListener('player-profile-updated',()=>{if(!view.hidden)load();});
+  if(!view.hidden)load();
 })();

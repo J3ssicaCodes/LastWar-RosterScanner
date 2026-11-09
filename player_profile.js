@@ -119,7 +119,8 @@
       '<dl style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'+[
         ['Power',p.power==null?(p.power_millions==null?'—':number(p.power_millions)+'M'):number(p.power)],
         ['Kills',number(p.kills)],['Donations',number(p.donations)],['HQ',number(p.hq_level)],
-        ['Birthday',p.birthday||'—'],['Last seen',p.last_seen_at?new Date(p.last_seen_at+'Z').toLocaleDateString():'—']
+        ['Birthday',p.birthday||'—'],['Last seen',p.last_seen_at?new Date(p.last_seen_at+'Z').toLocaleDateString():'—'],
+        ['Last conductor',p.last_train_conductor||'—'],['Last VIP',p.last_train_vip||'—']
       ].map(([label,value])=>'<dt>'+label+'</dt><dd style="margin:0">'+esc(value)+'</dd>').join('')+'</dl>'+
       (edit?'':'<form class="player-extra" data-player-details><h3>Player details</h3><label><input type="checkbox" name="has_t11" '+(p.has_t11?'checked':'')+'> Has T11</label><label>Away from<input type="date" name="away_start" value="'+esc(p.away_start||'')+'"></label><label>Away through<input type="date" name="away_end" value="'+esc(p.away_end||'')+'"></label><label>Player notes<textarea name="notes" maxlength="5000">'+esc(p.player_notes||'')+'</textarea></label><button type="submit" class="btn primary">Save details</button><p data-details-status role="status"></p></form>')+
       (edit?'':'<p><label><input type="checkbox" data-train-restriction disabled> Disable train assignments</label> <span data-train-restriction-status role="status"></span></p><button type="button" class="btn" data-merge>Merge duplicate</button> <button type="button" class="btn" data-claim-vs>Claim VS entry</button> <button type="button" class="btn" data-archive-player>Archive player</button><p data-merge-message role="status" hidden></p>')+

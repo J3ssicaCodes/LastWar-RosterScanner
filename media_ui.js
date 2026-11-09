@@ -769,7 +769,10 @@
       section('Needs review',review)+section('Recent results',history.slice(0,15))+
       (!jobs.length?'<p class="media-queue-empty">No scans have been uploaded yet.</p>':'');
   }
-  async function refreshJobs(){
+  let jobsRefreshPromise=null;
+  let scanJobsBusy=false;
+  let lastJobsPoll=0;
+  async function refreshJobsOnce(){
     try{
       const {jobs=[]}=await getJson('/api/media/jobs');
       if(queueDialog.open)renderScanQueue(jobs);
@@ -805,6 +808,7 @@
         .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
       const waiting=jobs.filter(j=>j.status==='queued')
         .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+      scanJobsBusy=Boolean(active.length||waiting.length);
       const queuedCount=waiting.length;
       const queuedText=queuedCount?(' · '+queuedCount+' scan job'+(queuedCount===1?'':'s')+' waiting'):' · No jobs waiting';
       if(active.length){
@@ -825,11 +829,21 @@
       if(queueDialog.open)$('mediaQueueSummary').textContent='Unable to refresh. Check your connection and try again.';
     }
   }
+  function refreshJobs(){
+    if(!jobsRefreshPromise){
+      jobsRefreshPromise=refreshJobsOnce().finally(()=>{lastJobsPoll=Date.now();jobsRefreshPromise=null;});
+    }
+    return jobsRefreshPromise;
+  }
+  async function pollJobs(){
+    if(!document.hidden&&(scanJobsBusy||queueDialog.open||Date.now()-lastJobsPoll>=30000))await refreshJobs();
+    setTimeout(pollJobs,8000);
+  }
   window.refreshMediaUploads=()=>Promise.all([refreshJobs(),refreshPending(),refreshMissingPlayers()]);
   $('playerListTab').addEventListener('click',refreshMissingPlayers);
   window.addEventListener('focus',()=>refreshJobs());
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)window.refreshMediaUploads();});
-  setInterval(refreshJobs,8000);
+  setTimeout(pollJobs,8000);
   setInterval(()=>{if(queueDialog.open)tickScanTimers();},1000);
   window.loadServerStormRoster?.();
   window.refreshMediaUploads().then(()=>{
