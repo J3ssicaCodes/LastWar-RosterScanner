@@ -41,6 +41,8 @@ def _decode_video(command, seconds, progress):
     timeout.start()
     messages = []
     try:
+        register=getattr(progress,'register_process',None)
+        if register:register(process)
         for line in process.stdout:
             line = line.strip()
             if line.startswith('out_time_ms='):
@@ -60,6 +62,8 @@ def _decode_video(command, seconds, progress):
         if code:
             raise ValueError('Video decoding failed. Please try MP4/H.264 or screenshots.')
     finally:
+        unregister=getattr(progress,'unregister_process',None)
+        if unregister:unregister(process)
         timeout.cancel()
         if process.poll() is None:
             process.kill()

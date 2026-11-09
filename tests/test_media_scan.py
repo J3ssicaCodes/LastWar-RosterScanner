@@ -2,6 +2,10 @@
 import asyncio
 import io
 import unittest
+import threading
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 from fastapi import HTTPException, UploadFile
@@ -24,6 +28,7 @@ class Database:
         self.fail_staging = False
         self.players = []
         self.query = ''
+        self.jobs = {}
 
     def __call__(self):
         return self
@@ -50,6 +55,8 @@ class Database:
             self.execute(query,row)
 
     def fetchone(self):
+        if 'SELECT status,updated_at FROM media_scan_jobs' in self.query:
+            return self.jobs.get(self.statements[-1][1][0])
         return {'n': 1}
 
     def fetchall(self):
@@ -87,6 +94,7 @@ class MediaScanTests(unittest.TestCase):
         media.install_media_upload(self.app, self.db, self.importer, ImportData)
         router = self.app.include_router.call_args.args[0]
         self.upload = next(r.endpoint for r in router.routes if r.path == '/api/media/upload')
+        self.cancel = next(r.endpoint for r in router.routes if r.path == '/api/media/jobs/{job_id}/cancel')
         self.pool = Mock()
         self.patch_pool = patch.object(media, 'executor', self.pool)
         self.patch_pool.start()
@@ -112,6 +120,63 @@ class MediaScanTests(unittest.TestCase):
         self.assertEqual(staged[0][1:3], ('Test Player', 'R4'))
         self.assertTrue(any('status=%s' in q and args[0] == 'review' for q, args in self.db.statements))
         self.assertFalse(directory.exists())
+
+    def test_queued_cancel_does_not_start_ocr_or_save_results(self):
+        worker,job,dest,paths,directory=self.queued_worker()
+        self.db.jobs[job]={'status':'queued','updated_at':datetime.now(timezone.utc).replace(tzinfo=None)}
+        self.assertEqual(self.cancel(job)['status'],'cancelled')
+        worker(job,dest,paths,directory)
+        self.scanner.assert_not_called()
+        self.assertFalse(directory.exists())
+        self.assertFalse(any('INSERT INTO `roster upload`' in q for q,_ in self.db.statements))
+
+    def test_running_cancel_stops_before_saving(self):
+        worker,job,dest,paths,directory=self.queued_worker()
+        self.db.jobs[job]={'status':'scanning','updated_at':datetime.now(timezone.utc).replace(tzinfo=None)}
+        entered=threading.Event();resume=threading.Event()
+        def scan(paths, report, *args):
+            entered.set()
+            self.assertTrue(resume.wait(3))
+            report(50,100,'working')
+            raise AssertionError('Cancelled scan continued')
+        self.scanner.side_effect=scan
+        thread=threading.Thread(target=worker,args=(job,dest,paths,directory));thread.start()
+        self.assertTrue(entered.wait(3))
+        self.assertEqual(self.cancel(job)['status'],'cancelling')
+        resume.set();thread.join(3)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(directory.exists())
+        self.assertFalse(any('INSERT INTO `roster upload`' in q for q,_ in self.db.statements))
+        self.assertTrue(any('status=%s' in q and args and args[0]=='cancelled' for q,args in self.db.statements))
+
+    def test_running_cancel_terminates_ocr_subprocess(self):
+        worker,job,dest,paths,directory=self.queued_worker()
+        self.db.jobs[job]={'status':'scanning','updated_at':datetime.now(timezone.utc).replace(tzinfo=None)}
+        process=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'])
+        self.addCleanup(lambda: process.kill() if process.poll() is None else None)
+        control=media.job_controls[job]
+        control.register_process(process)
+        self.assertEqual(self.cancel(job)['status'],'cancelling')
+        self.assertNotEqual(process.wait(timeout=3),0)
+        control.unregister_process(process)
+        worker(job,dest,paths,directory)
+
+    def test_finishing_scan_cannot_be_cancelled_after_saving_begins(self):
+        worker,job,dest,paths,directory=self.queued_worker()
+        media.job_controls[job].begin_finishing()
+        with self.assertRaises(HTTPException) as error:self.cancel(job)
+        self.assertEqual(error.exception.status_code,409)
+        media.job_controls.pop(job,None)
+
+    def test_old_orphaned_scan_can_be_cleared(self):
+        job='old-job'
+        self.db.jobs[job]={'status':'scanning','updated_at':datetime.now(timezone.utc).replace(tzinfo=None)-timedelta(minutes=10)}
+        self.assertEqual(self.cancel(job)['status'],'cancelled')
+
+    def test_recent_unknown_scan_is_not_assumed_abandoned(self):
+        self.db.jobs['unknown']={'status':'scanning','updated_at':datetime.now(timezone.utc).replace(tzinfo=None)}
+        with self.assertRaises(HTTPException) as error:self.cancel('unknown')
+        self.assertEqual(error.exception.status_code,409)
 
     def test_only_video_stages_missing_players_and_ignores_archived_players(self):
         self.db.players=[{'id':7,'player_name':'Missing Player','player_rank':'R4','archived':False},

@@ -133,7 +133,7 @@
   };
   $('mediaQueueRefresh').onclick=()=>refreshJobs();
   $('mediaClearHistory').onclick=async()=>{
-    if(!confirm('Clear completed, approved, failed and interrupted scan history? Active scans and pending player or VS reviews will be kept.'))return;
+    if(!confirm('Clear completed, approved, failed, cancelled and interrupted scan history? Active scans and pending player or VS reviews will be kept.'))return;
     $('mediaClearHistory').disabled=true;
     try{
       const result=await getJson('/api/media/jobs/history',{method:'DELETE'});
@@ -700,8 +700,21 @@
       timer.textContent='Processing '+processingTime(Number(timer.dataset.scanStart));
     }
   }
-  const needsReview=job=>Number(job.pending_count)>0&&!['queued','scanning'].includes(job.status);
+  const needsReview=job=>Number(job.pending_count)>0&&!['queued','scanning','cancelling'].includes(job.status);
   $('mediaQueueEntries').addEventListener('click',async event=>{
+    const cancel=event.target.closest('[data-cancel-scan]');
+    if(cancel){
+      if(!confirm('Cancel this scan?'))return;
+      cancel.disabled=true;
+      try{
+        await getJson('/api/media/jobs/'+encodeURIComponent(cancel.dataset.cancelScan)+'/cancel',{method:'POST'});
+        await refreshJobs();
+      }catch(error){
+        $('mediaQueueSummary').textContent='Could not cancel scan: '+error.message;
+        cancel.disabled=false;
+      }
+      return;
+    }
     const button=event.target.closest('[data-open-scan-review]');
     if(!button)return;
     const isVS=button.dataset.reviewDestination==='vs';
@@ -724,17 +737,17 @@
     }
   });
   function renderScanQueue(jobs){
-    const active=jobs.filter(job=>job.status==='scanning')
+    const active=jobs.filter(job=>['scanning','cancelling'].includes(job.status))
       .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
     const waiting=jobs.filter(job=>job.status==='queued')
       .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
     const review=jobs.filter(needsReview);
-    const history=jobs.filter(job=>!needsReview(job)&&!['queued','scanning'].includes(job.status))
+    const history=jobs.filter(job=>!needsReview(job)&&!['queued','scanning','cancelling'].includes(job.status))
       .sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
     $('mediaQueueSummary').textContent=active.length+' scanning · '+waiting.length+' waiting · '+review.length+' to review · '+history.length+' recent results';
     const label=job=>destinationLabel(job.destination);
-    const statuses={scanning:'Scanning',queued:'Waiting',review:'Awaiting player review',
-      ready:'Completed',approved:'Approved',error:'Failed',interrupted:'Interrupted'};
+    const statuses={scanning:'Scanning',cancelling:'Stopping',queued:'Waiting',review:'Awaiting player review',
+      ready:'Completed',approved:'Approved',error:'Failed',interrupted:'Interrupted',cancelled:'Cancelled'};
     function item(job,queueIndex){
       const pct=Math.min(100,Math.max(0,Number(job.progress)||0));
       const date=new Date(job.created_at);
@@ -753,13 +766,14 @@
         ['ready','approved'].includes(job.status)?' · '+count+' results':'';
       const reviewButton=needsReview(job)?'<button type="button" class="btn smallbtn" data-open-scan-review="'+escape(job.id)+
         '" data-review-destination="'+escape(job.destination)+'">Review in '+escape(label(job))+'</button>':'';
+      const cancelButton=['queued','scanning'].includes(job.status)?'<button type="button" class="btn smallbtn" data-cancel-scan="'+escape(job.id)+'">Cancel scan</button>':'';
       return '<li class="media-queue-entry" data-scan-job="'+escape(job.id)+'"><div class="media-queue-line"><strong>'+
         escape(label(job))+'</strong><span class="media-queue-state">'+escape(statusText+position+countText)+
         '</span></div><small>'+escape(time)+'</small>'+timer+
         (['queued','scanning'].includes(job.status)?'<progress max="100" value="'+pct+
         '" aria-label="'+escape(label(job)+' scanning progress')+'"></progress><small>'+pct+'% completed</small>':'')+
         '<div class="media-queue-message">'+escape(job.status==='review'&&needsReview(job)?
-          'Open the review to see the remaining rows.':job.message||'No further details yet.')+'</div>'+reviewButton+'</li>';
+          'Open the review to see the remaining rows.':job.message||'No further details yet.')+'</div>'+reviewButton+cancelButton+'</li>';
     }
     const section=(heading,list,queue=false)=>list.length?
       '<section class="media-queue-section"><h3>'+heading+'</h3><ol class="media-queue-list">'+
@@ -804,7 +818,7 @@
         }
       }
       try{localStorage.setItem(NOTIFICATIONS,JSON.stringify([...notified].slice(-100)));}catch{}
-      const active=jobs.filter(j=>j.status==='scanning')
+      const active=jobs.filter(j=>['scanning','cancelling'].includes(j.status))
         .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
       const waiting=jobs.filter(j=>j.status==='queued')
         .sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));

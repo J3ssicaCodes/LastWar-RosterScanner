@@ -295,7 +295,11 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable, correctio
             process=subprocess.Popen(command,stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,text=True,bufsize=1)
             try:
+                register=getattr(progress,'register_process',None)
+                if register:register(process)
                 while True:
+                    check_cancel=getattr(progress,'check_cancel',None)
+                    if check_cancel:check_cancel()
                     if time.monotonic()>deadline:
                         raise TimeoutError('Ranking OCR exceeded 12 minutes. Try a shorter recording.')
                     available,_,_=select.select([process.stdout],[],[],3)
@@ -326,6 +330,8 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable, correctio
                     # Never expose raw traceback or local file paths to users.
                     raise ValueError(f'The {tab} ranking OCR could not finish; check the scan details and retry.')
             finally:
+                unregister=getattr(progress,'unregister_process',None)
+                if unregister:unregister(process)
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=5)

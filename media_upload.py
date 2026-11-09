@@ -7,7 +7,7 @@ No browser credential or third party media service is required.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 import os
 import shutil
 import tempfile
@@ -40,6 +40,38 @@ ALLOWED_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.webp', '.mp4', '.mov', '.m4v', 
 VIDEO_EXTENSIONS = {'.mp4', '.mov', '.m4v', '.webm'}
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='alliance-media-ocr')
 job_lock = threading.Lock()
+job_controls = {}
+
+
+class ScanCancelled(Exception):
+    pass
+
+
+class ScanControl:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cancel = threading.Event()
+        self.finishing = False
+        self.process = None
+
+    def check(self):
+        if self.cancel.is_set():
+            raise ScanCancelled()
+
+    def begin_finishing(self):
+        with self.lock:
+            self.check()
+            self.finishing = True
+
+    def register_process(self, process):
+        with self.lock:
+            self.check()
+            self.process=process
+
+    def unregister_process(self, process):
+        with self.lock:
+            if self.process is process:
+                self.process=None
 
 
 class ReviewEntry(BaseModel):
@@ -221,7 +253,7 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
         if status is not None: fields.append('status=%s'); values.append(status)
         if status == 'scanning':
             fields.append('started_at=COALESCE(started_at,UTC_TIMESTAMP(6))')
-        if status in ('ready','review','error'):
+        if status in ('ready','review','error','cancelled'):
             fields.append('finished_at=COALESCE(finished_at,UTC_TIMESTAMP(6))')
         if progress is not None: fields.append('progress=%s'); values.append(max(0, min(100, progress)))
         if message is not None: fields.append('message=%s'); values.append(message[:350])
@@ -229,7 +261,8 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
         fields.append('updated_at=UTC_TIMESTAMP(6)')
         with connect_db() as conn:
             with conn.cursor() as cur:
-                cur.execute('UPDATE media_scan_jobs SET ' + ','.join(fields) + ' WHERE id=%s', (*values, job_id))
+                guard = "" if status == 'cancelled' else " AND status NOT IN ('cancelling','cancelled')"
+                cur.execute('UPDATE media_scan_jobs SET ' + ','.join(fields) + ' WHERE id=%s' + guard, (*values, job_id))
             from scoped_db import current_workspace
             scope=current_workspace.get()
             if scope and scope.get('worker') and status in ('review','error'):
@@ -242,14 +275,18 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
             conn.commit()
 
     def run_job(job_id: str, destination: str, paths: list[Path], tempdir: Path, drive=None, upload_date=None):
+        with job_lock:
+            control=job_controls.get(job_id) or ScanControl()
         finished_successfully=False
         try:
+            control.check()
             set_job(job_id, status='scanning', progress=1, message='Preparing scan…')
             if drive:
                 set_job(job_id,progress=2,message='Retrieving selected Google Drive file…')
                 media_path=download_selected_file(drive['file_id'],drive['access_token'],destination,tempdir)
                 paths=[media_path]
             def report(current, total, message):
+                control.check()
                 # Avoid issuing a database write for every OCR pixel or video frame.
                 pct = round(100 * current / max(total, 1))
                 if not hasattr(report, 'last') or pct != report.last or time.monotonic()-report.last_at>4:
@@ -258,6 +295,9 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                     report.last_at = time.monotonic()
             report.last = None
             report.last_at = 0.0
+            report.check_cancel = control.check
+            report.register_process = control.register_process
+            report.unregister_process = control.unregister_process
             with connect_db() as conn:
                 with conn.cursor() as cur:
                     corrections = load_name_corrections(cur)
@@ -268,7 +308,9 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                 if upload_date is None:raise ValueError('Upload date is missing. Select the file again.')
                 recheck_keys = {name_key(row['player_name']) for row in roster if not row['possibly_removed'] and not row.get('archived')}
                 result=scan_vs_upload(paths,report,upload_date,corrections,master_keys,recheck_keys=recheck_keys)
+                control.check()
                 recheck_vs_rows(result,os.getenv('GOOGLE_VISION_API_KEY'),shared_connect_db or connect_db,corrections,master_keys,report)
+                control.begin_finishing()
                 counts=stage_vs_result(connect_db,job_id,result)
                 saved,pending=counts['saved'],counts['pending']
                 gaps = result.get('missing_positions', [])
@@ -311,6 +353,7 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                     result['frames_examined'] += old.get('frames_examined',0)
                     result['warnings'].extend(old.get('warnings',[]))
             records = result.get('players', [])
+            control.check()
             if not records:
                 raise ValueError('No readable players were found. The previous list was kept unchanged.')
             if destination == 'storm':
@@ -326,6 +369,7 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                         dedup[key] = {**row,'name':name}
                 if not dedup:
                     raise ValueError('Team A or B was not readable. Previous Storm Roster remains unchanged.')
+                control.begin_finishing()
                 with connect_db() as conn:
                     try:
                         with conn.cursor() as cur:
@@ -395,6 +439,7 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                          row['id'] not in observed_ids and not row.get('archived')]
                 returning=[(row['id'],job_id,None,True) for row in roster
                            if video_capture and row.get('id') in video_ids and row.get('archived')]
+                control.begin_finishing()
                 with connect_db() as conn:
                     try:
                         with conn.cursor() as cur:
@@ -504,10 +549,17 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                     set_job(job_id,status='ready',progress=100,count=len(merge),
                             message=f'Scan finished. {len(merge)} master records merged.')
             finished_successfully=True
+        except ScanCancelled:
+            try: set_job(job_id,status='cancelled',message='Scan cancelled. No scan results were saved.')
+            except Exception: pass
         except Exception as exc:
             # Exception details are shown in the UI only if they contain no secrets.
             print('Media OCR scan failed:',type(exc).__name__, flush=True)
-            try: set_job(job_id,status='error',progress=0,message=str(exc)[:240])
+            try:
+                if control.cancel.is_set():
+                    set_job(job_id,status='cancelled',message='Scan cancelled. No scan results were saved.')
+                else:
+                    set_job(job_id,status='error',progress=0,message=str(exc)[:240])
             except Exception: pass
         finally:
             if drive and drive.get('move_to_trash') and finished_successfully:
@@ -523,6 +575,8 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                         pass
             # Drive tokens are never saved to the DB or a file.
             shutil.rmtree(tempdir, ignore_errors=True)
+            with job_lock:
+                job_controls.pop(job_id,None)
 
     @router.get('/google-config')
     def get_google_drive_settings():
@@ -550,6 +604,8 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                     raise HTTPException(429,detail='The scan queue is full. Try again when another scan finishes.')
         work=Path(tempfile.mkdtemp(prefix='alliance_drive_media_'))
         job_id=str(uuid.uuid4())
+        with job_lock:
+            job_controls[job_id]=ScanControl()
         from scoped_db import current_workspace
         scope=current_workspace.get()
         if scope:
@@ -579,6 +635,8 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
             return {'job_id':job_id,'destination':body.destination,
                     'message':'Google Drive file queued for scanning.'}
         except Exception:
+            with job_lock:
+                job_controls.pop(job_id,None)
             shutil.rmtree(work,ignore_errors=True)
             raise
 
@@ -616,6 +674,8 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                         f.write(data)
                 saved.append(dest)
             job_id = str(uuid.uuid4())
+            with job_lock:
+                job_controls[job_id]=ScanControl()
             from scoped_db import current_workspace
             scope=current_workspace.get()
             if scope:
@@ -641,8 +701,41 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                 executor.submit(run_job,job_id,destination,saved,work,upload_date=upload_date)
             return {'job_id':job_id,'destination':destination,'message':'Upload accepted. Waiting to scan.'}
         except Exception:
+            if 'job_id' in locals():
+                with job_lock:
+                    job_controls.pop(job_id,None)
             shutil.rmtree(work,ignore_errors=True)
             raise
+
+    @router.post('/jobs/{job_id}/cancel')
+    def cancel_media_job(job_id: str):
+        with job_lock:
+            control=job_controls.get(job_id)
+        from contextlib import nullcontext
+        with (control.lock if control else nullcontext()):
+            if control and control.finishing:
+                raise HTTPException(409,detail='This scan is already saving its results and cannot be cancelled.')
+            with connect_db() as conn, conn.cursor() as cur:
+                cur.execute('SELECT status,updated_at FROM media_scan_jobs WHERE id=%s FOR UPDATE',(job_id,))
+                row=cur.fetchone()
+                if not row:
+                    raise HTTPException(404,detail='Scan not found.')
+                if row['status'] not in ('queued','scanning','cancelling'):
+                    raise HTTPException(409,detail='This scan has already finished.')
+                if not control and row['updated_at'] and row['updated_at'] > datetime.now(timezone.utc).replace(tzinfo=None)-timedelta(minutes=5):
+                    raise HTTPException(409,detail='This scan is not running on this server. If it remains stuck, try again in a few minutes.')
+                state='cancelling' if control and row['status'] in ('scanning','cancelling') else 'cancelled'
+                message='Stopping scan…' if state=='cancelling' else 'Scan cancelled.'
+                cur.execute("""UPDATE media_scan_jobs SET status=%s,message=%s,updated_at=UTC_TIMESTAMP(6),
+                               finished_at=IF(%s='cancelled',UTC_TIMESTAMP(6),finished_at) WHERE id=%s""",
+                            (state,message,state,job_id))
+                conn.commit()
+            if control:
+                control.cancel.set()
+                if control.process and control.process.poll() is None:
+                    try: control.process.kill()
+                    except ProcessLookupError: pass
+        return {'job_id':job_id,'status':state,'message':message}
 
     @router.get('/jobs')
     def list_media_jobs():
@@ -658,7 +751,7 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
                         ELSE 0
                     END AS pending_count
                     FROM media_scan_jobs j
-                    WHERE j.status IN ('queued','scanning','review')
+                    WHERE j.status IN ('queued','scanning','cancelling','review')
                       OR (j.destination='players' AND EXISTS (SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id))
                       OR (j.destination='vs' AND EXISTS (SELECT 1 FROM vs_scan_rows v WHERE v.job_id=j.id))
                       OR EXISTS (SELECT 1 FROM media_missing_players m JOIN `player list` p ON p.id=m.player_id
@@ -671,7 +764,7 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
         for row in rows:
             for field in ('created_at','updated_at','started_at','finished_at'):
                 if row.get(field): row[field]=row[field].isoformat()+'Z'
-            if row['status'] in ('queued','scanning'):
+            if row['status'] in ('queued','scanning','cancelling'):
                 active.append(row)
             elif row['pending_count']:
                 review.append(row)
@@ -689,7 +782,7 @@ def install_media_upload(app, connect_db, import_players, import_model, shared_c
             try:
                 with conn.cursor() as cur:
                     cur.execute(f"""SELECT j.id FROM media_scan_jobs j
-                        WHERE j.status IN ('ready','approved','error','interrupted','review')
+                        WHERE j.status IN ('ready','approved','error','interrupted','cancelled','review')
                           AND NOT EXISTS (SELECT 1 FROM `roster upload` r WHERE r.job_id=j.id)
                           AND NOT EXISTS (SELECT 1 FROM vs_scan_rows v WHERE v.job_id=j.id)
                           AND NOT EXISTS (SELECT 1 FROM media_missing_players m JOIN `player list` p ON p.id=m.player_id
