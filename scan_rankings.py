@@ -317,6 +317,14 @@ def recover_missing_full_rows(video,manifest,groups,merged,period,templates,out)
 def normalize_names(s):
     return re.sub(r'\W+','',s.casefold())
 
+def matching_statistic(observations):
+    """Trust two matching page readings when there is a unique winner."""
+    votes=collections.Counter(r['value'] for r in observations if r['value'].isdigit())
+    ordered=votes.most_common()
+    if ordered and ordered[0][1]>=2 and (len(ordered)==1 or ordered[0][1]>ordered[1][1]):
+        return ordered[0][0]
+    return None
+
 
 def scan_page(path,pagenum,workdir,period,prev_templates=None):
     im=cv2.imread(str(path))
@@ -468,7 +476,8 @@ def main():
     value_key={'Power':'power','Kills':'kills','Donation':'donations'}
     for pos,obs in sorted(groups.items()):
         byvalue=collections.Counter(r['value'] for r in obs if r['value'].isdigit())
-        value=byvalue.most_common(1)[0][0] if byvalue else ''
+        verified_value=matching_statistic(obs)
+        value=verified_value if verified_value is not None else (byvalue.most_common(1)[0][0] if byvalue else '')
         # choose a representative with consensus value and best name confidence.
         candidates=[r for r in obs if r['value']==value] or obs
         best=max(candidates,key=lambda r:(r['name_conf'],len(r['name']),r['rank_match_score']))
@@ -484,10 +493,13 @@ def main():
         allissues=sorted(set(it for r in obs for it in r['review_reason'].split(';') if it))
         if pitch_inferred:allissues.append('review_inferred_pitch_from_screenshot')
         if len(set(r['value'] for r in obs if r['value']))>1: allissues.append('multi_view_difference')
+        if verified_value is not None:
+            allissues=[issue for issue in allissues if issue not in ('uncertain_stat','conflicting_stat','multi_view_difference')]
         result={'avatar':f'avatars/{imgfn}', 'rank':best['rank'],'name':best['name'],
                 value_key[best['tab']]:value, 'tab':best['tab'],
                 'page':best['page'],'confidence_name':best['name_conf'],
-                'confidence_stat':best['value_conf'],'review':';'.join(sorted(set(allissues))),
+                'confidence_stat':max(best['value_conf'],60) if verified_value is not None else best['value_conf'],
+                'stat_confirmed':'1' if verified_value is not None else '0','review':';'.join(sorted(set(allissues))),
                 'position_internal':pos,'center_y':best['y'],'source_frame':best.get('frame'),'observed_pages':','.join(str(r['page']) for r in obs)}
         final.append(result)
         if result['review']:review.append(result)
@@ -497,7 +509,7 @@ def main():
         if curr['position_internal']!=prev['position_internal']+1:
             curr['review']+=';missing_position_gap'
         key=value_key.get(curr['tab'])
-        if key==value_key.get(prev['tab']) and prev.get(key,'').isdigit() and curr.get(key,'').isdigit() and int(curr[key])>int(prev[key]):
+        if curr['stat_confirmed']!='1' and key==value_key.get(prev['tab']) and prev.get(key,'').isdigit() and curr.get(key,'').isdigit() and int(curr[key])>int(prev[key]):
             curr['review']+=';stat_not_descending'
     # Optional separately reviewed corrections, NEVER automatically used for
     # another recording. They do not fabricate observations or add positions.
@@ -522,7 +534,7 @@ def main():
                 r['review']=(r['review']+';verify_decorative_unicode').strip(';')
     # Preserve fields with natural, selected-column names and no leaderboard position.
     columns=['avatar','rank','name','power','kills','donations','tab','page','review',
-             'confidence_name','confidence_stat','observed_pages','center_y','source_frame']
+             'confidence_name','confidence_stat','stat_confirmed','observed_pages','center_y','source_frame']
     with (out/'rankings.csv').open('w',newline='',encoding='utf-8-sig') as f:
         wr=csv.DictWriter(f,fieldnames=columns);wr.writeheader();wr.writerows({k:r.get(k,'') for k in columns} for r in final)
     with (out/'review_needed.csv').open('w',newline='',encoding='utf-8-sig') as f:

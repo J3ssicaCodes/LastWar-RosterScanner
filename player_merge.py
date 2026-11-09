@@ -103,11 +103,13 @@ def merge_player_records(connect_db, keep_id, body):
                                hq_level=%s,birthday=%s,avatar_mime=%s,avatar_updated_at=%s,avatar_image=%s,
                                has_t11=%s,away_start=%s,away_end=%s,player_notes=%s,
                                first_seen_at=LEAST(first_seen_at,%s),last_seen_at=GREATEST(last_seen_at,%s),
-                               is_new=is_new AND %s,possibly_removed=possibly_removed AND %s,
+                               is_new=%s,possibly_removed=%s,
                                updated_at=UTC_TIMESTAMP(6) WHERE id=%s""",
                             (*combined,portrait['avatar_mime'],portrait['avatar_updated_at'],portrait['avatar_image'],
                              bool(retained['has_t11'] or source['has_t11']),*away,combined_notes or None,
-                             source['first_seen_at'],source['last_seen_at'],source['is_new'],source['possibly_removed'],keep_id))
+                             source['first_seen_at'],source['last_seen_at'],
+                             bool(retained['is_new'] and source['is_new']),
+                             bool(retained['possibly_removed'] and source['possibly_removed']),keep_id))
                 for field in ('conductor_id','vip_id'):
                     cur.execute(f'UPDATE train_assignments SET {field}=%s WHERE {field}=%s',
                                 (keep_id,body.duplicate_id))

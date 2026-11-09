@@ -18,7 +18,7 @@ import sys
 import time
 import select
 import tempfile
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Callable
 
@@ -28,7 +28,7 @@ import numpy as np
 from extract_ranking_pages import detect, extract
 from scan_rankings import tabs
 
-from player_identity import corrected_name, name_key, NUMBER_REVIEW_PREFIX
+from player_identity import corrected_name, name_key, NUMBER_REVIEW_PREFIX, number_needs_review
 from scan_rankings import add_fallback_ocr, ocr_fields, pinned_top, row_centers
 from vs_points_ocr import recheck_neighbors
 
@@ -59,7 +59,7 @@ def recheck_ranking_group(records, anchors, sources, tab, period, resolve, progr
         return readings
 
     confirmed = recheck_neighbors(anchors,sources,{pos:row['needs_name'] for pos,row in anchors.items()},
-                                  resolve,progress,read_frame)
+                                  resolve,progress,read_frame,min_value_votes=2)
     field = TAB_FIELD[tab]
     for record in records:
         position = record['internal_position']
@@ -72,10 +72,10 @@ def recheck_ranking_group(records, anchors, sources, tab, period, resolve, progr
             record[field] = int(row['value'])
             record['review_reasons'] = [
                 reason for reason in record['review_reasons']
-                if reason not in ('uncertain_stat', 'Statistic unreadable', 'conflicting_stat', 'multi_view_difference',
-                                  f'{NUMBER_REVIEW_PREFIX} the scanned number is unclear.')
+                if not number_needs_review([reason])
             ]
-        record['review_reasons'].extend(row.get('neighbor_conflicts',[]))
+        record['review_reasons'].extend(reason for reason in row.get('neighbor_conflicts',[])
+                                        if not (row.get('stat_confirmed') and number_needs_review([reason])))
         record['review_required']=bool(record['review_reasons'])
 
 
@@ -119,8 +119,8 @@ def _record_from_csv(entry: dict, directory: Path, page_info: dict, tab: str):
         number_score = float(entry.get('confidence_stat') or 0)
     except (ValueError, TypeError):
         name_score = number_score = 0
-    if name_score < 55 or number_score < 60:
-        issues.append('OCR confidence below recommended threshold')
+    if name_score < 55:
+        issues.append('Name OCR confidence below recommended threshold')
     if statistic is None or number_score < 55:
         issues.append(f'{NUMBER_REVIEW_PREFIX} the scanned number is unclear.')
     page_number = int(entry.get('page') or 0)
@@ -194,6 +194,35 @@ def _page_group(path: Path, staging: Path, idx: int, progress=None):
               'image_path': target, 'original_filename': path.name,
               'video_path': None, 'selected_tab': selected,
               'input_kind': 'image', 'fps': None }], 0
+
+
+def deduplicate_ranking_records(records):
+    # Deduplicate exact same tab/position/name observations in a screenshot
+    # plus video upload, but never merge different names or positions.
+    unique={}
+    number_votes=defaultdict(Counter)
+    for row in records:
+        key=(row['tab'],row['internal_position'],row['name'].casefold())
+        if type(row.get(row['tab'])) is int:
+            number_votes[key][row[row['tab']]] += 1
+        prev=unique.get(key)
+        if prev is None or (prev['review_required'] and not row['review_required']):
+            unique[key]=row
+        if prev is not None:
+            unique[key]['seen_in_video'] = prev['seen_in_video'] or row['seen_in_video']
+        if prev is not None and prev[row['tab']] is not None and row[row['tab']] is not None and prev[row['tab']]!=row[row['tab']]:
+            chosen=unique[key]
+            chosen['review_reasons'].append(
+                f"{NUMBER_REVIEW_PREFIX} captures read {prev[row['tab']]} and {row[row['tab']]}.")
+            chosen['review_required']=True
+    for key,chosen in unique.items():
+        votes=number_votes[key].most_common()
+        if votes and votes[0][1]>=2 and (len(votes)==1 or votes[0][1]>votes[1][1]):
+            chosen[chosen['tab']]=votes[0][0]
+            chosen['review_reasons']=[reason for reason in chosen['review_reasons']
+                                      if not number_needs_review([reason])]
+            chosen['review_required']=bool(chosen['review_reasons'])
+    return list(unique.values())
 
 
 def scan_tested_rankings_upload(paths: list[Path], progress: Callable, corrections=None, master_keys=None):
@@ -317,17 +346,23 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable, correctio
                     if not video_path:
                         continue
                     if not entry.get('center_y'):
+                        if entry.get('stat_confirmed') == '1':
+                            continue
                         record['review_reasons'].append(f'{NUMBER_REVIEW_PREFIX} the row could not be located in three frames.')
                         record['review_required']=True
                         continue
                     page = record['audit']['source_page']
                     frame = entry.get('source_frame') or metadata.get(page,{}).get('frame')
                     if frame is None:
+                        if entry.get('stat_confirmed') == '1':
+                            continue
                         record['review_reasons'].append(f'{NUMBER_REVIEW_PREFIX} source frame unavailable.')
                         record['review_required']=True
                         continue
                     portrait = cv2.imread(str(folder/entry['avatar']),cv2.IMREAD_GRAYSCALE)
                     if portrait is None:
+                        if entry.get('stat_confirmed') == '1':
+                            continue
                         record['review_reasons'].append(f'{NUMBER_REVIEW_PREFIX} the row could not be matched across frames.')
                         record['review_required']=True
                         continue
@@ -336,6 +371,7 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable, correctio
                     sources[page] = (Path(video_path),int(frame))
                     anchors[pos] = {'internal_position':pos,'page':page,'center':int(entry['center_y']),
                                     'signature':cv2.resize(portrait,(24,24)),
+                                    'stat_confirmed':entry.get('stat_confirmed') == '1',
                                     'needs_name':record['review_required'] or unmatched,
                                     'name':record['name'],'name_conf':record['audit']['name_confidence'],
                                     'value':str(record[field]) if record[field] is not None else '',
@@ -355,22 +391,7 @@ def scan_tested_rankings_upload(paths: list[Path], progress: Callable, correctio
             if missing:
                 warnings.append(f'{tab}: missing positions still require review: '+
                                 ', '.join(str(x) for x in missing[:15]))
-        # Deduplicate exact same tab/position/name observations in a screenshot
-        # plus video upload, but never merge different names or unknown positions.
-        unique={}
-        for row in records:
-            key=(row['tab'],row['internal_position'],row['name'].casefold())
-            prev=unique.get(key)
-            if prev is None or (prev['review_required'] and not row['review_required']):
-                unique[key]=row
-                if prev is not None:
-                    unique[key]['seen_in_video'] = prev['seen_in_video'] or row['seen_in_video']
-            if prev is not None and prev[row['tab']] is not None and row[row['tab']] is not None and prev[row['tab']]!=row[row['tab']]:
-                chosen=unique[key]
-                chosen['review_reasons'].append(
-                    f"{NUMBER_REVIEW_PREFIX} captures read {prev[row['tab']]} and {row[row['tab']]}.")
-                chosen['review_required']=True
-        records=list(unique.values())
+        records=deduplicate_ranking_records(records)
         diagnostics['tabs']=sorted(set(diagnostics['tabs']))
         diagnostics['distinct_entries']=len(records)
         diagnostics['review_count']=sum(bool(p['review_required']) for p in records)

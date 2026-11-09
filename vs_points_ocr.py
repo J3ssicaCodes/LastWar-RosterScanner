@@ -277,7 +277,7 @@ def review_flags(observations, names, scores, resolve, master_keys, verified_num
     return reasons
 
 
-def recheck_neighbors(observations, sources, reasons, resolve, progress, read_frame):
+def recheck_neighbors(observations, sources, reasons, resolve, progress, read_frame, min_value_votes=3):
     groups = defaultdict(list)
     for position, row in observations.items():
         if row['page'] in sources:
@@ -312,11 +312,16 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
             def points_in(views):
                 return [int(view['value']) for view in views if view and view['value'].isdecimal()]
 
+            def winning_value(views):
+                votes = Counter(points_in(views)).most_common()
+                if votes and votes[0][1] >= min_value_votes and (len(votes) == 1 or votes[0][1] > votes[1][1]):
+                    return votes[0][0]
+                return None
+
             before = read_at(frame-1,anchors)
             read_at(frame+1,anchors,positioned=before and cap.grab())
             unresolved = [row for row in anchors
-                          if points_in([row,*neighbors[row['internal_position']]]).count(
-                              int(row['value']) if row['value'].isdecimal() else None) != 3]
+                          if winning_value([row,*neighbors[row['internal_position']]]) is None]
             if unresolved:
                 read_at(frame-3,unresolved)
                 read_at(frame+3,unresolved)
@@ -325,12 +330,12 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
                 views = [row,*neighbors[position]]
                 readable = points_in(views)
                 row['point_readings'] = sorted(set(readable))
-                matches = Counter(readable).most_common(1)
-                if matches and matches[0][1] >= 3:
-                    row['value'] = str(matches[0][0])
+                winner = winning_value(views)
+                if winner is not None:
+                    row['value'] = str(winner)
                     row['value_conf'] = max(55, *(view['value_conf'] for view in views
                                             if view and view['value'].isdecimal()
-                                            and int(view['value']) == matches[0][0]))
+                                            and int(view['value']) == winner))
                     confirmed[position].add('value')
                 else:
                     row['frame_consensus_failed'] = True

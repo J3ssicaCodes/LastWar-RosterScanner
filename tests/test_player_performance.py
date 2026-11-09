@@ -85,6 +85,22 @@ class PerformanceTests(unittest.TestCase):
         self.assertEqual(failure.exception.status_code,409)
         self.assertEqual(self.db.db.execute('SELECT COUNT(*) FROM `player list`').fetchone()[0],2)
 
+    def test_merge_queries_are_accepted_by_workspace_scoping(self):
+        from scoped_db import scoped_query
+        keep, duplicate = self.add_players()
+        self.db.db.execute("INSERT INTO train_restrictions VALUES (?,?)",(duplicate,'Reason'))
+        self.db.db.execute("INSERT INTO media_scan_jobs (id,updated_player_ids) VALUES ('job',?)",(json.dumps([duplicate]),))
+        self.db.db.execute("INSERT INTO vs_points (score_date,player_id,player_name,normalized_name,points) VALUES (?,?,?,?,?)",
+                           ('2026-11-03',duplicate,'ep','ep',400))
+        original_execute = MergeCursor.execute
+        def scoped_execute(cursor, sql, args=()):
+            scoped_query(sql, 17)
+            return original_execute(cursor, sql, args)
+        with patch.object(MergeCursor, 'execute', scoped_execute):
+            merge_player_records(self.db,keep,PlayerMerge(duplicate_id=duplicate,
+                expected_name='DonPepon',expected_duplicate_name='ep'))
+        self.assertEqual(self.db.db.execute('SELECT COUNT(*) FROM `player list`').fetchone()[0],1)
+
     def test_claim_moves_unmatched_scores_and_keeps_existing_daily_score(self):
         keep, other = self.add_players()
         self.db.db.executemany('INSERT INTO vs_points (score_date,player_id,player_name,normalized_name,points) VALUES (?,?,?,?,?)',[
