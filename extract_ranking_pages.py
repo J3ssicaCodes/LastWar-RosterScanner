@@ -27,14 +27,29 @@ def sign(im,top,bottom):
     region=cv2.cvtColor(im[top:bottom,65:1020],cv2.COLOR_BGR2GRAY)
     return cv2.resize(region,(112,184),interpolation=cv2.INTER_AREA)
 
+def open_video(path):
+    """Limit FFmpeg's decoded-frame buffers on memory-constrained servers."""
+    thread_property = getattr(cv2, 'CAP_PROP_N_THREADS', None)
+    if thread_property is not None:
+        try:
+            cap = cv2.VideoCapture(str(path), cv2.CAP_FFMPEG, [thread_property, 1])
+            if cap.isOpened():
+                return cap
+            cap.release()
+        except (cv2.error, TypeError):
+            pass
+    return cv2.VideoCapture(str(path))
+
 def detect(path, min_pause=.38,threshold=2.5,stride=3,min_frames=15,progress=None):
-    cap=cv2.VideoCapture(str(path));fps=cap.get(cv2.CAP_PROP_FPS);n=int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap=open_video(path);fps=cap.get(cv2.CAP_PROP_FPS);n=int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     ok,first=cap.read(); assert ok
     top,hits=detect_table_header(first)
     bottom=int(first.shape[0]*.79)
     min_samples=max(math.ceil(min_pause*fps/stride),math.ceil(min_frames/stride))
     print('video',n,'frames at',round(fps,3),'fps; content ROI',top,bottom,'min samples',min_samples,'header:',hits,flush=True)
-    signatures=[(0,sign(first,top,bottom))]
+    previous=sign(first,top,bottom)
+    del first
+    runs=[];run_start=0;run_length=1;previous_index=0
     i=1
     while True:
         # Advance the decoder without materializing full RGB frames that motion
@@ -43,26 +58,26 @@ def detect(path, min_pause=.38,threshold=2.5,stride=3,min_frames=15,progress=Non
         if i%stride==0:
             ok,frame=cap.retrieve()
             if not ok:break
-            signatures.append((i,sign(frame,top,bottom)))
+            current=sign(frame,top,bottom)
+            del frame
+            dist=float(cv2.absdiff(current,previous).mean())
+            if dist>threshold:
+                if run_length>=min_samples:runs.append((run_start,previous_index))
+                run_start=i;run_length=0
+            run_length+=1;previous=current;previous_index=i
         # Server jobs report frame analysis progress during long recordings,
         # instead of appearing stalled at the preparation stage.
         if progress and n>0 and i%max(90,n//25)==0:
             progress(2+round(23*i/n),100,f'Finding stable video pages: {i}/{n} frames')
         i+=1
     cap.release()
-    runs=[];a=0;anchor=signatures[0][1]
-    for j in range(1,len(signatures)):
-        dist=float(cv2.absdiff(signatures[j][1],signatures[j-1][1]).mean())
-        if dist>threshold:
-            if j-a>=min_samples:runs.append((signatures[a][0],signatures[j-1][0]))
-            a=j;anchor=signatures[j][1]
-    if len(signatures)-a>=min_samples:runs.append((signatures[a][0],signatures[-1][0]))
+    if run_length>=min_samples:runs.append((run_start,previous_index))
     print('pause candidates',len(runs),[(round(a/fps,2),round(b/fps,2)) for a,b in runs],flush=True)
     return fps,n,top,bottom,runs
 
 def extract(path,outdir,fps,n,top,bottom,runs,duplicate_threshold=2.2):
     out=Path(outdir);(out/'pages').mkdir(parents=True,exist_ok=True)
-    cap=cv2.VideoCapture(str(path));seen=[];kept=[];duplicates=[]
+    cap=open_video(path);seen=[];kept=[];duplicates=[]
     for k,(a,b) in enumerate(runs,1):
         mid=(a+b)//2;cap.set(cv2.CAP_PROP_POS_FRAMES,mid);ok,im=cap.read()
         if not ok:continue

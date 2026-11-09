@@ -17,7 +17,7 @@ from scipy.signal import find_peaks
 from scipy.ndimage import uniform_filter1d
 
 # Reuse pause extraction from this directory if desired.
-from extract_ranking_pages import detect,extract
+from extract_ranking_pages import detect,extract,open_video
 from ranking_ocr_engine import read_ranking_text
 
 
@@ -274,7 +274,7 @@ def recover_missing_full_rows(video,manifest,groups,merged,period,templates,out)
         if templ.shape!=(86,105):continue
         start=frames[prev['page']];stop=frames[nxt['page']]
         if stop<=start or stop-start>1000:continue
-        cap=cv2.VideoCapture(str(video));cap.set(cv2.CAP_PROP_POS_FRAMES,start)
+        cap=open_video(video);cap.set(cv2.CAP_PROP_POS_FRAMES,start)
         winning=None
         # Decode frames in order and keep the actual candidate image. Seeking to
         # its nominal frame number can be inaccurate with variable-frame codecs.

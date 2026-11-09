@@ -9,7 +9,7 @@ from pathlib import Path
 import tempfile
 import cv2
 import numpy as np
-from extract_ranking_pages import detect, extract
+from extract_ranking_pages import detect, extract, open_video
 from scan_rankings import card_borders, pinned_top, estimate_row_height, text_with_conf, enlarge, best_start, retry_name_crop
 
 from player_identity import corrected_name, compact_key, name_key, NUMBER_REVIEW_PREFIX
@@ -290,7 +290,7 @@ def recheck_neighbors(observations, sources, reasons, resolve, progress, read_fr
             progress(96+round(3*index/max(1,len(groups))),100,
                      f'Cross-checking adjacent frames {index}/{len(groups)}…')
             if path not in captures:
-                captures[path] = cv2.VideoCapture(str(path))
+                captures[path] = open_video(path)
             cap = captures[path]
             neighbors = defaultdict(list)
 
