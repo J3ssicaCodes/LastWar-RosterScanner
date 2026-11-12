@@ -187,7 +187,9 @@ def install_operations(app, connect_db):
                 op['secondary_refs']=[visible(ref) for ref in secondary]
                 op['templates']=[{**r,'schedule':json.loads(r['schedule_json']) if isinstance(r['schedule_json'],str) else r['schedule_json']} for r in templates if r['operation_id']==op['id']]
                 for t in op['templates']:t.pop('schedule_json',None)
-            return {'operations':ops,'leaders':leaders,'timezone':w.get('timezone') or 'UTC'}
+            cur.execute('SELECT id,name,description FROM alliance_operations WHERE alliance_id=%s AND archived=TRUE ORDER BY name,id',(w['id'],))
+            archived=cur.fetchall()
+            return {'operations':ops,'archived_operations':archived,'leaders':leaders,'timezone':w.get('timezone') or 'UTC'}
     @router.post('')
     def create_operation(slug:str,body:OperationBody,request:Request):
         csrf_check(request)
@@ -209,6 +211,35 @@ def install_operations(app, connect_db):
             cur.execute('SELECT * FROM alliance_operation_templates WHERE alliance_id=%s AND operation_id=%s AND active=TRUE FOR UPDATE',(w['id'],operation_id))
             for template in cur.fetchall():sync_template(cur,w,actor,template,people,slug)
             audit(cur,w['id'],actor,'operation_updated',{'operation_id':operation_id});conn.commit()
+        return {'ok':True}
+    def archive_operation(slug,operation_id,request,action):
+        csrf_check(request)
+        with connect_db() as conn,conn.cursor() as cur:
+            actor,w=authorize(cur,slug,request);operation(cur,w,operation_id,True)
+            cur.execute('SELECT * FROM alliance_operation_templates WHERE alliance_id=%s AND operation_id=%s AND active=TRUE FOR UPDATE',(w['id'],operation_id))
+            for template in cur.fetchall():sync_template(cur,w,actor,template,[],slug)
+            cur.execute('UPDATE alliance_operations SET archived=TRUE WHERE id=%s AND alliance_id=%s',(operation_id,w['id']))
+            audit(cur,w['id'],actor,'operation_'+action,{'operation_id':operation_id});conn.commit()
+        return {'ok':True}
+    @router.post('/{operation_id}/archive')
+    def archive(slug:str,operation_id:int,request:Request):
+        return archive_operation(slug,operation_id,request,'archived')
+    @router.delete('/{operation_id}')
+    def delete(slug:str,operation_id:int,request:Request):
+        return archive_operation(slug,operation_id,request,'deleted')
+    @router.post('/{operation_id}/restore')
+    def restore(slug:str,operation_id:int,request:Request):
+        csrf_check(request)
+        with connect_db() as conn,conn.cursor() as cur:
+            actor,w=authorize(cur,slug,request)
+            cur.execute('SELECT * FROM alliance_operations WHERE id=%s AND alliance_id=%s AND archived=TRUE FOR UPDATE',(operation_id,w['id']));op=cur.fetchone()
+            if not op:raise HTTPException(404,'Archived operation not found.')
+            primary,secondary=operation_refs(cur,w['id'],operation_id,op['primary_id'])
+            people=resolve_people(cur,w['id'],([primary] if primary else [])+secondary)
+            cur.execute('UPDATE alliance_operations SET archived=FALSE WHERE id=%s AND alliance_id=%s',(operation_id,w['id']))
+            cur.execute('SELECT * FROM alliance_operation_templates WHERE alliance_id=%s AND operation_id=%s AND active=TRUE FOR UPDATE',(w['id'],operation_id))
+            for template in cur.fetchall():sync_template(cur,w,actor,template,people,slug)
+            audit(cur,w['id'],actor,'operation_restored',{'operation_id':operation_id});conn.commit()
         return {'ok':True}
     @router.post('/{operation_id}/templates')
     def create_template(slug:str,operation_id:int,body:TemplateBody,request:Request):
