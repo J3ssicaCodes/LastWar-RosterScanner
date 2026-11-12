@@ -17,7 +17,7 @@
     .ops-card>summary{cursor:pointer;font-weight:700;font-size:1.1rem}.ops-operation-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.ops-edit-operation{border:0;background:transparent;color:inherit;cursor:pointer;padding:5px;line-height:1}.ops-edit-operation svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}.ops-warning{color:#ed3038;font-weight:900;margin-left:3px}.ops-away{color:#ef5157;font-size:.88em;font-weight:700;margin-left:5px}.ops-coverage-row{border-top:1px solid var(--stroke);padding:10px 0}.ops-coverage-row p{margin:5px 0}.ops-coverage{margin:12px 0}.ops-text{white-space:pre-wrap;overflow-wrap:anywhere}
     .ops-form{display:grid;gap:10px;margin:12px 0}.ops-form label{display:grid;gap:4px}.ops-form :is(input,textarea,select){width:100%;min-width:0}
     .ops-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:10px}.ops-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-    .ops-assignees{border:1px solid var(--stroke);border-radius:8px;padding:10px}.ops-assignees label{display:flex;gap:8px;align-items:center}.ops-assignees input{width:auto}
+    .ops-assignees{border:1px solid var(--stroke);border-radius:8px;padding:10px}.ops-assignees label{display:flex;gap:8px;align-items:center}.ops-assignees input{width:auto}.ops-multiselect{border:1px solid var(--stroke);border-radius:8px}.ops-multiselect>summary{cursor:pointer;padding:10px}.ops-multiselect .ops-assignees{border:0;border-top:1px solid var(--stroke);border-radius:0;max-height:240px;overflow:auto}
     .ops-template{border-top:1px solid var(--stroke);padding:10px 0}.ops-muted{color:var(--muted)}.ops-status{min-height:1.5em}
   `;document.head.append(styles);
   view.innerHTML=`<section class="panel pl-section"><div class="workspace-heading"><div class="eyebrow">Alliance leadership</div><h2>Operations</h2><p>Organize recurring responsibilities and assign task templates to your leadership team.</p></div>
@@ -30,17 +30,22 @@
   function operationForm(op={}){
     op=op||{};
     const selected=new Set(op.secondary_refs||[]);
-    const choices=(role)=>state.leaders.map(p=>`<label><input type="${role==='primary'?'radio':'checkbox'}" name="${role==='primary'?'primary_ref':'secondary_refs'}" value="${esc(p.id)}" ${role==='primary'?(op.primary_ref===p.id?'checked':''):(selected.has(p.id)?'checked':'')} ${role==='primary'?'required':''}>${esc(p.display_name)} · ${esc(p.role)}${warning(p)}${away(p)}</label>`).join('');
+    const primaryOptions=state.leaders.map(p=>`<option value="${esc(p.id)}" ${op.primary_ref===p.id?'selected':''}>${esc(p.display_name)} · ${esc(p.role)}${!p.has_account?' 🔴 !':''}${p.away_today?' 💤 Away through '+esc(p.away_end):p.away_upcoming?' 💤 Away '+esc(p.away_start)+'–'+esc(p.away_end):''}</option>`).join('');
+    const secondaryChoices=state.leaders.map(p=>`<label><input type="checkbox" name="secondary_refs" value="${esc(p.id)}" ${selected.has(p.id)?'checked':''}>${esc(p.display_name)} · ${esc(p.role)}${warning(p)}${away(p)}</label>`).join('');
     return `<form class="ops-form" data-operation-form><label>Operation name<input name="name" maxlength="160" required value="${esc(op.name||'')}" placeholder="Train management"></label>
       <label>Brief description<textarea name="description" maxlength="4000" rows="2">${esc(op.description||'')}</textarea></label>
       <label>Work instructions<textarea name="instructions" maxlength="20000" rows="5">${esc(op.instructions||'')}</textarea></label>
       <p class="ops-muted"><span class="ops-warning">!</span> No linked R4 or R5 account. Tasks will be assigned once their player profile is linked to one.</p>
-      <fieldset class="ops-assignees"><legend>Primary person responsible</legend>${choices('primary')}</fieldset>
-      <fieldset class="ops-assignees"><legend>Secondary people responsible · up to 5</legend>${choices('secondary')}</fieldset>
+      <label>Primary person responsible<select name="primary_ref" required><option value="">Select a primary leader</option>${primaryOptions}</select></label><div data-primary-status></div>
+      <div>Secondary people responsible · up to 5<details class="ops-multiselect"><summary><span data-secondary-summary>Select secondary leaders</span></summary><div class="ops-assignees">${secondaryChoices||'<span class="ops-muted">No leaders available.</span>'}</div></details></div>
       <div class="ops-actions"><button type="submit" class="btn primary">${op.id?'Save changes':'Create operation'}</button></div><p data-form-status role="status"></p></form>`;
   }
   function bindOperationForm(container,op){
     container.innerHTML=operationForm(op);const form=container.querySelector('form');
+    const primary=form.elements.primary_ref,primaryStatus=form.querySelector('[data-primary-status]'),secondarySummary=form.querySelector('[data-secondary-summary]');
+    function updatePrimary(){const person=state.leaders.find(p=>p.id===primary.value);primaryStatus.innerHTML=warning(person)+away(person);}
+    function updateSecondary(){const checked=[...form.querySelectorAll('input[name="secondary_refs"]:checked')];const names=checked.map(input=>state.leaders.find(p=>p.id===input.value)?.display_name||'Former leader');secondarySummary.textContent=names.length?names.join(', '):'Select secondary leaders';}
+    primary.addEventListener('change',updatePrimary);form.querySelectorAll('input[name="secondary_refs"]').forEach(input=>input.addEventListener('change',()=>{if(form.querySelectorAll('input[name="secondary_refs"]:checked').length>5){input.checked=false;form.querySelector('[data-form-status]').textContent='Choose up to five secondary leaders.';}else form.querySelector('[data-form-status]').textContent='';updateSecondary();}));updatePrimary();updateSecondary();
     form.onsubmit=async event=>{event.preventDefault();const data=new FormData(form),secondary=data.getAll('secondary_refs'),primary=data.get('primary_ref'),notice=form.querySelector('[data-form-status]');
       if(secondary.length>5||secondary.includes(primary)){notice.textContent='Choose up to five different secondary leaders; the primary cannot also be secondary.';return;}
       const button=form.querySelector('button[type=submit]');button.disabled=true;
