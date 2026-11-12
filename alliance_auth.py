@@ -3,8 +3,10 @@
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
+import base64
 import hmac
 import json
+import os
 import re
 import secrets
 from threading import BoundedSemaphore
@@ -16,6 +18,7 @@ from fastapi import APIRouter, File, HTTPException, Request, Response, UploadFil
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
 from pymysql.err import IntegrityError
+from cryptography.fernet import Fernet, InvalidToken
 
 
 COOKIE_NAME = "alliance_session"
@@ -59,6 +62,10 @@ ACCOUNT_SCHEMA = (
         FOREIGN KEY (alliance_id) REFERENCES alliance_workspaces(id),
         FOREIGN KEY (issuer_id) REFERENCES alliance_accounts(id)
     ) ENGINE=InnoDB""",
+    """CREATE TABLE IF NOT EXISTS alliance_invite_links (
+        invite_id BIGINT UNSIGNED PRIMARY KEY, encrypted_token VARBINARY(512) NOT NULL,
+        FOREIGN KEY (invite_id) REFERENCES alliance_invites(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB""",
     """CREATE TABLE IF NOT EXISTS platform_audit_log (
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
         actor_id BIGINT UNSIGNED NOT NULL, alliance_id BIGINT UNSIGNED NULL,
@@ -75,6 +82,33 @@ def utcnow():
 
 def token_hash(token):
     return sha256(token.encode("utf-8")).digest()
+
+
+def invite_cipher():
+    # A dedicated deployment secret can be supplied; otherwise use the existing
+    # database credential, which is already stored outside the database itself.
+    secret=os.getenv('ALLIANCE_INVITE_LINK_SECRET','')
+    if not secret:
+        from app import _db_config
+        secret=_db_config()['password']
+    if not secret:
+        raise RuntimeError('Invite link encryption is unavailable.')
+    key=hmac.new(secret.encode('utf-8'),b'alliance-tools-invite-links-v1',sha256).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+def recover_invite(row):
+    encrypted=row.pop('encrypted_token',None)
+    digest=row.pop('token_hash',None)
+    if not encrypted or row.get('revoked_at') or row['expires_at']<=utcnow() or row.get('used_at'):
+        return row
+    try:
+        token=invite_cipher().decrypt(bytes(encrypted)).decode('utf-8')
+        if hmac.compare_digest(token_hash(token),bytes(digest)):
+            row['code']=token
+    except (InvalidToken,UnicodeDecodeError,TypeError,ValueError,RuntimeError):
+        pass
+    return row
 
 
 def normalize_username(username):
@@ -483,7 +517,7 @@ def install_accounts(app, connect_db):
                 if not workspace:
                     raise HTTPException(422, "Choose an alliance.")
                 role = membership(cur,workspace["id"],actor["id"])
-                allowed = role == "R5" or (body.kind == "claim" and role == "R4")
+                allowed = role in ("R4", "R5")
                 support = bool(actor["platform_admin"] and body.support_reason.strip())
                 if not allowed and not (body.kind == "leadership" and support):
                     raise HTTPException(403, "This invitation requires alliance leadership access.")
@@ -493,6 +527,8 @@ def install_accounts(app, connect_db):
                 (token_hash,kind,alliance_id,issuer_id,expires_at) VALUES (%s,%s,%s,%s,%s)""",
                 (token_hash(token),body.kind,workspace["id"] if workspace else None,actor["id"],expiry))
             invite_id=cur.lastrowid
+            cur.execute("INSERT INTO alliance_invite_links (invite_id,encrypted_token) VALUES (%s,%s)",
+                        (invite_id,invite_cipher().encrypt(token.encode('utf-8'))))
             if workspace:
                 audit(cur,workspace["id"],actor,"invite_created",
                       {"invite_id":invite_id,"kind":body.kind,"support_reason":body.support_reason.strip() or None})
@@ -568,24 +604,30 @@ def install_accounts(app, connect_db):
         return {"ok":True,"slug":slug}
 
     @router.get("/alliances/{slug}/invites")
-    def list_invites(slug: str, request: Request):
+    def list_invites(slug: str, request: Request, response: Response):
+        response.headers['Cache-Control']='private, no-store'
         actor=require_account(connect_db,request)
         with connect_db() as conn, conn.cursor() as cur:
             workspace=workspace_by_slug(cur,slug)
             require_leader(cur,workspace["id"],actor["id"])
-            cur.execute("""SELECT id,kind,expires_at,revoked_at,use_count,created_at
-                FROM alliance_invites WHERE alliance_id=%s ORDER BY created_at DESC LIMIT 100""",
+            cur.execute("""SELECT i.id,i.kind,i.expires_at,i.revoked_at,i.used_at,i.use_count,i.created_at,
+                i.token_hash,l.encrypted_token FROM alliance_invites i
+                LEFT JOIN alliance_invite_links l ON l.invite_id=i.id
+                WHERE i.alliance_id=%s ORDER BY i.created_at DESC LIMIT 100""",
                 (workspace["id"],))
-            return {"invites":cur.fetchall()}
+            return {"invites":[recover_invite(row) for row in cur.fetchall()]}
 
     @router.get("/referrals")
-    def list_referrals(request: Request):
+    def list_referrals(request: Request, response: Response):
+        response.headers['Cache-Control']='private, no-store'
         actor=require_account(connect_db,request)
         with connect_db() as conn, conn.cursor() as cur:
-            cur.execute("""SELECT id,expires_at,revoked_at,used_at,use_count,created_at
-                FROM alliance_invites WHERE kind='referral' AND issuer_id=%s ORDER BY created_at DESC LIMIT 100""",
+            cur.execute("""SELECT i.id,i.expires_at,i.revoked_at,i.used_at,i.use_count,i.created_at,
+                i.token_hash,l.encrypted_token FROM alliance_invites i
+                LEFT JOIN alliance_invite_links l ON l.invite_id=i.id
+                WHERE i.kind='referral' AND i.issuer_id=%s ORDER BY i.created_at DESC LIMIT 100""",
                 (actor["id"],))
-            return {"referrals":cur.fetchall()}
+            return {"referrals":[recover_invite(row) for row in cur.fetchall()]}
 
     @router.post("/referrals/{invite_id}/revoke")
     def revoke_referral(invite_id: int,request: Request):

@@ -18,10 +18,22 @@
   function link(container,label,url){
     const a=document.createElement('a');a.href=url;a.textContent=label;if(window.parent!==window&&url.startsWith('/a/'))a.target='_top';container.append(a);return a;
   }
-  function showInvite(token,kind,destination){
+  function inviteUrl(token,kind){
     const prefix={referral:'new-alliance',leadership:'join',claim:'claim'}[kind];
-    const url=location.origin+'/'+prefix+'/'+encodeURIComponent(token);
-    destination.replaceChildren();link(destination,url,url);
+    return location.origin+'/'+prefix+'/'+encodeURIComponent(token);
+  }
+  function addInviteLink(destination,token,kind){
+    const url=inviteUrl(token,kind),input=document.createElement('input'),button=document.createElement('button');
+    input.type='text';input.readOnly=true;input.value=url;input.setAttribute('aria-label','Invitation link');
+    button.type='button';button.textContent='Copy link';
+    button.onclick=async()=>{
+      try{await navigator.clipboard.writeText(url);button.textContent='Copied!';}
+      catch{input.focus();input.select();button.textContent='Select and copy link';}
+    };
+    destination.append(input,button);
+  }
+  function showInvite(token,kind,destination){
+    destination.replaceChildren();addInviteLink(destination,token,kind);
   }
   function navigate(url){
     const destination=new URL(url,location.href);
@@ -163,6 +175,7 @@
       const row=document.createElement('div');row.className='row';
       const label=document.createElement('span');label.textContent='Expires '+referral.expires_at+
         (referral.revoked_at?' · revoked':referral.used_at?' · used':' · active');row.append(label);
+      if(referral.code)addInviteLink(row,referral.code,'referral');
       if(!referral.revoked_at&&!referral.used_at){
         const button=document.createElement('button');button.textContent='Revoke';
         button.onclick=async()=>{try{await api('/referrals/'+referral.id+'/revoke',{});await loadReferrals();}catch(e){message(e.message,true);}};
@@ -391,7 +404,7 @@
   async function loadLeadership(member){
     $('leadershipSection').hidden=false;
     $('leadershipAlliance').textContent=member.name+' · '+member.role;
-    $('leadershipInvite').hidden=member.role!=='R5';
+    $('leadershipInvite').hidden=false;
     $('referralInvite').hidden=member.role!=='R5';
     $('r5Controls').hidden=member.role!=='R5';
     const invites=await api('/alliances/'+alliance+'/invites',undefined,'GET');
@@ -401,6 +414,10 @@
       const label=document.createElement('span');
       label.textContent=invite.kind+' · expires '+invite.expires_at+(invite.revoked_at?' · revoked':'');
       row.append(label);
+      if(invite.code)addInviteLink(row,invite.code,invite.kind);
+      else if(!invite.revoked_at&&new Date(invite.expires_at+'Z')>new Date()){
+        const note=document.createElement('small');note.textContent='Link unavailable; create a new invite to copy it.';row.append(note);
+      }
       if(!invite.revoked_at&&(member.role==='R5'||invite.kind==='claim')){
         const revoke=document.createElement('button');revoke.textContent='Revoke';
         revoke.onclick=async()=>{try{await api('/alliances/'+alliance+'/invites/'+invite.id+'/revoke',{});await loadLeadership(member);}catch(e){message(e.message,true);}};
