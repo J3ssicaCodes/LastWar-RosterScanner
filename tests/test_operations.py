@@ -2,7 +2,7 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 from pydantic import ValidationError
 from alliance_operations import OperationBody, TemplateBody
-from alliance_leadership import Schedule, materialize
+from alliance_leadership import Schedule, materialize, schedule_dates
 
 class OperationsTests(unittest.TestCase):
     def test_leadership_must_be_distinct_and_at_most_five_secondary(self):
@@ -25,5 +25,18 @@ class OperationsTests(unittest.TestCase):
     def test_task_templates_support_custom_intervals(self):
         body=TemplateBody(title='Announce train',schedule=Schedule(kind='interval',interval=2,interval_unit='week',start_date=date(2026,11,12),due_time='18:00'))
         self.assertEqual(body.schedule.interval,2)
+
+    def test_roster_and_account_references_can_be_assigned(self):
+        body=OperationBody(name='Train',primary_ref='p:123',secondary_refs=['a:22','p:124'])
+        self.assertEqual(body.primary_ref,'p:123')
+        with self.assertRaises(ValidationError):
+            OperationBody(name='Train',primary_ref='p:123',secondary_refs=['p:123'])
+        with self.assertRaises(ValidationError):
+            OperationBody(name='Train',primary_ref='p:0')
+
+    def test_template_can_run_on_selected_weekdays(self):
+        schedule=Schedule(kind='weekly',start_date=date(2026,11,9),due_time='18:00',weekdays=[0,3]).model_dump(mode='json')
+        dates=[d for d,_ in schedule_dates(schedule,'UTC',datetime(2026,11,9,tzinfo=timezone.utc),datetime(2026,11,16,tzinfo=timezone.utc))]
+        self.assertEqual(dates,[date(2026,11,9),date(2026,11,12)])
 
 if __name__=='__main__':unittest.main()

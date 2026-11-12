@@ -146,6 +146,8 @@ def materialize(cursor, task, now, assigned_at=None):
 
 def prepare_occurrences(cursor, alliance_id):
     now=datetime.now(timezone.utc)
+    from alliance_operations import reconcile_operations
+    reconcile_operations(cursor,alliance_id)
     cursor.execute("""SELECT t.*,l.assigned_at AS operation_assigned_at FROM alliance_tasks t
         LEFT JOIN alliance_operation_task_links l ON l.task_id=t.id AND l.alliance_id=t.alliance_id
         LEFT JOIN alliance_memberships m ON m.alliance_id=t.alliance_id AND m.account_id=t.assignee_id
