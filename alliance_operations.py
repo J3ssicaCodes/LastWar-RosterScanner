@@ -171,7 +171,8 @@ def install_operations(app, connect_db):
             except (ZoneInfoNotFoundError,ValueError):today=datetime.now(timezone.utc).date()
             leaders=[{'id':f"p:{p['id']}",'display_name':p['player_name'],'role':p['player_rank'],
                       'has_account':bool(p['account_id']),'away_start':p['away_start'],'away_end':p['away_end'],
-                      'away_today':bool(p['away_start'] and p['away_end'] and p['away_start']<=today<=p['away_end'])} for p in players]
+                      'away_today':bool(p['away_start'] and p['away_end'] and p['away_start']<=today<=p['away_end']),
+                      'away_upcoming':bool(p['away_start'] and p['away_end'] and p['away_start']>today)} for p in players]
             linked={p['account_id']:f"p:{p['id']}" for p in players if p['account_id']}
             cur.execute("""SELECT a.id,a.username,a.display_name,m.role FROM alliance_memberships m
                 JOIN alliance_accounts a ON a.id=m.account_id WHERE m.alliance_id=%s AND m.role IN ('R4','R5') ORDER BY a.display_name""",(w['id'],))

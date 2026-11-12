@@ -21,12 +21,12 @@
     .ops-template{border-top:1px solid var(--stroke);padding:10px 0}.ops-muted{color:var(--muted)}.ops-status{min-height:1.5em}
   `;document.head.append(styles);
   view.innerHTML=`<section class="panel pl-section"><div class="workspace-heading"><div class="eyebrow">Alliance leadership</div><h2>Operations</h2><p>Organize recurring responsibilities and assign task templates to your leadership team.</p></div>
-    <div class="ops-actions"><button class="btn" type="button" data-view-tasks>View assigned tasks</button></div><p class="ops-status" role="status" aria-live="polite"></p><details class="ops-card ops-coverage"><summary>Assignments &amp; coverage</summary><p class="ops-muted">See responsible leaders and who is currently away.</p><div data-coverage></div></details><details class="ops-card" data-create><summary>+ Create operation</summary><div data-form></div></details><h3>Alliance operations</h3><div class="ops-list" data-list></div></section>`;
+    <div class="ops-actions"><button class="btn" type="button" data-view-tasks>View assigned tasks</button></div><p class="ops-status" role="status" aria-live="polite"></p><details class="ops-card ops-coverage"><summary>Assignments &amp; coverage</summary><p class="ops-muted">See responsible leaders and current or upcoming away dates.</p><div data-coverage></div></details><details class="ops-card" data-create><summary>+ Create operation</summary><div data-form></div></details><h3>Alliance operations</h3><div class="ops-list" data-list></div></section>`;
   const status=view.querySelector('.ops-status'),list=view.querySelector('[data-list]');
   view.querySelector('[data-view-tasks]').onclick=()=>window.openLeadershipAccount?.({tasks:'1'});
   function today(){const parts=Object.fromEntries(new Intl.DateTimeFormat('en-US',{timeZone:state.timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(p=>[p.type,p.value]));return `${parts.year}-${parts.month}-${parts.day}`;}
   function warning(p){return p&&!p.has_account?' <span class="ops-warning" aria-label="No linked R4 or R5 account" title="No linked R4 or R5 account">!</span>':'';}
-  function away(p){return p?.away_today?` <span class="ops-away" title="Away ${esc(p.away_start)} through ${esc(p.away_end)}">💤 Away through ${esc(p.away_end)}</span>`:'';}
+  function away(p){return p?.away_today?` <span class="ops-away" title="Away ${esc(p.away_start)} through ${esc(p.away_end)}">💤 Away through ${esc(p.away_end)}</span>`:p?.away_upcoming?` <span class="ops-away">💤 Away ${esc(p.away_start)}–${esc(p.away_end)}</span>`:'';}
   function operationForm(op={}){
     op=op||{};
     const selected=new Set(op.secondary_refs||[]);
