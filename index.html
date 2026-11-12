@@ -365,6 +365,7 @@ html[data-palette="pink"][data-theme="light"] tbody tr:nth-child(even){backgroun
   <button type="button" class="workspace-tab" id="playerListTab" role="tab" aria-controls="playerListView" aria-selected="false" tabindex="-1" data-workspace-tab="players"><span class="workspace-tab-icon" aria-hidden="true">♙</span><span>Player List</span></button>
   <button type="button" class="workspace-tab" id="vsPointsTab" role="tab" aria-controls="vsPointsView" aria-selected="false" tabindex="-1" data-workspace-tab="vs"><span class="workspace-tab-icon" aria-hidden="true">▤</span><span>VS Points</span></button>
   <button type="button" class="workspace-tab" id="performanceTab" role="tab" aria-controls="performanceView" aria-selected="false" tabindex="-1" data-workspace-tab="performance"><span class="workspace-tab-icon" aria-hidden="true">↗</span><span>Player Performance</span></button>
+  <button type="button" class="workspace-tab" id="operationsTab" role="tab" aria-controls="operationsView" aria-selected="false" tabindex="-1" data-workspace-tab="operations"><span class="workspace-tab-icon" aria-hidden="true">☷</span><span>Operations</span></button>
   <button type="button" class="workspace-tab" id="adminTab" role="tab" aria-controls="adminView" aria-selected="false" tabindex="-1" data-workspace-tab="admin"><span class="workspace-tab-icon" aria-hidden="true">⚙</span><span>Admin</span></button>
 </nav>
 <section id="accountView" class="workspace-view account-workspace" aria-label="Account and leadership" hidden><iframe id="accountFrame" title="Account and leadership" scrolling="no"></iframe></section>
@@ -481,6 +482,8 @@ html[data-palette="pink"][data-theme="light"] tbody tr:nth-child(even){backgroun
     </div>
   </section>
 </section>
+<section id="operationsView" class="workspace-view" role="tabpanel" aria-labelledby="operationsTab" tabindex="0" hidden></section>
+
 <section id="trainView" class="workspace-view" role="tabpanel" aria-labelledby="trainTab" tabindex="0" hidden></section>
 <section id="adminView" class="workspace-view" role="tabpanel" aria-labelledby="adminTab" tabindex="0" hidden>
   <h2 id="adminTitle">Admin</h2>
@@ -2263,7 +2266,7 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 (() => {
   const storageKey=window.workspaceKey('lastwar.workspaceTab.v1');
   const tabs=[...document.querySelectorAll('[data-workspace-tab]')];
-  const views={scanner:document.getElementById('rosterScannerView'),train:document.getElementById('trainView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView'),performance:document.getElementById('performanceView'),admin:document.getElementById('adminView')};
+  const views={scanner:document.getElementById('rosterScannerView'),train:document.getElementById('trainView'),players:document.getElementById('playerListView'),vs:document.getElementById('vsPointsView'),performance:document.getElementById('performanceView'),operations:document.getElementById('operationsView'),admin:document.getElementById('adminView')};
   for(const table of document.querySelectorAll('[data-scroll-table]')){
     const observer=new ResizeObserver(()=>{
       if(!table.clientWidth)return;
@@ -2689,5 +2692,6 @@ localizationObserver.observe(document.body,{subtree:true,childList:true});
 <script defer src="/player_performance.js"></script>
 <script defer src="/admin_ui.js"></script>
 <script defer src="/train_manager.js"></script>
+<script defer src="/operations.js"></script>
 </body>
 </html>

@@ -6,6 +6,7 @@ from alliance_auth import ACCOUNT_SCHEMA
 from alliance_claims import CLAIM_SCHEMA
 from alliance_leadership import LEADERSHIP_SCHEMA
 from alliance_push import PUSH_SCHEMA
+from alliance_operations import OPERATIONS_SCHEMA
 from workspace_migration import MIGRATION_KEY, migrate_rubies
 
 
@@ -27,7 +28,7 @@ def initialize_workspace(connect_db):
             if not all((database,backup,password,code)):
                 raise RuntimeError("Workspace bootstrap settings are incomplete.")
             migrate_rubies(conn,database,backup,password,setup_token=code)
-        for statement in (*ACCOUNT_SCHEMA,*CLAIM_SCHEMA,*LEADERSHIP_SCHEMA,*PUSH_SCHEMA):
+        for statement in (*ACCOUNT_SCHEMA,*CLAIM_SCHEMA,*LEADERSHIP_SCHEMA,*PUSH_SCHEMA,*OPERATIONS_SCHEMA):
             cur.execute(statement)
         for field, definition in (
             ('has_t11', 'BOOLEAN NOT NULL DEFAULT FALSE'),

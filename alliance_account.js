@@ -115,7 +115,9 @@
     if(!account.workspaces.length)$('workspaces').textContent='No leadership memberships yet.';
     if(!alliance&&account.workspaces.length===1)alliance=account.workspaces[0].slug;
     const membership=account.workspaces.find(workspace=>workspace.slug===alliance);
-    if(membership){await loadLeadership(membership);await loadClaims(membership);await loadAudit();await loadCoordination();await loadAnalytics();}
+    if(membership){await loadLeadership(membership);await loadClaims(membership);await loadAudit();await loadCoordination();await loadAnalytics();
+      if(new URLSearchParams(location.search).has('tasks'))$('tasksSection').querySelector('details').open=true;
+    }
     if(invite)await resumeInvite(invite);
   }
   function loadAvatar(){

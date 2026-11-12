@@ -16,6 +16,7 @@ def player(pid,name,birthday=None,disabled=False):
 class TrainDatabase(SQLDatabase):
     def __init__(self):
         super().__init__()
+        self.db.execute('DROP TABLE train_assignments')
         self.db.executescript('''
             CREATE TABLE train_settings (id INTEGER PRIMARY KEY,alliance_name TEXT,cooldown_weeks INT,spin_seconds INT);
             CREATE TABLE train_event_names (name TEXT PRIMARY KEY);

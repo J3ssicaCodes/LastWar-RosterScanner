@@ -898,16 +898,23 @@ if WORKSPACE_MODE:
     from alliance_leadership import install_leadership
     from alliance_push import install_push
     from alliance_analytics import install_analytics
+    from alliance_operations import install_operations
     from alliance_pages import install_alliance_pages
     from workspace_security import WorkspaceBoundary
     install_accounts(app,raw_db_connect)
     install_claims(app,raw_db_connect)
     install_leadership(app,raw_db_connect)
+    install_operations(app,raw_db_connect)
     install_push(app,raw_db_connect)
     install_analytics(app,raw_db_connect)
     install_alliance_pages(app,raw_db_connect)
     app.add_middleware(WorkspaceBoundary,connect_db=raw_db_connect)
 
+
+@app.get('/operations.js')
+def operations_script():
+    return FileResponse(BASE / 'operations.js', media_type='application/javascript',
+                        headers={'Cache-Control':'no-cache'})
 
 @app.get('/train_manager.js')
 def train_manager_script():

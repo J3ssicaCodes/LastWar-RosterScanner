@@ -127,22 +127,31 @@ def schedule_dates(schedule, timezone_name, start_utc, end_utc):
             yield item.date(),utc.replace(tzinfo=None)
 
 
-def materialize(cursor, task, now):
+def materialize(cursor, task, now, assigned_at=None):
     schedule=task["schedule_json"]
     if isinstance(schedule,str):schedule=json.loads(schedule)
     start=now-timedelta(days=14)
+    if assigned_at:
+        if assigned_at.tzinfo is None:assigned_at=assigned_at.replace(tzinfo=timezone.utc)
+        zone=tz.gettz(task['timezone'])
+        local_day=assigned_at.astimezone(zone).date()
+        start=max(start,datetime.combine(local_day,time.min,tzinfo=zone).astimezone(timezone.utc))
     end=now+timedelta(days=90)
-    for local_date,due_at in schedule_dates(schedule,task["timezone"],start,end):
-        cursor.execute("""INSERT IGNORE INTO alliance_task_occurrences
-            (alliance_id,task_id,assignee_id,local_date,due_at) VALUES (%s,%s,%s,%s,%s)""",
-            (task["alliance_id"],task["id"],task["assignee_id"],local_date,due_at))
+    rows=[(task["alliance_id"],task["id"],task["assignee_id"],local_date,due_at)
+          for local_date,due_at in schedule_dates(schedule,task["timezone"],start,end)]
+    if rows:
+        cursor.executemany("""INSERT IGNORE INTO alliance_task_occurrences
+            (alliance_id,task_id,assignee_id,local_date,due_at) VALUES (%s,%s,%s,%s,%s)""",rows)
 
 
 def prepare_occurrences(cursor, alliance_id):
     now=datetime.now(timezone.utc)
-    cursor.execute("SELECT * FROM alliance_tasks WHERE alliance_id=%s",(alliance_id,))
+    cursor.execute("""SELECT t.*,l.assigned_at AS operation_assigned_at FROM alliance_tasks t
+        LEFT JOIN alliance_operation_task_links l ON l.task_id=t.id AND l.alliance_id=t.alliance_id
+        LEFT JOIN alliance_memberships m ON m.alliance_id=t.alliance_id AND m.account_id=t.assignee_id
+        WHERE t.alliance_id=%s AND (l.task_id IS NULL OR (l.active=TRUE AND m.role IN ('R4','R5')))""",(alliance_id,))
     for task in cursor.fetchall():
-        materialize(cursor,task,now)
+        materialize(cursor,task,now,assigned_at=task.get('operation_assigned_at'))
     cursor.execute("""SELECT o.id,o.assignee_id,o.task_id,w.slug FROM alliance_task_occurrences o
         JOIN alliance_workspaces w ON w.id=o.alliance_id
         WHERE o.alliance_id=%s AND o.status='pending' AND o.due_notified=FALSE
